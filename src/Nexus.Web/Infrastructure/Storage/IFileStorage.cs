@@ -67,10 +67,30 @@ public static class StorageKeyHelper
 
     public static void ApplySafeDownloadHeaders(HttpResponse response, string downloadFileName, string contentType)
     {
-        var safeName = SanitizeFileName(downloadFileName);
         response.ContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType;
-        response.Headers.ContentDisposition = $"attachment; filename=\"{safeName}\"";
+        response.Headers.ContentDisposition = BuildContentDisposition("attachment", downloadFileName);
         response.Headers["X-Content-Type-Options"] = "nosniff";
+    }
+
+    public static string BuildContentDisposition(string dispositionType, string downloadFileName)
+    {
+        var safeName = SanitizeFileName(downloadFileName);
+        var asciiChars = safeName
+            .Select(c => c is >= ' ' and <= '~' && c is not '"' and not '\\' ? c : '_')
+            .ToArray();
+        var asciiFallback = new string(asciiChars).Trim().Trim('.');
+        if (string.IsNullOrEmpty(asciiFallback))
+        {
+            asciiFallback = "download.bin";
+        }
+
+        if (string.Equals(asciiFallback, safeName, StringComparison.Ordinal))
+        {
+            return $"{dispositionType}; filename=\"{asciiFallback}\"";
+        }
+
+        var encodedUtf8 = Uri.EscapeDataString(safeName);
+        return $"{dispositionType}; filename=\"{asciiFallback}\"; filename*=UTF-8''{encodedUtf8}";
     }
 
     public static string SanitizeFileName(string fileName)

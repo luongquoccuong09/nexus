@@ -121,6 +121,18 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             using var previewPdfResp = await clientA.GetAsync($"/api/files/{pdfId}/preview");
             Assert.Equal(HttpStatusCode.BadRequest, previewPdfResp.StatusCode);
 
+            // Unicode (CJK + Vietnamese) filenames must download cleanly with RFC 5987 filename*=UTF-8''...
+            using var unicodePdfResp = await UploadMultipartAsync(clientA, dmAB, $"uni-{suffix}", "20251503_基01_Báo cáo.pdf", pdfBytes);
+            Assert.Equal(HttpStatusCode.Created, unicodePdfResp.StatusCode);
+            var unicodePdfId = JsonDocument.Parse(await unicodePdfResp.Content.ReadAsStringAsync()).RootElement
+                .GetProperty("attachment").GetProperty("id").GetGuid();
+
+            using var unicodeDownload = await clientA.GetAsync($"/api/files/{unicodePdfId}/download");
+            Assert.Equal(HttpStatusCode.OK, unicodeDownload.StatusCode);
+            Assert.Equal("attachment", unicodeDownload.Content.Headers.ContentDisposition?.DispositionType);
+            Assert.Equal("20251503_基01_Báo cáo.pdf", unicodeDownload.Content.Headers.ContentDisposition?.FileNameStar);
+            Assert.Equal(pdfBytes, await unicodeDownload.Content.ReadAsByteArrayAsync());
+
             // Stage 2: Attach both files to an attachment-only message (empty caption allowed!)
             using var sendResp = await clientA.PostAsJsonAsync($"/api/conversations/{dmAB}/messages", new
             {

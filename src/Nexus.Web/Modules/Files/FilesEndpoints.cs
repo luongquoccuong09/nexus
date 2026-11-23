@@ -503,9 +503,8 @@ public static class FilesEndpoints
             return Results.NotFound(new { code = "file_not_found" });
         }
 
-        var safeName = StorageKeyHelper.SanitizeFileName(attachment.FileName);
         ctx.Response.ContentType = attachment.ContentType;
-        ctx.Response.Headers.ContentDisposition = $"inline; filename=\"{safeName}\"";
+        ctx.Response.Headers.ContentDisposition = StorageKeyHelper.BuildContentDisposition("inline", attachment.FileName);
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
         ctx.Response.Headers.CacheControl = "private, max-age=300";
 
