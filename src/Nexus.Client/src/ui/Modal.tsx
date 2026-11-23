@@ -1,10 +1,11 @@
-import { ReactNode } from 'react';
+import { ReactNode, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { Button } from './Button';
 
 /**
  * Accessible focus-trapped dialog powered by Radix UI Dialog and styled exclusively with Nexus tokens.
+ * Captures the element focused prior to opening so controlled dialogs restore focus cleanly on dismiss.
  */
 export function Modal({
   open,
@@ -23,11 +24,31 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  const wasOpenRef = useRef(false);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  if (open && !wasOpenRef.current) {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      previousFocusRef.current = document.activeElement;
+    }
+  }
+  wasOpenRef.current = open;
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="nx-modal-overlay" />
-        <Dialog.Content className={`nx-modal-content ${size === 'xl' ? 'xl' : ''}`.trim()}>
+        <Dialog.Content
+          className={`nx-modal-content ${size === 'xl' ? 'xl' : ''}`.trim()}
+          onCloseAutoFocus={event => {
+            const target = previousFocusRef.current;
+            previousFocusRef.current = null;
+            if (target && target.isConnected) {
+              event.preventDefault();
+              target.focus();
+            }
+          }}
+        >
           <div className="nx-modal-head">
             <Dialog.Title asChild>
               <h3>{title}</h3>

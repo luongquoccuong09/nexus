@@ -168,6 +168,7 @@ export function CommunitiesWorkspace({
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [members, setMembers] = useState<CommunityMemberDto[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [addMemberUserId, setAddMemberUserId] = useState('');
   const [mappedDeptId, setMappedDeptId] = useState('');
 
@@ -248,10 +249,15 @@ export function CommunitiesWorkspace({
   }, []);
 
   const loadMembers = useCallback(async (communityId: string) => {
-    const res = await fetch(`/api/communities/${communityId}/members?limit=50`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setMembers(data.items ?? []);
+    setLoadingMembers(true);
+    try {
+      const res = await fetch(`/api/communities/${communityId}/members?limit=50`, { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        setMembers(data.items ?? []);
+      }
+    } finally {
+      setLoadingMembers(false);
     }
   }, []);
 
@@ -894,7 +900,10 @@ export function CommunitiesWorkspace({
                 <Button
                   variant={membersOpen ? 'primary' : 'default'}
                   size="sm"
-                  onClick={() => setMembersOpen(v => !v)}
+                  onClick={() => {
+                    if (!membersOpen) setLoadingMembers(true);
+                    setMembersOpen(v => !v);
+                  }}
                 >
                   <Users size={15} aria-hidden="true" /> Members
                 </Button>
@@ -1271,7 +1280,7 @@ export function CommunitiesWorkspace({
               {membersOpen && (
                 <aside className="nx-drawer" aria-label="Community members">
                   <div className="nx-drawer-head">
-                    <h4>Members ({members.length})</h4>
+                    <h4>{loadingMembers ? 'Members' : `Members (${members.length})`}</h4>
                     <Button variant="ghost" size="sm" onClick={() => setMembersOpen(false)}>
                       Close
                     </Button>
@@ -1347,7 +1356,11 @@ export function CommunitiesWorkspace({
 
                     {/* Members list */}
                     <div className="nx-drawer-section">
-                      {members.map(m => (
+                      {loadingMembers ? (
+                        <p className="nx-muted" role="status" style={{ textAlign: 'center', margin: '12px 0' }}>
+                          Loading members…
+                        </p>
+                      ) : members.map(m => (
                         <div className="nx-member-row" key={m.userId}>
                           <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" />
                           <div style={{ minWidth: 0, flex: 1 }}>

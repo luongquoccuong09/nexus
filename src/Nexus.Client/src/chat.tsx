@@ -164,8 +164,10 @@ export function ChatWorkspace({
   // Group members & Files drawer (M2.8 / M3.5)
   const [rightDrawer, setRightDrawer] = useState<'none' | 'members' | 'files'>('none');
   const [groupMembers, setGroupMembers] = useState<GroupMemberItem[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [addMemberId, setAddMemberId] = useState('');
   const [conversationFiles, setConversationFiles] = useState<AttachmentItem[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
   const [quota, setQuota] = useState<StorageQuotaSummary | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -286,19 +288,33 @@ export function ChatWorkspace({
   }, [nextBeforeSeq, selectedConversationId]);
 
   const loadGroupMembers = useCallback(async (convId: string) => {
-    const res = await fetch(`/api/conversations/${convId}/members?limit=50`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setGroupMembers(data.items ?? []);
+    setLoadingMembers(true);
+    try {
+      const res = await fetch(`/api/conversations/${convId}/members?limit=50`, { credentials: 'same-origin' });
+      if (res.ok && activeConvRef.current === convId) {
+        const data = await res.json();
+        setGroupMembers(data.items ?? []);
+      }
+    } finally {
+      if (activeConvRef.current === convId) {
+        setLoadingMembers(false);
+      }
     }
   }, []);
 
   const loadConversationFiles = useCallback(async (convId: string) => {
-    const res = await fetch(`/api/conversations/${convId}/files?limit=50`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setConversationFiles(data.items ?? []);
-      setQuota(data.quota ?? null);
+    setLoadingFiles(true);
+    try {
+      const res = await fetch(`/api/conversations/${convId}/files?limit=50`, { credentials: 'same-origin' });
+      if (res.ok && activeConvRef.current === convId) {
+        const data = await res.json();
+        setConversationFiles(data.items ?? []);
+        setQuota(data.quota ?? null);
+      }
+    } finally {
+      if (activeConvRef.current === convId) {
+        setLoadingFiles(false);
+      }
     }
   }, []);
 
@@ -426,6 +442,9 @@ export function ChatWorkspace({
     setRightDrawer('none');
     setPendingAttachments([]);
     setConversationFiles([]);
+    setLoadingFiles(false);
+    setGroupMembers([]);
+    setLoadingMembers(false);
     setQuota(null);
     setTypingText('');
     setError('');
@@ -917,8 +936,11 @@ export function ChatWorkspace({
                   size="sm"
                   onClick={() => {
                     const next = rightDrawer === 'files' ? 'none' : 'files';
+                    if (next === 'files') {
+                      setLoadingFiles(true);
+                      void loadConversationFiles(activeConv.id);
+                    }
                     setRightDrawer(next);
-                    if (next === 'files') void loadConversationFiles(activeConv.id);
                   }}
                 >
                   <FolderOpen size={15} aria-hidden="true" /> Files
@@ -942,8 +964,11 @@ export function ChatWorkspace({
                     size="sm"
                     onClick={() => {
                       const next = rightDrawer === 'members' ? 'none' : 'members';
+                      if (next === 'members') {
+                        setLoadingMembers(true);
+                        void loadGroupMembers(activeConv.id);
+                      }
                       setRightDrawer(next);
-                      if (next === 'members') void loadGroupMembers(activeConv.id);
                     }}
                   >
                     <Users size={15} aria-hidden="true" /> Members ({activeConv.memberCount})
@@ -1134,7 +1159,7 @@ export function ChatWorkspace({
       {activeConv && activeConv.kind !== 'dm' && rightDrawer === 'members' && (
         <aside className="nx-drawer" aria-label="Group members">
           <div className="nx-drawer-head">
-            <strong>Members ({groupMembers.length})</strong>
+            <strong>{loadingMembers ? 'Members' : `Members (${groupMembers.length})`}</strong>
             <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
           </div>
           <div className="nx-drawer-body">
@@ -1197,7 +1222,7 @@ export function ChatWorkspace({
       {activeConv && rightDrawer === 'files' && (
         <aside className="nx-drawer" aria-label="Conversation files">
           <div className="nx-drawer-head">
-            <strong>Files ({conversationFiles.length})</strong>
+            <strong>{loadingFiles ? 'Files' : `Files (${conversationFiles.length})`}</strong>
             <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
           </div>
           <div className="nx-drawer-body">
@@ -1225,7 +1250,11 @@ export function ChatWorkspace({
               </div>
             )}
 
-            {conversationFiles.length === 0 ? (
+            {loadingFiles ? (
+              <p className="nx-muted" role="status" style={{ textAlign: 'center', marginTop: 18 }}>
+                Loading files…
+              </p>
+            ) : conversationFiles.length === 0 ? (
               <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
                 No files shared in this conversation yet.
               </p>

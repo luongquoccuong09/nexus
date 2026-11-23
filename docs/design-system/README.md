@@ -55,3 +55,7 @@ Checks enforced automatically:
 - `UI-SAFE-HTML`: `dangerouslySetInnerHTML` restricted strictly to `renderSafeMarkdown(...)`.
 - `UI-ICON-BUTTON-A11Y`: Every `iconOnly` `<Button>` declares `aria-label`.
 - `UI-TRUST-BADGE`: `TrustBadge` / `UserNameWithBadge` present and wired in `main.tsx` and `chat.tsx`.
+
+## 5. Manual UX & Accessibility Audits
+
+- Track browser smoke-test findings and retest checklists in [`UX-UI-AUDIT.md`](UX-UI-AUDIT.md).

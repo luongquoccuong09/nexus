@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
 import { ChatWorkspace } from './chat';
@@ -83,6 +83,8 @@ function App() {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const loginTabRef = useRef<HTMLButtonElement | null>(null);
+  const registerTabRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>('chat');
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
@@ -418,6 +420,27 @@ function App() {
   }
 
   if (!user) {
+    const switchAuthTab = (next: 'login' | 'register', moveFocus = false) => {
+      setAuthTab(next);
+      setError('');
+      if (moveFocus) {
+        (next === 'login' ? loginTabRef : registerTabRef).current?.focus();
+      }
+    };
+
+    const handleAuthTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        switchAuthTab(authTab === 'login' ? 'register' : 'login', true);
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        switchAuthTab('login', true);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        switchAuthTab('register', true);
+      }
+    };
+
     return (
       <main className="nx-auth-page">
         <section className="nx-auth-hero">
@@ -446,22 +469,35 @@ function App() {
 
         <section className="nx-auth-panel">
           <div className="nx-auth-card">
-            <div className="nx-auth-switcher" role="tablist">
+            <div
+              className="nx-auth-switcher"
+              role="tablist"
+              aria-label="Authentication mode"
+              onKeyDown={handleAuthTabKeyDown}
+            >
               <button
+                ref={loginTabRef}
+                id="auth-tab-login"
                 type="button"
                 role="tab"
                 aria-selected={authTab === 'login'}
+                aria-controls="auth-panel-login"
+                tabIndex={authTab === 'login' ? 0 : -1}
                 className={authTab === 'login' ? 'active' : ''}
-                onClick={() => { setAuthTab('login'); setError(''); }}
+                onClick={() => switchAuthTab('login')}
               >
                 Sign in
               </button>
               <button
+                ref={registerTabRef}
+                id="auth-tab-register"
                 type="button"
                 role="tab"
                 aria-selected={authTab === 'register'}
+                aria-controls="auth-panel-register"
+                tabIndex={authTab === 'register' ? 0 : -1}
                 className={authTab === 'register' ? 'active' : ''}
-                onClick={() => { setAuthTab('register'); setError(''); }}
+                onClick={() => switchAuthTab('register')}
               >
                 Create account
               </button>
@@ -470,6 +506,11 @@ function App() {
             {error && <p className="nx-error" role="alert">{error}</p>}
             {notice && <p className="nx-ok" role="status">{notice}</p>}
 
+            <div
+              role="tabpanel"
+              id={authTab === 'login' ? 'auth-panel-login' : 'auth-panel-register'}
+              aria-labelledby={authTab === 'login' ? 'auth-tab-login' : 'auth-tab-register'}
+            >
             {authTab === 'login' ? (
               <form onSubmit={handleLogin}>
                 <Field label="Username" htmlFor="login-username">
@@ -518,6 +559,7 @@ function App() {
                 </Button>
               </form>
             )}
+            </div>
           </div>
         </section>
       </main>
