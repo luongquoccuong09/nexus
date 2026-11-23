@@ -6,9 +6,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Npgsql;
 
@@ -19,7 +21,7 @@ public static class MessagingEndpoints
     public const int MaxMessageBodyLength = 4000;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
 
-    public sealed record SendMessageRequest(string ClientMsgId, string Body);
+    public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null);
     public sealed record MarkReadRequest(long LastReadSeq);
 
     public sealed record MessageDto(
@@ -33,7 +35,8 @@ public static class MessagingEndpoints
         string Body,
         DateTimeOffset CreatedAt,
         DateTimeOffset? EditedAt,
-        DateTimeOffset? DeletedAt);
+        DateTimeOffset? DeletedAt,
+        IReadOnlyList<AttachmentDto>? Attachments = null);
 
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app)
     {
@@ -55,6 +58,7 @@ public static class MessagingEndpoints
         UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
+        IOptions<FilePolicyOptions> filePolicy,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
@@ -67,13 +71,26 @@ public static class MessagingEndpoints
             return Results.BadRequest(new { code = "invalid_client_msg_id", message = "clientMsgId must be 1 to 128 characters." });
         }
 
-        var body = (request.Body ?? string.Empty).Trim();
-        if (body.Length is < 1 or > MaxMessageBodyLength)
+        var attachmentIds = (request.AttachmentIds ?? [])
+            .Distinct()
+            .ToArray();
+
+        if (attachmentIds.Length > filePolicy.Value.MaxAttachmentsPerMessage)
         {
-            return Results.BadRequest(new { code = "invalid_message_body", message = $"Message body must be 1 to {MaxMessageBodyLength} characters." });
+            return Results.BadRequest(new
+            {
+                code = "too_many_attachments",
+                message = $"At most {filePolicy.Value.MaxAttachmentsPerMessage} attachments may be attached per message."
+            });
         }
 
-        var payloadHash = ComputePayloadHash(conversationId, body);
+        var body = (request.Body ?? string.Empty).Trim();
+        if (body.Length > MaxMessageBodyLength || (body.Length == 0 && attachmentIds.Length == 0))
+        {
+            return Results.BadRequest(new { code = "invalid_message_body", message = $"Message body must be 1 to {MaxMessageBodyLength} characters (or include an attachment)." });
+        }
+
+        var payloadHash = ComputePayloadHash(conversationId, body, attachmentIds);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
@@ -123,10 +140,35 @@ public static class MessagingEndpoints
             if (existing.ConversationId == conversationId &&
                 string.Equals(existing.PayloadSha256, payloadHash, StringComparison.OrdinalIgnoreCase))
             {
-                return Results.Ok(ToMessageDto(existing, actor));
+                var existingAttachments = await db.Attachments.AsNoTracking()
+                    .Where(a => a.MessageId == existing.Id && a.State == AttachmentState.Attached)
+                    .OrderBy(a => a.CreatedAt)
+                    .Select(a => FilesEndpoints.ToDto(a))
+                    .ToListAsync(ct);
+                return Results.Ok(ToMessageDto(existing, actor, existingAttachments));
             }
 
             return Results.Conflict(new { code = "client_msg_id_conflict", message = "clientMsgId was already used with a different conversation or payload." });
+        }
+
+        List<AttachmentEntity> pendingAttachments = [];
+        if (attachmentIds.Length > 0)
+        {
+            pendingAttachments = await db.Attachments
+                .Where(a => attachmentIds.Contains(a.Id) &&
+                            a.ConversationId == conversationId &&
+                            a.UploaderUserId == actorId &&
+                            a.State == AttachmentState.Pending)
+                .ToListAsync(ct);
+
+            if (pendingAttachments.Count != attachmentIds.Length)
+            {
+                return Results.BadRequest(new
+                {
+                    code = "invalid_attachments",
+                    message = "One or more attachments are missing, already attached, or do not belong to you in this conversation."
+                });
+            }
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -146,7 +188,19 @@ public static class MessagingEndpoints
             CreatedAt = now
         };
 
-        var dto = ToMessageDto(message, actor);
+        foreach (var att in pendingAttachments)
+        {
+            att.MessageId = message.Id;
+            att.State = AttachmentState.Attached;
+            att.AttachedAt = now;
+        }
+
+        var attachmentDtos = pendingAttachments
+            .OrderBy(a => a.CreatedAt)
+            .Select(FilesEndpoints.ToDto)
+            .ToList();
+
+        var dto = ToMessageDto(message, actor, attachmentDtos);
         var evt = new ConversationEventEntity
         {
             Id = Guid.CreateVersion7(),
@@ -264,6 +318,16 @@ public static class MessagingEndpoints
         }
 
         rows.Reverse();
+        var msgIds = rows.Select(r => r.Message.Id).ToList();
+        var attachmentsByMsg = msgIds.Count == 0
+            ? new Dictionary<Guid, List<AttachmentDto>>()
+            : (await db.Attachments.AsNoTracking()
+                .Where(a => a.MessageId != null && msgIds.Contains(a.MessageId.Value) && a.State == AttachmentState.Attached)
+                .OrderBy(a => a.CreatedAt)
+                .ToListAsync(ct))
+                .GroupBy(a => a.MessageId!.Value)
+                .ToDictionary(g => g.Key, g => g.Select(FilesEndpoints.ToDto).ToList());
+
         var items = rows.Select(r => new MessageDto(
             r.Message.Id,
             r.Message.ConversationId,
@@ -275,7 +339,10 @@ public static class MessagingEndpoints
             r.Message.DeletedAt.HasValue ? string.Empty : r.Message.Body,
             r.Message.CreatedAt,
             r.Message.EditedAt,
-            r.Message.DeletedAt)).ToList();
+            r.Message.DeletedAt,
+            r.Message.DeletedAt.HasValue
+                ? []
+                : attachmentsByMsg.GetValueOrDefault(r.Message.Id) ?? [])).ToList();
 
         return Results.Ok(new
         {
@@ -502,10 +569,15 @@ public static class MessagingEndpoints
         return (reader.GetInt64(0), reader.GetInt64(1));
     }
 
-    private static string ComputePayloadHash(Guid conversationId, string body) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{conversationId:N}\n{body}")));
+    private static string ComputePayloadHash(Guid conversationId, string body, Guid[] attachmentIds)
+    {
+        var attSuffix = attachmentIds.Length == 0
+            ? string.Empty
+            : "\n" + string.Join(',', attachmentIds.OrderBy(x => x).Select(x => x.ToString("N")));
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{conversationId:N}\n{body}{attSuffix}")));
+    }
 
-    private static MessageDto ToMessageDto(MessageEntity m, NexusUser sender) => new(
+    private static MessageDto ToMessageDto(MessageEntity m, NexusUser sender, IReadOnlyList<AttachmentDto>? attachments = null) => new(
         m.Id,
         m.ConversationId,
         m.Seq,
@@ -516,5 +588,6 @@ public static class MessagingEndpoints
         m.Body,
         m.CreatedAt,
         m.EditedAt,
-        m.DeletedAt);
+        m.DeletedAt,
+        attachments ?? []);
 }

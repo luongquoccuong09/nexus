@@ -1,6 +1,6 @@
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, MessageSquare, Plus, Search, Send, Users } from 'lucide-react';
+import { ArrowLeft, Download, FileText, FolderOpen, MessageSquare, Paperclip, Plus, Search, Send, Users, X } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
 import {
   dequeueOfflineMessage,
@@ -35,6 +35,34 @@ export interface ConversationListItem {
   } | null;
 }
 
+export interface AttachmentItem {
+  id: string;
+  conversationId: string;
+  messageId?: string | null;
+  uploaderUserId: string;
+  clientUploadId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256Hex: string;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  state: string;
+  scanStatus: string;
+  downloadUrl: string;
+  thumbnailUrl?: string | null;
+  createdAt: string;
+}
+
+export interface StorageQuotaSummary {
+  userUsedBytes: number;
+  userQuotaBytes: number;
+  userWarning: boolean;
+  conversationUsedBytes: number;
+  conversationQuotaBytes: number;
+  conversationWarning: boolean;
+}
+
 export interface ChatMessageItem {
   id: string;
   conversationId: string;
@@ -46,6 +74,7 @@ export interface ChatMessageItem {
   body: string;
   createdAt: string;
   pending?: boolean;
+  attachments?: AttachmentItem[];
 }
 
 export interface DirectoryUserLite {
@@ -83,6 +112,12 @@ function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDateLabel(iso: string): string {
@@ -125,10 +160,15 @@ export function ChatWorkspace({
   const [newGroupTitle, setNewGroupTitle] = useState('');
   const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
 
-  // Group members drawer
-  const [showMembersDrawer, setShowMembersDrawer] = useState(false);
+  // Group members & Files drawer (M2.8 / M3.5)
+  const [rightDrawer, setRightDrawer] = useState<'none' | 'members' | 'files'>('none');
   const [groupMembers, setGroupMembers] = useState<GroupMemberItem[]>([]);
   const [addMemberId, setAddMemberId] = useState('');
+  const [conversationFiles, setConversationFiles] = useState<AttachmentItem[]>([]);
+  const [quota, setQuota] = useState<StorageQuotaSummary | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Report modal (DM)
   const [showReportModal, setShowReportModal] = useState(false);
@@ -138,6 +178,7 @@ export function ChatWorkspace({
   const hubRef = useRef<signalR.HubConnection | null>(null);
   const activeConvRef = useRef<string | null>(selectedConversationId);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingTimerRef = useRef<number | null>(null);
   activeConvRef.current = selectedConversationId;
 
@@ -244,6 +285,50 @@ export function ChatWorkspace({
     }
   }, []);
 
+  const loadConversationFiles = useCallback(async (convId: string) => {
+    const res = await fetch(`/api/conversations/${convId}/files?limit=50`, { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      setConversationFiles(data.items ?? []);
+      setQuota(data.quota ?? null);
+    }
+  }, []);
+
+  const uploadFilesToConversation = useCallback(async (fileList: File[]) => {
+    if (!selectedConversationId || fileList.length === 0) return;
+    setError('');
+    setUploadingFiles(true);
+    try {
+      for (const file of fileList) {
+        const form = new FormData();
+        form.append('clientUploadId', generateClientMsgId());
+        form.append('file', file, file.name || 'pasted-image.png');
+
+        const res = await fetch(`/api/conversations/${selectedConversationId}/attachments`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: form
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(data.message || `Failed to upload ${file.name}.`);
+          continue;
+        }
+        if (data.attachment) {
+          setPendingAttachments(prev => [...prev, data.attachment as AttachmentItem]);
+        }
+        if (data.quota) {
+          setQuota(data.quota as StorageQuotaSummary);
+        }
+      }
+    } catch {
+      setError('Upload failed while offline.');
+    } finally {
+      setUploadingFiles(false);
+    }
+  }, [selectedConversationId]);
+
   const syncConversationDelta = useCallback(async (convId: string) => {
     const cursor = await getConversationCursor(convId);
     if (cursor <= 0) {
@@ -326,7 +411,10 @@ export function ChatWorkspace({
   }, [loadConversations]);
 
   useEffect(() => {
-    setShowMembersDrawer(false);
+    setRightDrawer('none');
+    setPendingAttachments([]);
+    setConversationFiles([]);
+    setQuota(null);
     setTypingText('');
     setError('');
     if (selectedConversationId) {
@@ -393,31 +481,39 @@ export function ChatWorkspace({
   async function sendCurrentMessage() {
     if (!selectedConversationId) return;
     const body = composer.trim();
-    if (!body) return;
+    const attached = pendingAttachments;
+    if (!body && attached.length === 0) return;
     setError('');
     setComposer('');
+    setPendingAttachments([]);
 
-    const item: QueuedMessage = {
-      clientMsgId: generateClientMsgId(),
-      conversationId: selectedConversationId,
-      body,
-      createdAt: new Date().toISOString()
-    };
+    const clientMsgId = generateClientMsgId();
+    const createdAt = new Date().toISOString();
 
-    await enqueueOfflineMessage(item);
+    if (attached.length === 0) {
+      const item: QueuedMessage = {
+        clientMsgId,
+        conversationId: selectedConversationId,
+        body,
+        createdAt
+      };
+      await enqueueOfflineMessage(item);
+    }
+
     setMessages(prev => [
       ...prev,
       {
-        id: item.clientMsgId,
-        conversationId: item.conversationId,
+        id: clientMsgId,
+        conversationId: selectedConversationId,
         seq: Number.MAX_SAFE_INTEGER,
         senderId: currentUserId,
         senderDisplayName: currentDisplayName,
         senderIsUnverified: currentIsUnverified,
-        clientMsgId: item.clientMsgId,
-        body: item.body,
-        createdAt: item.createdAt,
-        pending: true
+        clientMsgId,
+        body,
+        createdAt,
+        pending: true,
+        attachments: attached
       }
     ]);
     requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
@@ -427,23 +523,78 @@ export function ChatWorkspace({
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientMsgId: item.clientMsgId, body: item.body })
+        body: JSON.stringify({
+          clientMsgId,
+          body,
+          attachmentIds: attached.map(a => a.id)
+        })
       });
       if (res.ok) {
         const saved: ChatMessageItem = await res.json();
-        await dequeueOfflineMessage(item.clientMsgId);
-        setMessages(prev => prev.map(m => (m.clientMsgId === item.clientMsgId ? saved : m)));
+        await dequeueOfflineMessage(clientMsgId);
+        setMessages(prev => prev.map(m => (m.clientMsgId === clientMsgId ? saved : m)));
         await loadConversations();
+        if (rightDrawer === 'files' && attached.length > 0) {
+          void loadConversationFiles(selectedConversationId);
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Unable to send message.');
-        if (res.status === 403 || res.status === 409) {
-          await dequeueOfflineMessage(item.clientMsgId);
-          setMessages(prev => prev.filter(m => m.clientMsgId !== item.clientMsgId));
+        if (res.status === 400 || res.status === 403 || res.status === 409) {
+          await dequeueOfflineMessage(clientMsgId);
+          setMessages(prev => prev.filter(m => m.clientMsgId !== clientMsgId));
+          if (attached.length > 0) setPendingAttachments(attached);
         }
       }
     } catch {
-      setError('Offline — message queued locally and will send automatically on reconnect.');
+      if (attached.length > 0) {
+        setPendingAttachments(attached);
+        setMessages(prev => prev.filter(m => m.clientMsgId !== clientMsgId));
+        setError('Offline — reconnect to send messages with attachments.');
+      } else {
+        setError('Offline — message queued locally and will send automatically on reconnect.');
+      }
+    }
+  }
+
+  function handleFileInputChange(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = '';
+    if (files.length > 0) {
+      void uploadFilesToConversation(files);
+    }
+  }
+
+  function handleComposerPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const pastedFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) pastedFiles.push(f);
+      }
+    }
+    if (pastedFiles.length > 0) {
+      e.preventDefault();
+      void uploadFilesToConversation(pastedFiles);
+    }
+  }
+
+  function handleStageDragOver(e: DragEvent<HTMLElement>) {
+    if (!selectedConversationId) return;
+    e.preventDefault();
+    setIsDragOver(true);
+  }
+
+  function handleStageDrop(e: DragEvent<HTMLElement>) {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (!selectedConversationId) return;
+    const dropped = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [];
+    if (dropped.length > 0) {
+      void uploadFilesToConversation(dropped);
     }
   }
 
@@ -518,7 +669,7 @@ export function ChatWorkspace({
       credentials: 'same-origin'
     });
     if (res.ok) {
-      setShowMembersDrawer(false);
+      setRightDrawer('none');
       onSelectConversation(null);
       await loadConversations();
     } else {
@@ -672,7 +823,13 @@ export function ChatWorkspace({
       </aside>
 
       {/* Active Conversation Stage */}
-      <section className="nx-chat-stage" aria-label="Message thread">
+      <section
+        className={`nx-chat-stage ${isDragOver ? 'drag-over' : ''}`}
+        aria-label="Message thread"
+        onDragOver={handleStageDragOver}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={handleStageDrop}
+      >
         {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
@@ -731,6 +888,17 @@ export function ChatWorkspace({
               </div>
 
               <div className="nx-inline-actions">
+                <Button
+                  variant={rightDrawer === 'files' ? 'primary' : 'default'}
+                  size="sm"
+                  onClick={() => {
+                    const next = rightDrawer === 'files' ? 'none' : 'files';
+                    setRightDrawer(next);
+                    if (next === 'files') void loadConversationFiles(activeConv.id);
+                  }}
+                >
+                  <FolderOpen size={15} aria-hidden="true" /> Files
+                </Button>
                 {activeConv.kind === 'dm' && activeConv.peer ? (
                   <>
                     <Button size="sm" onClick={() => setShowReportModal(true)}>
@@ -746,12 +914,12 @@ export function ChatWorkspace({
                   </>
                 ) : (
                   <Button
-                    variant={showMembersDrawer ? 'primary' : 'default'}
+                    variant={rightDrawer === 'members' ? 'primary' : 'default'}
                     size="sm"
                     onClick={() => {
-                      const next = !showMembersDrawer;
-                      setShowMembersDrawer(next);
-                      if (next) void loadGroupMembers(activeConv.id);
+                      const next = rightDrawer === 'members' ? 'none' : 'members';
+                      setRightDrawer(next);
+                      if (next === 'members') void loadGroupMembers(activeConv.id);
                     }}
                   >
                     <Users size={15} aria-hidden="true" /> Members ({activeConv.memberCount})
@@ -804,7 +972,40 @@ export function ChatWorkspace({
                             </span>
                           </div>
                         )}
-                        <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(m.body) }} />
+                        {m.body && (
+                          <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(m.body) }} />
+                        )}
+                        {m.attachments && m.attachments.length > 0 && (
+                          <div className="nx-msg-attachments">
+                            {m.attachments.map(att => (
+                              att.thumbnailUrl ? (
+                                <div key={att.id}>
+                                  <a
+                                    href={att.downloadUrl}
+                                    className="nx-att-thumb-link"
+                                    title={`Download ${att.fileName}`}
+                                  >
+                                    <img className="nx-att-thumb-img" src={att.thumbnailUrl} alt={att.fileName} />
+                                  </a>
+                                  <div className="nx-muted" style={{ marginTop: 2 }}>
+                                    {att.fileName} · {formatBytes(att.sizeBytes)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <a key={att.id} href={att.downloadUrl} className="nx-att-file-card">
+                                  <span className="nx-att-file-meta">
+                                    <FileText size={16} aria-hidden="true" />
+                                    <span style={{ minWidth: 0 }}>
+                                      <div className="nx-att-file-title">{att.fileName}</div>
+                                      <div className="nx-muted">{formatBytes(att.sizeBytes)}</div>
+                                    </span>
+                                  </span>
+                                  <Download size={15} aria-hidden="true" />
+                                </a>
+                              )
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -822,13 +1023,58 @@ export function ChatWorkspace({
                 void sendCurrentMessage();
               }}
             >
+              {pendingAttachments.length > 0 && (
+                <div className="nx-pending-attachments" aria-label="Pending attachments">
+                  {pendingAttachments.map(att => (
+                    <div className="nx-att-chip" key={att.id}>
+                      {att.thumbnailUrl ? (
+                        <img src={att.thumbnailUrl} alt={att.fileName} />
+                      ) : (
+                        <FileText size={15} aria-hidden="true" />
+                      )}
+                      <span className="nx-att-chip-name" title={att.fileName}>{att.fileName}</span>
+                      <span className="nx-muted">{formatBytes(att.sizeBytes)}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Remove ${att.fileName}`}
+                        onClick={() => setPendingAttachments(prev => prev.filter(p => p.id !== att.id))}
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileInputChange}
+              />
+
               <div className="nx-composer-box">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Attach files"
+                  title="Attach files (or paste image / drag & drop)"
+                  disabled={uploadingFiles}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip size={16} aria-hidden="true" />
+                </Button>
                 <textarea
                   rows={1}
                   aria-label="Message"
-                  placeholder={`Message ${activeConv.title}…`}
+                  placeholder={uploadingFiles ? 'Uploading attachment…' : `Message ${activeConv.title}…`}
                   value={composer}
                   onKeyDown={handleComposerKeyDown}
+                  onPaste={handleComposerPaste}
                   onChange={e => {
                     setComposer(e.target.value);
                     if (hubRef.current?.state === signalR.HubConnectionState.Connected && selectedConversationId) {
@@ -836,12 +1082,17 @@ export function ChatWorkspace({
                     }
                   }}
                 />
-                <Button type="submit" variant="primary" size="sm" disabled={!composer.trim()}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={uploadingFiles || (!composer.trim() && pendingAttachments.length === 0)}
+                >
                   <Send size={14} aria-hidden="true" /> Send
                 </Button>
               </div>
               <div className="nx-composer-hint">
-                <span>Supports **bold**, *italic*, `code`, and https:// links</span>
+                <span>Paste images (Ctrl+V), drag &amp; drop files, or use **bold**, *italic*, `code`</span>
                 <span>Enter to send · Shift+Enter for new line</span>
               </div>
             </form>
@@ -850,11 +1101,11 @@ export function ChatWorkspace({
       </section>
 
       {/* Group Members Drawer */}
-      {activeConv && activeConv.kind !== 'dm' && showMembersDrawer && (
+      {activeConv && activeConv.kind !== 'dm' && rightDrawer === 'members' && (
         <aside className="nx-drawer" aria-label="Group members">
           <div className="nx-drawer-head">
             <strong>Members ({groupMembers.length})</strong>
-            <Button variant="ghost" size="sm" onClick={() => setShowMembersDrawer(false)}>Close</Button>
+            <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
           </div>
           <div className="nx-drawer-body">
             {(activeConv.role === 'Owner' || activeConv.role === 'Admin') && (
@@ -908,6 +1159,68 @@ export function ChatWorkspace({
                 Leave group
               </Button>
             </div>
+          </div>
+        </aside>
+      )}
+
+      {/* Conversation Files Drawer (M3.5) */}
+      {activeConv && rightDrawer === 'files' && (
+        <aside className="nx-drawer" aria-label="Conversation files">
+          <div className="nx-drawer-head">
+            <strong>Files ({conversationFiles.length})</strong>
+            <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
+          </div>
+          <div className="nx-drawer-body">
+            {quota && (
+              <div className="nx-quota-box">
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <strong>Conversation storage</strong>
+                  <span className="nx-muted">
+                    {formatBytes(quota.conversationUsedBytes)} / {formatBytes(quota.conversationQuotaBytes)}
+                  </span>
+                </div>
+                <div className="nx-quota-bar">
+                  <div
+                    className={`nx-quota-fill ${quota.conversationWarning ? 'warn' : ''}`}
+                    style={{ width: `${Math.min(100, Math.round((quota.conversationUsedBytes / Math.max(1, quota.conversationQuotaBytes)) * 100))}%` }}
+                  />
+                </div>
+                {(quota.conversationWarning || quota.userWarning) && (
+                  <ToastBar
+                    variant="error"
+                    rounded
+                    message="Storage usage has exceeded 80% of quota."
+                  />
+                )}
+              </div>
+            )}
+
+            {conversationFiles.length === 0 ? (
+              <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
+                No files shared in this conversation yet.
+              </p>
+            ) : (
+              <div>
+                {conversationFiles.map(f => (
+                  <div className="nx-row" key={f.id}>
+                    <div className="nx-att-file-meta">
+                      {f.thumbnailUrl ? (
+                        <img src={f.thumbnailUrl} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />
+                      ) : (
+                        <FileText size={18} aria-hidden="true" />
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div className="nx-att-file-title">{f.fileName}</div>
+                        <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
+                      </div>
+                    </div>
+                    <a href={f.downloadUrl} className="nx-btn sm" title={`Download ${f.fileName}`}>
+                      <Download size={13} aria-hidden="true" />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </aside>
       )}

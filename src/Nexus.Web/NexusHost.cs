@@ -5,6 +5,7 @@ using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
@@ -26,6 +27,7 @@ public static class NexusHost
         builder.Services.AddNexusSecurityDefaults(builder.Configuration);
         builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
+        builder.Services.AddFilesModule(builder.Configuration);
         builder.Services.AddIdentityModule(builder.Configuration);
         builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
         builder.Services.AddScoped<MessagingFanoutService>();
@@ -59,6 +61,7 @@ public static class NexusHost
         app.MapPeopleSafetyEndpoints();
         app.MapConversationEndpoints();
         app.MapMessagingEndpoints();
+        app.MapFilesEndpoints();
         app.MapHub<MessagingHub>("/hubs/messaging");
 
         configureApp?.Invoke(app);

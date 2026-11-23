@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Idempotency;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
@@ -38,6 +39,7 @@ public sealed class NexusDbContext
     public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
     public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
     public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
+    public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();
 
     [DbFunction("immutable_unaccent", Schema = "public")]
     public static string ImmutableUnaccent(string input) =>

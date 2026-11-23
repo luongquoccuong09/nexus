@@ -106,12 +106,12 @@ Preserve the intent of every security test; fix the implementation when a test f
 |---|---|---|---|
 | `SEC-01` | Sign-in lockout, rate limiting, generic auth errors | M1.4 | `IdentityM1aTests.SEC01_SEC21_PasswordPolicy_GenericLoginErrors_AndAccountLockout` |
 | `SEC-03` | Private DM/group isolation (nonmember C cannot read A/B) | M0.4 / M2.12 | `AuthorizationMatrixTests` + `MessagingM2Tests.M2_3_M2_4_M2_10_SEC03_SEC05_SEC07_SEC15_RealtimeIsolation_AndSystemAdminDenied` |
-| `SEC-04` | Authorized file downloads & short-lived signed URLs | M3.3 | *Pending M3.3* |
+| `SEC-04` | Authorized file downloads & short-lived signed URLs | M3.3 | `FilesM3Tests.M3_3_SEC04_SEC11_AuthorizedDownloads_SafeHeaders_SignedUrlCap_AndRemovalIsolation` |
 | `SEC-05` | Membership enforcement on message sends and reads | M0.4 / M2.12 | `AuthorizationMatrixTests` + `MessagingM2Tests.M2_3_M2_4_M2_10_SEC03_SEC05_SEC07_SEC15_RealtimeIsolation_AndSystemAdminDenied` |
 | `SEC-07` | SignalR unauthorized subscription / Origin / fanout isolation | M0.3 / M2.12 | `SecurityDefaultsTests` (Origin + ActiveUserHubFilter) + `MessagingM2Tests.M2_3_M2_4_M2_10_SEC03_SEC05_SEC07_SEC15_RealtimeIsolation_AndSystemAdminDenied` |
 | `SEC-08` | Account disablement revokes HTTP + SignalR immediately | M0.3 / M1.6 | `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |
 | `SEC-10` | Sanitized Markdown / XSS prevention | M2.9 | `src/Nexus.Client/tests/markdown.test.mjs` (`renderSafeMarkdown`, `isSafeHttpUrl`) |
-| `SEC-11` | File content-type / `attachment` + `nosniff` headers | M3.3 | *Pending M3.3* |
+| `SEC-11` | File content-type / `attachment` + `nosniff` headers | M3.3 | `FilesM3Tests.M3_3_SEC04_SEC11_AuthorizedDownloads_SafeHeaders_SignedUrlCap_AndRemovalIsolation` |
 | `SEC-14` | Offsite encrypted backup & independent restore rehearsal | M8.3 | *Pending M8.3* |
 | `SEC-15` | Search/delta authorization enforcement | M0.4 / M2.12 | `AuthorizationMatrixTests` + `MessagingM2Tests` (`/changes` delta); SQL message search pending M6.6 |
 | `SEC-16` | Disabled account session & hub abort | M0.3 / M1.6 | `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |

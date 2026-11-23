@@ -27,11 +27,11 @@ function Invoke-AuditScript {
     param(
         [Parameter(Mandatory)][string]$Label,
         [Parameter(Mandatory)][string]$ScriptPath,
-        [string[]]$ScriptArgs = @()
+        [hashtable]$ScriptParams = @{}
     )
     Write-NexusStepStatus 'RUN' $Label
     $global:LASTEXITCODE = 0
-    & $ScriptPath @ScriptArgs
+    & $ScriptPath @ScriptParams
     if ($global:LASTEXITCODE -ne 0) {
         throw "$Label failed with exit code $global:LASTEXITCODE."
     }
@@ -40,7 +40,7 @@ function Invoke-AuditScript {
 
 Invoke-AuditScript 'Security guardrails audit' (Join-Path $ws.ScriptRoot 'audit\Test-SecurityGuardrails.ps1')
 Invoke-AuditScript 'UI design system compliance audit' (Join-Path $ws.ScriptRoot 'audit\Test-UiDesignCompliance.ps1')
-Invoke-AuditScript 'Knowledge index check' (Join-Path $ws.ScriptRoot 'audit\Build-KnowledgeIndex.ps1') @('-Check')
+Invoke-AuditScript 'Knowledge index check' (Join-Path $ws.ScriptRoot 'audit\Build-KnowledgeIndex.ps1') @{ Check = $true }
 
 Write-NexusStepStatus 'RUN' 'Build Nexus.slnx (Release)'
 & dotnet build $ws.SolutionPath -c Release

@@ -475,6 +475,121 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("conversation_members", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Files.AttachmentEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("AttachedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("attached_at");
+
+                    b.Property<string>("ClientUploadId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("client_upload_id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("content_type");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("file_name");
+
+                    b.Property<int?>("ImageHeight")
+                        .HasColumnType("integer")
+                        .HasColumnName("image_height");
+
+                    b.Property<int?>("ImageWidth")
+                        .HasColumnType("integer")
+                        .HasColumnName("image_width");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("object_key");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ScanDetail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("scan_detail");
+
+                    b.Property<string>("ScanStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("scan_status");
+
+                    b.Property<string>("Sha256Hex")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256_hex");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("state");
+
+                    b.Property<string>("ThumbnailObjectKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("thumbnail_object_key");
+
+                    b.Property<Guid>("UploaderUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploader_user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId")
+                        .HasDatabaseName("ix_attachments_message_id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("State", "CreatedAt")
+                        .HasDatabaseName("ix_attachments_state_created");
+
+                    b.HasIndex("UploaderUserId", "ClientUploadId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_attachments_uploader_client_upload_id");
+
+                    b.HasIndex("ConversationId", "State", "CreatedAt")
+                        .HasDatabaseName("ix_attachments_conversation_state_created");
+
+                    b.ToTable("attachments", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Identity.AdminPasswordResetLinkEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1090,6 +1205,32 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Files.AttachmentEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Conversations.ConversationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UploaderUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -92,12 +92,12 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 ## M3 — Files
 
-- [ ] **M3.1** Two-stage upload: create a pending attachment with a unique client_upload_id, then attach it to a message. Remove orphaned objects with a cleanup job.
-- [ ] **M3.2** Check magic bytes, allowlisted types and D08 size limits. Generate random object keys and checksums. ⚑ D08
-- [ ] **M3.3** Authorize downloads before streaming or issuing signed URLs valid for at most 60 seconds. Use attachment and nosniff headers. Test SEC-04 and SEC-11.
-- [ ] **M3.4** Support image paste (Ctrl+V) and drag/drop, server-side re-encoding and thumbnails (UX-08).
-- [ ] **M3.5** Add a Files tab per conversation, per-user and per-conversation quotas, and storage warnings.
-- [ ] **M3.6** Quarantine, scan with ClamAV, then release clean files or reject. Fail closed before accepting real data.
+- [x] **M3.1** Two-stage upload: create a pending attachment with a unique client_upload_id, then attach it to a message. Remove orphaned objects with a cleanup job.
+- [x] **M3.2** Check magic bytes, allowlisted types and D08 size limits. Generate random object keys and checksums. ⚑ D08
+- [x] **M3.3** Authorize downloads before streaming or issuing signed URLs valid for at most 60 seconds. Use attachment and nosniff headers. Test SEC-04 and SEC-11.
+- [x] **M3.4** Support image paste (Ctrl+V) and drag/drop, server-side re-encoding and thumbnails (UX-08).
+- [x] **M3.5** Add a Files tab per conversation, per-user and per-conversation quotas, and storage warnings.
+- [x] **M3.6** Quarantine, scan with ClamAV, then release clean files or reject. Fail closed before accepting real data.
 
 ## M4 — Notifications and outbox
 
