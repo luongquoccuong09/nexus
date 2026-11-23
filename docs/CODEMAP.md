@@ -91,6 +91,9 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Idempotency/ConditionalTransition.cs` | Conditional `UPDATE ... WHERE` state-transition helper (`Succeeded` / `AlreadyInTargetState` / `Conflict` / `NotFound`) |
 | `deploy/Dockerfile` | Multi-stage non-root container (`node:24-alpine` → `dotnet/sdk:10.0` → `dotnet/aspnet:10.0`) |
 | `deploy/docker-compose.dev.yml` & `deploy/postgres/init-roles.sql` | Local PostgreSQL 17 + separate `nexus_migrator`/`nexus_runtime` roles + `Nexus.Web` stack |
+| `deploy/supabase/init-supabase.sql` & `render.yaml` | One-time Supabase PostgreSQL (`unaccent`/`pg_trgm` + separated roles) init SQL and Render Docker Blueprint (`TrustForwardedHeaders=true`) |
+| `src/Nexus.Desktop/` & `installer/Nexus.Desktop.Installer/` | Windows WebView2 desktop shell (`ProjectNexus.exe`, Teams-style system tray, single-instance, HTTPS-enforced server URL config) + WiX v4 per-user `.msi` installer |
+| `scripts/Run-Tests.ps1` & `scripts/build/*.ps1` | Standardized build/test/package pipeline (`Run-Tests`, `Build-ServerPackage`, `Build-DesktopInstaller`, `Build-All`, `Clean-BuildOutputs`) |
 | `src/Nexus.Web/Infrastructure/Storage/IFileStorage.cs` | Private storage contract, random object keys, path-traversal guards, `<= 60s` signed URL validation, safe download headers |
 | `src/Nexus.Web/Infrastructure/Storage/LocalFileStorage.cs` | Atomic local-volume file storage outside `wwwroot` |
 | `src/Nexus.Web/Infrastructure/Storage/SupabaseFileStorage.cs` | Server-side private Supabase Storage REST adapter |

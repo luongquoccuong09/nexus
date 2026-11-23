@@ -38,7 +38,27 @@ npm.cmd --prefix src/Nexus.Client run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to the ASP.NET Core host on `http://127.0.0.1:5080`.
 
-## 3. Publish and integrated smoke verification
+## 3. Publish, Desktop MSI installer, and Supabase + Render deployment
+
+Use the standardized PowerShell scripts under [`scripts/`](../scripts/README.md) (modeled after `RevitR4Converter`):
+
+```powershell
+# Full verification (guardrails, knowledge index, Release build, 113 PostgreSQL tests, client XSS tests + Vite build, Desktop build)
+pwsh -File .\scripts\Run-Tests.ps1
+
+# Build single-origin server package (artifacts\server-package\)
+pwsh -File .\scripts\build\Build-ServerPackage.ps1
+
+# Build per-user Windows Desktop MSI (WebView2, no admin UAC required) pointing at your server
+pwsh -File .\scripts\build\Build-DesktopInstaller.ps1 -ProductVersion 0.2.0 -ServerUrl "https://<your-service>.onrender.com" -NoPause
+
+# Or run everything in one command:
+pwsh -File .\scripts\build\Build-All.ps1 -ProductVersion 0.2.0 -ServerUrl "https://<your-service>.onrender.com"
+```
+
+For step-by-step cloud deployment on **Supabase (PostgreSQL Session Pooler `:5432` + Private Storage) + Render**, see [`RUNBOOK-supabase-render.md`](implementation-plan/m2-messaging-sync/RUNBOOK-supabase-render.md).
+
+Manual integrated smoke verification:
 
 Stop the development host if it is bound to port 5080, then build and run the published single-origin artifact:
 

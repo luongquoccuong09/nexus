@@ -10,6 +10,7 @@ public sealed class NexusSecurityOptions
     public int MaxPageSize { get; set; } = HardMaxPageSize;
     public int RateLimitPermitsPerMinute { get; set; } = 120;
     public string HubPathPrefix { get; set; } = "/hubs";
+    public bool TrustForwardedHeaders { get; set; }
 
     public void Validate()
     {

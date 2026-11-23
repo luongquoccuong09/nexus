@@ -1,0 +1,35 @@
+# Render Blueprint for Project Nexus (Docker single-origin ASP.NET Core + React SPA)
+# Pair with Supabase PostgreSQL (Session Pooler on port 5432) + Supabase Private Storage.
+# See docs/implementation-plan/m2-messaging-sync/RUNBOOK-supabase-render.md for full setup.
+
+services:
+  - type: web
+    name: project-nexus
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    region: singapore
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:8080
+      - key: NexusDatabase__RequireTls
+        value: "true"
+      - key: NexusSecurity__TrustForwardedHeaders
+        value: "true"
+      - key: NexusStorage__Provider
+        value: Supabase
+      - key: NexusStorage__SupabaseBucket
+        value: nexus-files
+      # Fill these secrets in Render Dashboard -> Environment (never commit real secrets to Git):
+      - key: ConnectionStrings__Runtime
+        sync: false
+      - key: NexusStorage__SupabaseUrl
+        sync: false
+      - key: NexusStorage__SupabaseServiceRoleKey
+        sync: false

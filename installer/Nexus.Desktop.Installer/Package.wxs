@@ -1,0 +1,103 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <!-- Per-user install into %LocalAppData%\Programs\Project Nexus (Microsoft Teams model: no admin UAC required). -->
+  <!-- Keep UpgradeCode unchanged across every future release. -->
+  <Package Name="Project Nexus" Manufacturer="Project Nexus"
+           Version="$(var.ProductVersion)" ProductCode="$(var.ProductCode)"
+           UpgradeCode="7B92D3C4-8E11-4F7A-9B35-51C2E8D4F109"
+           Language="1033" Scope="perUser" InstallerVersion="500" Compressed="yes">
+    <SummaryInformation Description="Project Nexus Workplace Desktop Client" Manufacturer="Project Nexus" />
+    <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="NexusApp.ico" SourceFile="..\..\src\Nexus.Desktop\Resources\Nexus.ico" />
+    <Property Id="ARPPRODUCTICON" Value="NexusApp.ico" />
+    <SetProperty Id="REINSTALLMODE" Value="amus" Before="CostInitialize" Sequence="both"
+                 Condition="Installed AND REINSTALL" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
+
+    <Property Id="INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\ProjectNexus"
+                      Name="InstallFolder" Type="raw" />
+    </Property>
+
+    <Launch Condition="Installed OR VersionNT64"
+            Message="[ProductName] requires 64-bit Windows 10 or Windows 11." />
+
+    <util:CloseApplication Id="ProjectNexusProcess" Target="ProjectNexus.exe"
+                           Property="NEXUS_RUNNING" RebootPrompt="no" />
+    <CustomAction Id="DetectProjectNexus" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixCloseApplications" Execute="firstSequence" Return="check" />
+    <CustomAction Id="VerifyInstalledPayload" FileRef="ProjectNexusExe"
+                  ExeCommand="--verify-install" Execute="deferred" Impersonate="yes" Return="check" />
+
+    <InstallUISequence>
+      <Custom Action="DetectProjectNexus" After="AppSearch" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="DetectProjectNexus" After="AppSearch" />
+      <Custom Action="VerifyInstalledPayload" After="InstallFiles" Condition="NOT (REMOVE ~= &quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+
+    <Launch Condition="NOT NEXUS_RUNNING"
+            Message="Please quit Project Nexus from the system tray before installing, upgrading, or removing [ProductName]." />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Project Nexus">
+          <Component Id="InstallRegistration" Guid="*">
+            <RegistryValue Root="HKCU" Key="Software\ProjectNexus" Name="InstallFolder"
+                           Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+            <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+            <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Project Nexus">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="ProjectNexusStartMenuShortcut"
+                    Name="Project Nexus"
+                    Description="Project Nexus Workplace"
+                    Target="[INSTALLFOLDER]ProjectNexus.exe"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="NexusApp.ico" />
+          <RemoveFolder Id="RemoveProgramMenu" Directory="ApplicationProgramsFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\ProjectNexus" Name="StartMenuShortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="*">
+        <Shortcut Id="ProjectNexusDesktopShortcut"
+                  Name="Project Nexus"
+                  Description="Project Nexus Workplace"
+                  Target="[INSTALLFOLDER]ProjectNexus.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="NexusApp.ico" />
+        <RegistryValue Root="HKCU" Key="Software\ProjectNexus" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Project Nexus Desktop" Level="1" Display="hidden" AllowAbsent="no">
+      <ComponentGroupRef Id="DesktopPayload" />
+      <ComponentRef Id="InstallRegistration" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="3" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="1" />
+    </UI>
+    <UIRef Id="WixUI_ErrorProgressText" />
+  </Package>
+</Wix>

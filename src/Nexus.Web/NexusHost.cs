@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
@@ -31,6 +33,19 @@ public static class NexusHost
         configureBuilder?.Invoke(builder);
 
         var app = builder.Build();
+
+        var securityOptions = app.Services.GetRequiredService<IOptions<NexusSecurityOptions>>().Value;
+        if (securityOptions.TrustForwardedHeaders)
+        {
+            var forwarded = new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+                ForwardLimit = 2
+            };
+            forwarded.KnownIPNetworks.Clear();
+            forwarded.KnownProxies.Clear();
+            app.UseForwardedHeaders(forwarded);
+        }
 
         app.UseMiddleware<SecurityHeadersMiddleware>();
         app.UseNexusRequestLogging();
