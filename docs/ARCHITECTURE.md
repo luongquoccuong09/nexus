@@ -1,0 +1,85 @@
+# Architecture
+
+- Status: active
+- Last updated: 2026-11-23
+- Scope: system boundaries, modular monolith rules, runtime flows, and non-negotiable constraints.
+
+This document is the single source of truth for architectural boundaries and runtime topology. Operational procedures live in [`MAINTAINER_GUIDE.md`](MAINTAINER_GUIDE.md); security policies in [`SECURITY_AND_AUTHZ.md`](SECURITY_AND_AUTHZ.md); messaging sync in [`SYNC_PROTOCOL.md`](SYNC_PROTOCOL.md); schema details in [`DATA_MODEL.md`](DATA_MODEL.md).
+
+## 1. Architectural style and non-negotiable constraints
+
+Nexus is a **same-origin modular monolith** targeting ~1,000 accounts and ~200 concurrent active users, built and maintained by a small team with a coding agent.
+
+Mandatory constraints (from proposal §9.1 and accepted decisions):
+
+1. **Modular monolith only.** Redis, microservices, CRM, AI, and unapproved infrastructure dependencies are out of scope.
+2. **Single-origin BFF.** ASP.NET Core (`src/Nexus.Web`) serves the REST API, SignalR hubs, and the built React SPA (`src/Nexus.Client`) from the same origin.
+3. **PostgreSQL is the single source of truth.** Authoritative state, Data Protection keys, sessions, idempotency keys, and the transactional outbox live in PostgreSQL. When using Supabase's connection pooler, use **Session Mode on port 5432**.
+4. **Separate runtime and migration DB roles.** Application runtime connects with a least-privilege role; schema migrations run under a dedicated migration role (M0.2).
+5. **Defense in depth across all transports.** Account status (`Active` vs `Disabled`) and resource authorization (`IAuthorizationService.Can`) are enforced on HTTP endpoints, SignalR hubs, file downloads, and sync/delta endpoints.
+6. **Zero sensitive payloads in logs.** Message bodies, passwords, session cookies, and tokens are never logged.
+7. **Server-held storage credentials.** Privileged object-storage credentials never leave the server. Client downloads are authorized server-side and streamed or issued short-lived signed URLs (`<= 60s`).
+8. **Strict transport and browser security.** Enforce CORS (no `AllowAnyOrigin`), WebSocket `Origin` checks, TLS certificate validation, antiforgery, and CSP.
+
+## 2. Module boundaries
+
+All backend domain logic lives under `src/Nexus.Web/Modules/`:
+
+```mermaid
+flowchart TB
+    subgraph Web["Nexus.Web (Modular Monolith)"]
+        ID["Identity"]
+        ORG["Org"]
+        PPL["People"]
+        CONV["Conversations"]
+        MSG["Messaging"]
+        FILE["Files"]
+        NOTIF["Notifications"]
+        ADM["Admin"]
+    end
+
+    PPL --> ORG
+    PPL --> ID
+    CONV --> ID
+    CONV --> ORG
+    MSG --> CONV
+    MSG --> ID
+    FILE --> CONV
+    FILE --> MSG
+    NOTIF --> MSG
+    NOTIF --> CONV
+    NOTIF --> ID
+    ADM --> ID
+    ADM --> ORG
+    ADM --> CONV
+```
+
+Boundary rules:
+
+- **Schema ownership:** A module owns its tables and mutations. Other modules read via explicit module services/queries or react asynchronously via the transactional outbox (M4.1), never by mutating another module's tables directly.
+- **Authorization centralization:** Every state-changing or data-reading entry point calls `IAuthorizationService.Can(actor, action, resource)` (M0.4). Administrative roles (`SystemAdmin`, `HRAdmin`, `CommsAdmin`) do **not** bypass conversation membership checks.
+- **Community → Channel hierarchy ([P0-D04](decisions/2026-11-23-p0-d04-community-channel-hierarchy.md)):** Communities own membership and roles (`Owner`, `Admin`, `Member`). Channels belong to exactly one community and inherit its membership/roles in MVP. DMs and group chats remain independent conversations with their own membership.
+
+## 3. Core runtime flows
+
+### 3.1 HTTP API & SPA serving
+1. Client loads SPA from `Nexus.Web` (`wwwroot/index.html` in Release; Vite dev proxy on `:5173` → `:5080` in Development).
+2. Authenticated `FallbackPolicy` + `ActiveUserMiddleware` (M0.3) verify session validity and `Active` account status on every protected request.
+3. Endpoint checks `IAuthorizationService.Can(...)`, executes transactional work in PostgreSQL, and returns cursor-paginated responses (`<= 50` items).
+4. Unmatched `/api/*` routes return HTTP `404`; unmatched client routes fall back to `index.html`.
+
+### 3.2 Messaging & realtime sync (M2)
+1. Client generates `client_msg_id` and submits via HTTP (reused across retries).
+2. In one PostgreSQL transaction: verify membership, enforce `UNIQUE(sender_id, client_msg_id)`, allocate `seq`, increment `change_seq`, persist message + `conversation_events` (+ outbox entry in M4).
+3. After commit, server fans out a lightweight `(conversation_id, change_seq)` signal to SignalR groups `user:{id}` (recipients read from DB).
+4. Clients fetch authoritative deltas via `GET /changes?after=N` and advance cursors only after local application. See [`SYNC_PROTOCOL.md`](SYNC_PROTOCOL.md).
+
+### 3.3 Private file attachments (M3)
+1. Two-stage upload: create pending attachment with `client_upload_id`, validate magic bytes, allowlist, and size limits, store under random object key.
+2. Quarantine and scan via ClamAV (fail closed before real data).
+3. Download endpoints authorize membership and account status before streaming or returning a `<= 60s` signed URL with `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
+
+## 4. Deployment topology (target M0.8 / M8.4)
+
+- **Demo (M0.8):** Single containerized `Nexus.Web` serving API + SPA, connected to PostgreSQL (Data Protection keys and sessions persisted in DB) and private storage.
+- **Pilot / Production (M8.4):** Always-on Docker Compose stack: `Nexus.Web`, PostgreSQL, Caddy (TLS termination), and ClamAV, running as non-root processes with automated encrypted offsite backups.

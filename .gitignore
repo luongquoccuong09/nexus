@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+.vs/
+node_modules/
+dist/
+coverage/
+TestResults/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.user
+*.pfx
+/artifacts/

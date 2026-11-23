@@ -1,0 +1,4 @@
+{
+  "description": "Manual registry for dynamic edges (SignalR events, Outbox handlers, custom wiring) that static grep misses.",
+  "edges": []
+}
