@@ -3,11 +3,11 @@
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <!-- Per-user install into %LocalAppData%\Programs\Project Nexus (Microsoft Teams model: no admin UAC required). -->
   <!-- Keep UpgradeCode unchanged across every future release. -->
-  <Package Name="Project Nexus" Manufacturer="Project Nexus"
+  <Package Name="Nexus" Manufacturer="Nexus"
            Version="$(var.ProductVersion)" ProductCode="$(var.ProductCode)"
            UpgradeCode="7B92D3C4-8E11-4F7A-9B35-51C2E8D4F109"
            Language="1033" Scope="perUser" InstallerVersion="500" Compressed="yes">
-    <SummaryInformation Description="Project Nexus Workplace Desktop Client" Manufacturer="Project Nexus" />
+    <SummaryInformation Description="Nexus Workplace Desktop Client" Manufacturer="Nexus" />
     <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
@@ -42,11 +42,11 @@
     </InstallExecuteSequence>
 
     <Launch Condition="NOT NEXUS_RUNNING"
-            Message="Please quit Project Nexus from the system tray before installing, upgrading, or removing [ProductName]." />
+            Message="Please quit Nexus from the system tray before installing, upgrading, or removing [ProductName]." />
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="LocalProgramsFolder" Name="Programs">
-        <Directory Id="INSTALLFOLDER" Name="Project Nexus">
+        <Directory Id="INSTALLFOLDER" Name="Nexus">
           <Component Id="InstallRegistration" Guid="*">
             <RegistryValue Root="HKCU" Key="Software\ProjectNexus" Name="InstallFolder"
                            Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
@@ -58,11 +58,11 @@
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationProgramsFolder" Name="Project Nexus">
+      <Directory Id="ApplicationProgramsFolder" Name="Nexus">
         <Component Id="StartMenuShortcut" Guid="*">
           <Shortcut Id="ProjectNexusStartMenuShortcut"
-                    Name="Project Nexus"
-                    Description="Project Nexus Workplace"
+                    Name="Nexus"
+                    Description="Nexus Workplace"
                     Target="[INSTALLFOLDER]ProjectNexus.exe"
                     WorkingDirectory="INSTALLFOLDER"
                     Icon="NexusApp.ico" />
@@ -76,8 +76,8 @@
     <StandardDirectory Id="DesktopFolder">
       <Component Id="DesktopShortcut" Guid="*">
         <Shortcut Id="ProjectNexusDesktopShortcut"
-                  Name="Project Nexus"
-                  Description="Project Nexus Workplace"
+                  Name="Nexus"
+                  Description="Nexus Workplace"
                   Target="[INSTALLFOLDER]ProjectNexus.exe"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="NexusApp.ico" />
@@ -86,7 +86,7 @@
       </Component>
     </StandardDirectory>
 
-    <Feature Id="MainFeature" Title="Project Nexus Desktop" Level="1" Display="hidden" AllowAbsent="no">
+    <Feature Id="MainFeature" Title="Nexus Desktop" Level="1" Display="hidden" AllowAbsent="no">
       <ComponentGroupRef Id="DesktopPayload" />
       <ComponentRef Id="InstallRegistration" />
       <ComponentRef Id="StartMenuShortcut" />

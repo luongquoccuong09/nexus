@@ -143,7 +143,7 @@ try {
     $buildId = [Guid]::NewGuid().ToString('N')
     $productCode = Get-NexusDeterministicProductCode -ProductVersion $ProductVersion -BuildIdentity $buildId
 
-    Invoke-Logged "Build WiX MSI (ProjectNexus-$ProductVersion-x64.msi)" {
+    Invoke-Logged "Build WiX MSI (Nexus-$ProductVersion-x64.msi)" {
         & dotnet build $ws.InstallerProject `
             -c Release `
             -o $wixBinDir `
@@ -152,19 +152,19 @@ try {
             /p:PayloadRoot=$payloadDir
     }
 
-    $builtMsi = Join-Path $wixBinDir "ProjectNexus-$ProductVersion-x64.msi"
+    $builtMsi = Join-Path $wixBinDir "Nexus-$ProductVersion-x64.msi"
     if (-not (Test-Path -LiteralPath $builtMsi -PathType Leaf)) {
         throw "Expected MSI output was not produced: $builtMsi"
     }
 
-    $finalMsi = Join-Path $installerOutputDir "ProjectNexus-$ProductVersion-x64.msi"
+    $finalMsi = Join-Path $installerOutputDir "Nexus-$ProductVersion-x64.msi"
     Copy-Item -LiteralPath $builtMsi -Destination $finalMsi -Force
 
     $msiHash = (Get-FileHash -LiteralPath $finalMsi -Algorithm SHA256).Hash.ToLowerInvariant()
     $shaPath = "$finalMsi.sha256"
     [System.IO.File]::WriteAllText(
         $shaPath,
-        "$msiHash  ProjectNexus-$ProductVersion-x64.msi`n",
+        "$msiHash  Nexus-$ProductVersion-x64.msi`n",
         (New-Object System.Text.UTF8Encoding($false)))
 
     $sizeMb = [Math]::Round((Get-Item -LiteralPath $finalMsi).Length / 1MB, 2)

@@ -105,7 +105,7 @@ public static class DesktopConfigStore
         var candidate = (raw ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(candidate))
         {
-            error = "Enter your Project Nexus server URL (for example: https://nexus.company.com).";
+            error = "Enter your Nexus server URL (for example: https://nexus.company.com).";
             return false;
         }
 

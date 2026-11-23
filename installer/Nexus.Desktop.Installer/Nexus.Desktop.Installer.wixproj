@@ -6,7 +6,7 @@
     <Cultures>en-US</Cultures>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.2.0</ProductVersion>
     <PayloadRoot Condition="'$(PayloadRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\work\installer\payload</PayloadRoot>
-    <OutputName>ProjectNexus-$(ProductVersion)-x64</OutputName>
+    <OutputName>Nexus-$(ProductVersion)-x64</OutputName>
     <DefineConstants>ProductVersion=$(ProductVersion);ProductCode=$(ProductCode)</DefineConstants>
     <SuppressIces>ICE61;ICE91</SuppressIces>
   </PropertyGroup>

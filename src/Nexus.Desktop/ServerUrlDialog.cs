@@ -9,7 +9,7 @@ public sealed class ServerUrlDialog : Form
 
     public ServerUrlDialog(string currentUrl, Icon? appIcon)
     {
-        Text = "Connect to Project Nexus";
+        Text = "Connect to Nexus";
         Icon = appIcon;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -21,7 +21,7 @@ public sealed class ServerUrlDialog : Form
 
         var title = new Label
         {
-            Text = "Project Nexus Server Address",
+            Text = "Nexus Server Address",
             Font = new Font("Segoe UI", 12f, FontStyle.Bold),
             ForeColor = Color.FromArgb(24, 34, 56),
             Location = new Point(20, 18),

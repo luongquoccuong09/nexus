@@ -9,9 +9,9 @@
     <AssemblyName>ProjectNexus</AssemblyName>
     <RootNamespace>Nexus.Desktop</RootNamespace>
     <ApplicationIcon>Resources\Nexus.ico</ApplicationIcon>
-    <Product>Project Nexus</Product>
-    <Company>Project Nexus</Company>
-    <Description>Project Nexus Desktop Client (WebView2)</Description>
+    <Product>Nexus</Product>
+    <Company>Nexus</Company>
+    <Description>Nexus Desktop Client (WebView2)</Description>
     <Version>0.2.0</Version>
     <FileVersion>0.2.0.0</FileVersion>
     <AssemblyVersion>0.2.0.0</AssemblyVersion>

@@ -19,7 +19,7 @@ public sealed class MainForm : Form
         _config = config;
         _startMinimized = startMinimized;
 
-        Text = "Project Nexus";
+        Text = "Nexus";
         MinimumSize = new Size(900, 620);
         Size = new Size(Math.Clamp(config.WindowWidth, 900, 2560), Math.Clamp(config.WindowHeight, 620, 1600));
         StartPosition = FormStartPosition.CenterScreen;
@@ -54,24 +54,24 @@ public sealed class MainForm : Form
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Could not update startup setting: {ex.Message}", "Project Nexus", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, $"Could not update startup setting: {ex.Message}", "Nexus", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 _startWithWindowsItem.Checked = DesktopConfigStore.IsStartWithWindowsEnabled();
             }
         };
 
         var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Open Project Nexus", null, (_, _) => ShowAndActivate());
+        trayMenu.Items.Add("Open Nexus", null, (_, _) => ShowAndActivate());
         trayMenu.Items.Add("Reload", null, (_, _) => _webView.CoreWebView2?.Reload());
         trayMenu.Items.Add("Change Server URL...", null, (_, _) => PromptAndSwitchServer());
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add(_startWithWindowsItem);
         trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add("Quit Project Nexus", null, (_, _) => ExitApplication());
+        trayMenu.Items.Add("Quit Nexus", null, (_, _) => ExitApplication());
 
         _trayIcon = new NotifyIcon
         {
             Icon = Icon ?? SystemIcons.Application,
-            Text = "Project Nexus",
+            Text = "Nexus",
             ContextMenuStrip = trayMenu,
             Visible = true
         };
@@ -155,7 +155,7 @@ public sealed class MainForm : Form
             _webView.CoreWebView2.DocumentTitleChanged += (_, _) =>
             {
                 var docTitle = _webView.CoreWebView2.DocumentTitle;
-                Text = string.IsNullOrWhiteSpace(docTitle) ? "Project Nexus" : docTitle;
+                Text = string.IsNullOrWhiteSpace(docTitle) ? "Nexus" : docTitle;
             };
 
             NavigateToConfiguredServer();
@@ -164,7 +164,7 @@ public sealed class MainForm : Form
         {
             var choice = MessageBox.Show(
                 this,
-                "Microsoft Edge WebView2 Runtime is required to run Project Nexus Desktop.\n\nOpen the official Microsoft download page now?",
+                "Microsoft Edge WebView2 Runtime is required to run Nexus Desktop.\n\nOpen the official Microsoft download page now?",
                 "WebView2 Runtime Required",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information);
@@ -180,8 +180,8 @@ public sealed class MainForm : Form
         {
             MessageBox.Show(
                 this,
-                $"Failed to initialize Project Nexus Desktop: {ex.Message}",
-                "Project Nexus",
+                $"Failed to initialize Nexus Desktop: {ex.Message}",
+                "Nexus",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             ExitApplication();
@@ -259,7 +259,7 @@ public sealed class MainForm : Form
             </head>
             <body>
               <div class="card">
-                <h2>Unable to reach Project Nexus</h2>
+                <h2>Unable to reach Nexus</h2>
                 <p>Server: <code>{{escapedUrl}}</code></p>
                 <p>Status: <code>{{escapedError}}</code></p>
                 <p>If your demo server is waking up from sleep, wait a few seconds and click Retry. Press <code>Ctrl+Shift+S</code> (or use the tray menu) to change the server address.</p>
