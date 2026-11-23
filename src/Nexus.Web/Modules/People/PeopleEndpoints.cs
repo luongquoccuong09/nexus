@@ -1,0 +1,343 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Infrastructure.Storage;
+using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Org;
+
+namespace Nexus.Web.Modules.People;
+
+public static class PeopleEndpoints
+{
+    public const int MaxCustomStatusLength = 100;
+
+    public sealed record UpdateCustomStatusRequest(string? CustomStatus);
+
+    public sealed record DirectoryProfileDto(
+        Guid Id,
+        string Username,
+        string DisplayName,
+        string TrustLevel,
+        bool IsUnverified,
+        Guid? DepartmentId,
+        string? DepartmentName,
+        string? BranchName,
+        string? CustomStatus,
+        string? AvatarUrl);
+
+    public static IEndpointRouteBuilder MapPeopleEndpoints(this IEndpointRouteBuilder app)
+    {
+        var people = app.MapGroup("/api/people");
+
+        people.MapGet("/directory", HandleDirectorySearchAsync);
+        people.MapPut("/me/status", HandleUpdateCustomStatusAsync);
+        people.MapPost("/me/avatar", HandleUploadAvatarAsync);
+        people.MapDelete("/me/avatar", HandleDeleteAvatarAsync);
+        people.MapGet("/{targetUserId:guid}/avatar", HandleGetAvatarAsync);
+
+        return app;
+    }
+
+    private static async Task<IResult> HandleDirectorySearchAsync(
+        HttpContext ctx,
+        [FromServices] NexusDbContext db,
+        UserManager<NexusUser> userManager,
+        IAuthorizationService authz,
+        string? q,
+        Guid? departmentId,
+        int? limit,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        if (actor is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (!authz.Can(actor.ToActorContext(), ResourceAction.DirectorySearch, new ResourceContext(ResourceKind.Organization, actor.OrganizationId)))
+        {
+            return Results.Forbid();
+        }
+
+        if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
+        {
+            return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
+        }
+
+        // Hide Disabled and Former accounts strictly in SQL (M1.10).
+        var baseQuery = db.Users
+            .AsNoTracking()
+            .Where(u => u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active);
+
+        if (departmentId.HasValue)
+        {
+            baseQuery = baseQuery.Where(u => u.DepartmentId == departmentId.Value);
+        }
+
+        var normalizedQuery = HrCsvImportService.NormalizeVietnamese(q ?? string.Empty);
+
+        IQueryable<NexusUser> orderedQuery;
+        if (!string.IsNullOrEmpty(normalizedQuery))
+        {
+            var likePattern = $"%{EscapeLike(normalizedQuery)}%";
+            orderedQuery = baseQuery
+                .Where(u =>
+                    EF.Functions.ILike(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), likePattern) ||
+                    EF.Functions.ILike(NexusDbContext.ImmutableUnaccent((u.UserName ?? string.Empty).ToLower()), likePattern) ||
+                    EF.Functions.TrigramsSimilarity(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), normalizedQuery) >= 0.25)
+                .OrderByDescending(u =>
+                    EF.Functions.TrigramsSimilarity(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), normalizedQuery))
+                .ThenBy(u => u.DisplayName);
+        }
+        else
+        {
+            orderedQuery = baseQuery.OrderBy(u => u.DisplayName);
+        }
+
+        var rows = await orderedQuery
+            .Take(pageSize)
+            .Select(u => new
+            {
+                u.Id,
+                Username = u.UserName ?? string.Empty,
+                u.DisplayName,
+                u.TrustLevel,
+                u.DepartmentId,
+                u.BranchId,
+                u.CustomStatus,
+                u.AvatarObjectKey
+            })
+            .ToListAsync(ct);
+
+        var deptIds = rows.Where(r => r.DepartmentId.HasValue).Select(r => r.DepartmentId!.Value).Distinct().ToList();
+        var branchIds = rows.Where(r => r.BranchId.HasValue).Select(r => r.BranchId!.Value).Distinct().ToList();
+
+        var deptNames = deptIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Departments.AsNoTracking().Where(d => deptIds.Contains(d.Id)).ToDictionaryAsync(d => d.Id, d => d.Name, ct);
+
+        var branchNames = branchIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Branches.AsNoTracking().Where(b => branchIds.Contains(b.Id)).ToDictionaryAsync(b => b.Id, b => b.Name, ct);
+
+        var items = rows.Select(r => new DirectoryProfileDto(
+            r.Id,
+            r.Username,
+            r.DisplayName,
+            r.TrustLevel.ToString(),
+            r.TrustLevel == TrustLevel.Unverified,
+            r.DepartmentId,
+            r.DepartmentId.HasValue && deptNames.TryGetValue(r.DepartmentId.Value, out var dn) ? dn : null,
+            r.BranchId.HasValue && branchNames.TryGetValue(r.BranchId.Value, out var bn) ? bn : null,
+            r.CustomStatus,
+            string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/people/{r.Id}/avatar"))
+            .ToList();
+
+        return Results.Ok(new { items });
+    }
+
+    private static async Task<IResult> HandleUpdateCustomStatusAsync(
+        HttpContext ctx,
+        UpdateCustomStatusRequest request,
+        UserManager<NexusUser> userManager)
+    {
+        if (!ctx.User.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var cleaned = SanitizeCustomStatus(request.CustomStatus);
+        if (cleaned is not null && cleaned.Length > MaxCustomStatusLength)
+        {
+            return Results.BadRequest(new
+            {
+                code = "invalid_custom_status",
+                message = $"Custom status must be at most {MaxCustomStatusLength} characters."
+            });
+        }
+
+        user.CustomStatus = cleaned;
+        await userManager.UpdateAsync(user);
+        return Results.Ok(new { customStatus = user.CustomStatus });
+    }
+
+    private static async Task<IResult> HandleUploadAvatarAsync(
+        HttpContext ctx,
+        UserManager<NexusUser> userManager,
+        IFileStorage storage,
+        IFileScanner scanner,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        Stream sourceStream;
+        var fileName = "avatar";
+
+        if (ctx.Request.HasFormContentType)
+        {
+            var form = await ctx.Request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file") ?? (form.Files.Count > 0 ? form.Files[0] : null);
+            if (file is null || file.Length == 0)
+            {
+                return Results.BadRequest(new { code = "missing_avatar", message = "Upload an image file." });
+            }
+
+            fileName = file.FileName;
+            sourceStream = file.OpenReadStream();
+        }
+        else
+        {
+            sourceStream = ctx.Request.Body;
+        }
+
+        MemoryStream reencoded;
+        try
+        {
+            await using (sourceStream)
+            {
+                reencoded = await AvatarProcessor.ReencodeToPngAsync(sourceStream, ct);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new { code = "invalid_avatar_image", message = ex.Message });
+        }
+
+        await using (reencoded)
+        {
+            var scan = await scanner.ScanAsync(reencoded, fileName, ct);
+            if (scan.Verdict is FileScanVerdict.Infected or FileScanVerdict.FailedClosed)
+            {
+                return Results.BadRequest(new { code = "avatar_scan_rejected", message = "Avatar failed security scanning." });
+            }
+
+            reencoded.Position = 0;
+            var stored = await storage.SaveAsync(reencoded, "image/png", ct);
+
+            var previousKey = user.AvatarObjectKey;
+            user.AvatarObjectKey = stored.ObjectKey;
+            await userManager.UpdateAsync(user);
+
+            if (!string.IsNullOrEmpty(previousKey) && !string.Equals(previousKey, stored.ObjectKey, StringComparison.Ordinal))
+            {
+                await storage.DeleteAsync(previousKey, ct);
+            }
+
+            return Results.Ok(new
+            {
+                avatarUrl = $"/api/people/{user.Id}/avatar",
+                sizeBytes = stored.SizeBytes,
+                sha256 = stored.Sha256Hex,
+                scanStatus = scan.StatusCode
+            });
+        }
+    }
+
+    private static async Task<IResult> HandleDeleteAvatarAsync(
+        HttpContext ctx,
+        UserManager<NexusUser> userManager,
+        IFileStorage storage,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var previousKey = user.AvatarObjectKey;
+        user.AvatarObjectKey = null;
+        await userManager.UpdateAsync(user);
+
+        if (!string.IsNullOrEmpty(previousKey))
+        {
+            await storage.DeleteAsync(previousKey, ct);
+        }
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> HandleGetAvatarAsync(
+        HttpContext ctx,
+        Guid targetUserId,
+        [FromServices] NexusDbContext db,
+        UserManager<NexusUser> userManager,
+        IFileStorage storage,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        if (actor is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var target = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == targetUserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active)
+            .Select(u => new { u.AvatarObjectKey })
+            .SingleOrDefaultAsync(ct);
+
+        if (target is null || string.IsNullOrEmpty(target.AvatarObjectKey))
+        {
+            return Results.NotFound();
+        }
+
+        var stream = await storage.OpenReadAsync(target.AvatarObjectKey, ct);
+        if (stream is null)
+        {
+            return Results.NotFound();
+        }
+
+        ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        ctx.Response.Headers.CacheControl = "private, max-age=300";
+        return Results.Stream(stream, "image/png");
+    }
+
+    private static string? SanitizeCustomStatus(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var filtered = new string(raw.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        return string.IsNullOrEmpty(filtered) ? null : filtered;
+    }
+
+    private static string EscapeLike(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal)
+             .Replace("%", "\\%", StringComparison.Ordinal)
+             .Replace("_", "\\_", StringComparison.Ordinal);
+}

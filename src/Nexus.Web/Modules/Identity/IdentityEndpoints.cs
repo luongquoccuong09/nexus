@@ -54,7 +54,9 @@ public static class IdentityEndpoints
         Guid? EmployeeId,
         bool MfaEnabled,
         bool MfaRequired,
-        bool MfaSetupRequired);
+        bool MfaSetupRequired,
+        string? CustomStatus,
+        string? AvatarUrl);
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder app)
     {
@@ -890,7 +892,9 @@ public static class IdentityEndpoints
         u.EmployeeId,
         u.TwoFactorEnabled,
         u.RequiresMfa,
-        u.RequiresMfa && !u.TwoFactorEnabled);
+        u.RequiresMfa && !u.TwoFactorEnabled,
+        u.CustomStatus,
+        string.IsNullOrEmpty(u.AvatarObjectKey) ? null : $"/api/people/{u.Id}/avatar");
 
     private static string ComputeSha256Hex(string input) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)));

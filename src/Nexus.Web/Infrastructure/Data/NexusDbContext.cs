@@ -29,6 +29,10 @@ public sealed class NexusDbContext
     public DbSet<AdminPasswordResetLinkEntity> AdminPasswordResetLinks => Set<AdminPasswordResetLinkEntity>();
     public DbSet<AuditLogEntity> AuditLogs => Set<AuditLogEntity>();
 
+    [DbFunction("immutable_unaccent", Schema = "public")]
+    public static string ImmutableUnaccent(string input) =>
+        throw new NotSupportedException("ImmutableUnaccent is translated to PostgreSQL SQL.");
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

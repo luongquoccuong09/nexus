@@ -3,6 +3,8 @@ using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Org;
+using Nexus.Web.Modules.People;
 using Serilog.Core;
 
 namespace Nexus.Web;
@@ -33,6 +35,8 @@ public static class NexusHost
 
         app.MapNexusOperationalEndpoints();
         app.MapIdentityEndpoints();
+        app.MapOrgEndpoints();
+        app.MapPeopleEndpoints();
 
         configureApp?.Invoke(app);
 

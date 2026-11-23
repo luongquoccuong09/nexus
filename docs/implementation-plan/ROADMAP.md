@@ -57,9 +57,9 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 **M1b — Directory**
 
-- [ ] **M1.9** Import HR CSV records by employee_code with upsert, dry run and a diff report. Suggest matches between Unverified accounts and employees for administrator review.
-- [ ] **M1.10** Search Vietnamese names using unaccent and pg_trgm. Filter by department, show minimal profiles and hide Disabled/Former accounts.
-- [ ] **M1.11** Add custom status (UX-06) and re-encoded avatar images.
+- [x] **M1.9** Import HR CSV records by employee_code with upsert, dry run and a diff report. Suggest matches between Unverified accounts and employees for administrator review.
+- [x] **M1.10** Search Vietnamese names using unaccent and pg_trgm. Filter by department, show minimal profiles and hide Disabled/Former accounts.
+- [x] **M1.11** Add custom status (UX-06) and re-encoded avatar images.
 
 **M1c — Google linking after password sign-in stabilizes**
 

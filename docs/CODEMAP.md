@@ -76,6 +76,8 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Data/DatabaseMigrator.cs` | Applies EF Core migrations strictly under `Migration` role (`dotnet run -- --migrate`) |
 | `src/Nexus.Web/Infrastructure/Data/PostgreSqlSessionTicketStore.cs` | Server-side `ITicketStore` persisting BFF session tickets in PostgreSQL `app_sessions` |
 | `src/Nexus.Web/Modules/Org/OrgEntities.cs` | Single `Organization`, `Department`, `Branch`, and `Employee` entities (`M1.1`) |
+| `src/Nexus.Web/Modules/Org/HrCsvImportService.cs` & `OrgEndpoints.cs` | RFC-4180 HR CSV upsert with dry-run diff, `Unverified` match suggestions, and department list (`M1.9`) |
+| `src/Nexus.Web/Modules/People/AvatarProcessor.cs` & `PeopleEndpoints.cs` | Vietnamese `unaccent` + `pg_trgm` directory search (`M1.10`), custom status (`UX-06`), and SkiaSharp 256×256 PNG avatar re-encoding (`M1.11`) |
 | `src/Nexus.Web/Modules/Admin/AuditLogEntity.cs` | Append-only `audit_logs` entity (`M1.6` / `M7.1`) |
 | `src/Nexus.Web/Modules/Identity/NexusUser.cs` | `NexusUser : IdentityUser<Guid>` + `AdminPasswordResetLinkEntity` (`M1.2` / `M1.5`) |
 | `src/Nexus.Web/Modules/Identity/UsernameAndPasswordPolicies.cs` | `UsernamePolicy` (3–32 chars, reserved list) + `CommonPasswordValidator` (`>= 12` chars, `SEC-21`) |
@@ -99,6 +101,7 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
 | `tests/Nexus.IntegrationTests/PostgresFoundationTests.cs` | Testcontainers PostgreSQL 17 tests verifying separate roles (`nexus_runtime` denied DDL), `IdempotencyEndpointFilter` (`SEC-19`), `ConditionalTransition`, Data Protection keys, PostgreSQL sessions, SignalR, and private PDF acceptance |
 | `tests/Nexus.IntegrationTests/IdentityM1aTests.cs` | Testcontainers PostgreSQL 17 tests for `M1a` covering `SEC-01`, `SEC-08`, `SEC-16`, `SEC-20`, `SEC-20b`, `SEC-21`, `SEC-24`, `M1.7` devices, and `M1.8` RFC 6238 TOTP admin MFA |
+| `tests/Nexus.IntegrationTests/DirectoryM1bTests.cs` | Testcontainers PostgreSQL 17 tests for `M1b` covering HR CSV dry-run/upsert/diff/match suggestions (`M1.9`), Vietnamese `unaccent`+`pg_trgm` directory search (`M1.10`), custom status, and SkiaSharp avatar re-encoding/EXIF stripping (`M1.11`) |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

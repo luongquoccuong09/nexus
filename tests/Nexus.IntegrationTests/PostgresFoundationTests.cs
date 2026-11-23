@@ -42,6 +42,8 @@ public sealed class PostgresContainerFixture : IAsyncLifetime
         {
             await adminConn.OpenAsync();
             const string roleInitSql = """
+                CREATE EXTENSION IF NOT EXISTS unaccent;
+                CREATE EXTENSION IF NOT EXISTS pg_trgm;
                 CREATE ROLE nexus_migrator LOGIN PASSWORD 'migrator_test_pw';
                 CREATE ROLE nexus_runtime LOGIN PASSWORD 'runtime_test_pw';
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -51,6 +53,8 @@ public sealed class PostgresContainerFixture : IAsyncLifetime
                     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexus_runtime;
                 ALTER DEFAULT PRIVILEGES FOR ROLE nexus_migrator IN SCHEMA public
                     GRANT USAGE, SELECT ON SEQUENCES TO nexus_runtime;
+                ALTER DEFAULT PRIVILEGES FOR ROLE nexus_migrator IN SCHEMA public
+                    GRANT EXECUTE ON FUNCTIONS TO nexus_runtime;
                 """;
             await using var cmd = new NpgsqlCommand(roleInitSql, adminConn);
             await cmd.ExecuteNonQueryAsync();

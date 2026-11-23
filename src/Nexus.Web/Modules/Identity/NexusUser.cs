@@ -16,6 +16,8 @@ public sealed class NexusUser : IdentityUser<Guid>
     public Guid? EmployeeId { get; set; }
     public Guid? DepartmentId { get; set; }
     public Guid? BranchId { get; set; }
+    public string? CustomStatus { get; set; }
+    public string? AvatarObjectKey { get; set; }
     public string? TermsVersion { get; set; }
     public DateTimeOffset? TermsAcceptedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -49,6 +51,8 @@ public sealed class NexusUserConfiguration : IEntityTypeConfiguration<NexusUser>
         builder.Property(x => x.EmployeeId).HasColumnName("employee_id");
         builder.Property(x => x.DepartmentId).HasColumnName("department_id");
         builder.Property(x => x.BranchId).HasColumnName("branch_id");
+        builder.Property(x => x.CustomStatus).HasColumnName("custom_status").HasMaxLength(100);
+        builder.Property(x => x.AvatarObjectKey).HasColumnName("avatar_object_key").HasMaxLength(256);
         builder.Property(x => x.TermsVersion).HasColumnName("terms_version").HasMaxLength(32);
         builder.Property(x => x.TermsAcceptedAt).HasColumnName("terms_accepted_at");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();

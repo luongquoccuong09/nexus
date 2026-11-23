@@ -31,6 +31,9 @@
 | `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{id}`, `POST /api/auth/sessions/revoke-others` | Authenticated (`Active`) | Signed-in device list (`<= 50`) and remote sign-out | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/enable` | Authenticated (`Active`) | RFC 6238 TOTP authenticator enrollment + recovery codes | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `GET /api/admin/accounts`, `POST /api/admin/accounts/{id}/{verify,rename,status,reset-link}` | Verified Admin + TOTP MFA | Account listing (`<= 50`), HR employee verification, impersonator rename, disablement with immediate session/SignalR revocation, audited one-time reset links | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `GET /api/org/departments`, `POST /api/org/employees/import?dryRun=true\|false`, `GET /api/org/employees/match-suggestions` | Active (`departments`); Verified `HRAdmin` + MFA (`import`); Verified `HRAdmin`/`SystemAdmin` + MFA (`suggestions`) | Department list (`<= 50`), idempotent HR CSV upsert with dry-run diff report, and `Unverified` → employee match suggestions (`M1.9`) | `src/Nexus.Web/Modules/Org/OrgEndpoints.cs` |
+| `GET /api/people/directory?q=&departmentId=&limit=50` | Authenticated (`Active`) | Vietnamese diacritic-insensitive (`unaccent` + `pg_trgm`) directory search returning minimal profiles; hides `Disabled`/`Former` (`M1.10`) | `src/Nexus.Web/Modules/People/PeopleEndpoints.cs` |
+| `PUT /api/people/me/status`, `POST/DELETE /api/people/me/avatar`, `GET /api/people/{id}/avatar` | Authenticated (`Active`) | Custom status (`UX-06`, max 100 chars) and server-side SkiaSharp re-encoded 256×256 PNG avatars stripping EXIF/metadata (`M1.11`) | `src/Nexus.Web/Modules/People/PeopleEndpoints.cs` |
 
 ## 3. SignalR hub contract (planned M0 / M2.4)
 

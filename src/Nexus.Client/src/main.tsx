@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
@@ -13,6 +13,27 @@ interface UserSummary {
   mfaEnabled: boolean;
   mfaRequired: boolean;
   mfaSetupRequired: boolean;
+  customStatus?: string | null;
+  avatarUrl?: string | null;
+}
+
+interface DirectoryProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  trustLevel: string;
+  isUnverified: boolean;
+  departmentId?: string | null;
+  departmentName?: string | null;
+  branchName?: string | null;
+  customStatus?: string | null;
+  avatarUrl?: string | null;
+}
+
+interface DepartmentItem {
+  id: string;
+  code: string;
+  name: string;
 }
 
 interface SessionItem {
@@ -31,7 +52,26 @@ interface RegistrationPolicy {
   confidentialityNotice: string;
 }
 
-function UserNameWithBadge({ user }: { user: Pick<UserSummary, 'displayName' | 'isUnverified' | 'trustLevel'> }) {
+interface HrImportReport {
+  dryRun: boolean;
+  totalRows: number;
+  addedCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deactivatedCount: number;
+  errors: string[];
+  matchSuggestions: Array<{
+    userId: string;
+    username: string;
+    displayName: string;
+    employeeCode: string;
+    employeeFullName: string;
+    confidence: string;
+    reason: string;
+  }>;
+}
+
+function UserNameWithBadge({ user }: { user: { displayName: string; isUnverified: boolean } }) {
   return (
     <span>
       <strong>{user.displayName}</strong>
@@ -44,22 +84,32 @@ function UserNameWithBadge({ user }: { user: Pick<UserSummary, 'displayName' | '
   );
 }
 
+function AvatarThumb({ displayName, avatarUrl, cacheKey }: { displayName: string; avatarUrl?: string | null; cacheKey?: number }) {
+  if (avatarUrl) {
+    const src = cacheKey ? `${avatarUrl}?v=${cacheKey}` : avatarUrl;
+    return <img className="nx-avatar" src={src} alt={`${displayName} avatar`} />;
+  }
+  const initials = displayName.trim().slice(0, 2).toUpperCase() || '?';
+  return <span className="nx-avatar" aria-hidden="true">{initials}</span>;
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState('Connecting…');
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [workspaceTab, setWorkspaceTab] = useState<'directory' | 'security' | 'hr'>('directory');
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [avatarBust, setAvatarBust] = useState(0);
 
-  // Login state
+  // Login & Register state
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginTotp, setLoginTotp] = useState('');
   const [mfaChallenge, setMfaChallenge] = useState(false);
 
-  // Register state
   const [regUsername, setRegUsername] = useState('');
   const [regDisplayName, setRegDisplayName] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -67,12 +117,23 @@ function App() {
   const [regTerms, setRegTerms] = useState(false);
   const [regHoneypot, setRegHoneypot] = useState('');
 
-  // Password change & MFA setup state
+  // Profile, Password & MFA state
+  const [customStatusInput, setCustomStatusInput] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [mfaSecret, setMfaSecret] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+
+  // Directory state
+  const [dirQuery, setDirQuery] = useState('');
+  const [dirDeptId, setDirDeptId] = useState('');
+  const [departments, setDepartments] = useState<DepartmentItem[]>([]);
+  const [directory, setDirectory] = useState<DirectoryProfile[]>([]);
+
+  // HR CSV Import state
+  const [hrCsv, setHrCsv] = useState('employee_code,full_name,email,department_code,department_name,branch_code,branch_name,is_active\n');
+  const [hrReport, setHrReport] = useState<HrImportReport | null>(null);
 
   const loadSessions = useCallback(async () => {
     const res = await fetch('/api/auth/sessions', { credentials: 'same-origin' });
@@ -82,17 +143,39 @@ function App() {
     }
   }, []);
 
+  const loadDirectory = useCallback(async (q: string, deptId: string) => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set('q', q.trim());
+    if (deptId) params.set('departmentId', deptId);
+    params.set('limit', '50');
+    const res = await fetch(`/api/people/directory?${params.toString()}`, { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      setDirectory(data.items ?? []);
+    }
+  }, []);
+
+  const loadDepartments = useCallback(async () => {
+    const res = await fetch('/api/org/departments?limit=50', { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      setDepartments(data.items ?? []);
+    }
+  }, []);
+
   const refreshMe = useCallback(async () => {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
     if (res.ok) {
       const me: UserSummary = await res.json();
       setUser(me);
-      await loadSessions();
+      setCustomStatusInput(me.customStatus ?? '');
+      await Promise.all([loadSessions(), loadDepartments(), loadDirectory('', '')]);
     } else {
       setUser(null);
       setSessions([]);
+      setDirectory([]);
     }
-  }, [loadSessions]);
+  }, [loadSessions, loadDepartments, loadDirectory]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -142,8 +225,7 @@ function App() {
     setMfaChallenge(false);
     setLoginPassword('');
     setLoginTotp('');
-    setUser(data);
-    await loadSessions();
+    await refreshMe();
   }
 
   async function handleRegister(e: FormEvent) {
@@ -169,16 +251,56 @@ function App() {
       return;
     }
     setRegPassword('');
-    setUser(data);
     setNotice('Account created as Unverified.');
-    await loadSessions();
+    await refreshMe();
   }
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     setUser(null);
     setSessions([]);
+    setDirectory([]);
     setNotice('Signed out.');
+  }
+
+  async function handleUpdateCustomStatus(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    setNotice('');
+    const res = await fetch('/api/people/me/status', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customStatus: customStatusInput })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.message || 'Unable to update custom status.');
+      return;
+    }
+    setNotice('Custom status updated.');
+    await refreshMe();
+  }
+
+  async function handleAvatarChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError('');
+    setNotice('');
+    const res = await fetch('/api/people/me/avatar', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.message || 'Unable to upload avatar.');
+      return;
+    }
+    setAvatarBust(v => v + 1);
+    setNotice('Avatar re-encoded and updated.');
+    await refreshMe();
   }
 
   async function handleChangePassword(e: FormEvent) {
@@ -207,9 +329,7 @@ function App() {
       method: 'DELETE',
       credentials: 'same-origin'
     });
-    if (res.ok) {
-      await loadSessions();
-    }
+    if (res.ok) await loadSessions();
   }
 
   async function handleStartMfa() {
@@ -242,6 +362,25 @@ function App() {
     await refreshMe();
   }
 
+  async function handleHrImport(dryRun: boolean) {
+    setError('');
+    setNotice('');
+    const res = await fetch(`/api/org/employees/import?dryRun=${dryRun ? 'true' : 'false'}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csvContent: hrCsv })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.message || (data.errors ? data.errors.join(' ') : 'Import failed.'));
+      return;
+    }
+    setHrReport(data);
+    setNotice(dryRun ? 'Dry-run diff generated.' : 'HR directory import applied.');
+    if (!dryRun) await loadDepartments();
+  }
+
   return (
     <main className="nx-shell">
       <header className="nx-header">
@@ -250,7 +389,11 @@ function App() {
           <p className="nx-muted" role="status" style={{ margin: 0 }}>{apiStatus}</p>
         </div>
         {user && (
-          <button className="nx-btn" type="button" onClick={handleLogout}>Sign out</button>
+          <div className="nx-flex">
+            <AvatarThumb displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} />
+            <UserNameWithBadge user={user} />
+            <button className="nx-btn" type="button" onClick={handleLogout}>Sign out</button>
+          </div>
         )}
       </header>
 
@@ -326,76 +469,181 @@ function App() {
         </section>
       ) : (
         <>
-          <section className="nx-card">
-            <h2 style={{ marginTop: 0 }}>Account</h2>
-            <p>
-              <UserNameWithBadge user={user} />
-              <span className="nx-badge role">{user.orgRole}</span>
-            </p>
-            <p className="nx-muted">Username: <code>@{user.username}</code> · Status: {user.status}</p>
-            {user.mfaSetupRequired && (
-              <div className="nx-banner">Administrative roles require TOTP multi-factor authentication. Set up MFA below.</div>
+          <div className="nx-tabs">
+            <button type="button" className={`nx-btn ${workspaceTab === 'directory' ? 'primary' : ''}`} onClick={() => setWorkspaceTab('directory')}>
+              Directory
+            </button>
+            <button type="button" className={`nx-btn ${workspaceTab === 'security' ? 'primary' : ''}`} onClick={() => setWorkspaceTab('security')}>
+              Profile &amp; Security
+            </button>
+            {user.orgRole === 'HRAdmin' && (
+              <button type="button" className={`nx-btn ${workspaceTab === 'hr' ? 'primary' : ''}`} onClick={() => setWorkspaceTab('hr')}>
+                HR CSV Import
+              </button>
             )}
-          </section>
+          </div>
 
-          <section className="nx-card">
-            <h2 style={{ marginTop: 0 }}>Change password</h2>
-            <form onSubmit={handleChangePassword}>
-              <div className="nx-field">
-                <label htmlFor="cur-pw">Current password</label>
-                <input id="cur-pw" type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
-              </div>
-              <div className="nx-field">
-                <label htmlFor="new-pw">New password (at least 12 characters)</label>
-                <input id="new-pw" type="password" autoComplete="new-password" required minLength={12} value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-              </div>
-              <button className="nx-btn primary" type="submit">Update password</button>
-            </form>
-          </section>
-
-          <section className="nx-card">
-            <h2 style={{ marginTop: 0 }}>Authenticator MFA (TOTP)</h2>
-            {user.mfaEnabled ? (
-              <p className="nx-ok">TOTP multi-factor authentication is active on your account.</p>
-            ) : mfaSecret ? (
-              <form onSubmit={handleEnableMfa}>
-                <p className="nx-muted">Add this shared key to your authenticator app: <code>{mfaSecret}</code></p>
-                <div className="nx-field">
-                  <label htmlFor="mfa-code">6-digit code</label>
-                  <input id="mfa-code" type="text" inputMode="numeric" required value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
+          {workspaceTab === 'directory' && (
+            <section className="nx-card">
+              <h2 style={{ marginTop: 0 }}>Directory</h2>
+              <form
+                className="nx-flex"
+                style={{ marginBottom: 14, flexWrap: 'wrap' }}
+                onSubmit={e => { e.preventDefault(); void loadDirectory(dirQuery, dirDeptId); }}
+              >
+                <div className="nx-field" style={{ flex: 2, minWidth: 200, marginBottom: 0 }}>
+                  <label htmlFor="dir-search">Search name or username</label>
+                  <input id="dir-search" type="text" placeholder="e.g. Nguyen Van An, Dang…" value={dirQuery} onChange={e => setDirQuery(e.target.value)} />
                 </div>
-                <button className="nx-btn primary" type="submit">Verify &amp; enable MFA</button>
+                <div className="nx-field" style={{ flex: 1, minWidth: 160, marginBottom: 0 }}>
+                  <label htmlFor="dir-dept">Department</label>
+                  <select id="dir-dept" value={dirDeptId} onChange={e => { setDirDeptId(e.target.value); void loadDirectory(dirQuery, e.target.value); }}>
+                    <option value="">All departments</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </div>
+                <button className="nx-btn primary" type="submit" style={{ alignSelf: 'flex-end' }}>Search</button>
               </form>
-            ) : (
-              <button className="nx-btn" type="button" onClick={handleStartMfa}>Set up authenticator app</button>
-            )}
-            {recoveryCodes.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <p className="nx-muted">Save these one-time recovery codes:</p>
-                <code>{recoveryCodes.join('  ')}</code>
-              </div>
-            )}
-          </section>
 
-          <section className="nx-card">
-            <h2 style={{ marginTop: 0 }}>Signed-in devices ({sessions.length})</h2>
-            {sessions.map(s => (
-              <div className="nx-row" key={s.id}>
-                <div>
-                  <div>
-                    <strong>{s.isCurrent ? 'Current session' : 'Other session'}</strong>
-                    <span className="nx-muted"> · {s.ipAddress}</span>
+              {directory.length === 0 ? (
+                <p className="nx-muted">No matching active accounts.</p>
+              ) : (
+                directory.map(p => (
+                  <div className="nx-row" key={p.id}>
+                    <div className="nx-flex">
+                      <AvatarThumb displayName={p.displayName} avatarUrl={p.avatarUrl} cacheKey={avatarBust} />
+                      <div>
+                        <div><UserNameWithBadge user={p} /></div>
+                        <div className="nx-muted">
+                          @{p.username}
+                          {p.departmentName ? ` · ${p.departmentName}` : ''}
+                          {p.branchName ? ` · ${p.branchName}` : ''}
+                        </div>
+                        {p.customStatus && <div className="nx-muted">Status: {p.customStatus}</div>}
+                      </div>
+                    </div>
                   </div>
-                  <div className="nx-muted">{s.userAgent}</div>
-                </div>
-                {!s.isCurrent && (
-                  <button className="nx-btn danger" type="button" onClick={() => handleRevokeSession(s.id)}>
-                    Sign out
-                  </button>
+                ))
+              )}
+            </section>
+          )}
+
+          {workspaceTab === 'security' && (
+            <>
+              <section className="nx-card">
+                <h2 style={{ marginTop: 0 }}>Profile &amp; Custom Status</h2>
+                <p>
+                  <UserNameWithBadge user={user} />
+                  <span className="nx-badge role">{user.orgRole}</span>
+                </p>
+                {user.mfaSetupRequired && (
+                  <div className="nx-banner">Administrative roles require TOTP multi-factor authentication. Set up MFA below.</div>
                 )}
+                <form onSubmit={handleUpdateCustomStatus} className="nx-flex" style={{ marginBottom: 14 }}>
+                  <div className="nx-field" style={{ flex: 1, marginBottom: 0 }}>
+                    <label htmlFor="custom-status">Custom status (UX-06)</label>
+                    <input id="custom-status" type="text" maxLength={100} placeholder="e.g. On site until 15:00" value={customStatusInput} onChange={e => setCustomStatusInput(e.target.value)} />
+                  </div>
+                  <button className="nx-btn primary" type="submit" style={{ alignSelf: 'flex-end' }}>Save</button>
+                </form>
+                <div className="nx-field">
+                  <label htmlFor="avatar-upload">Avatar image (re-encoded to 256×256 PNG, max 2 MB)</label>
+                  <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarChange} />
+                </div>
+              </section>
+
+              <section className="nx-card">
+                <h2 style={{ marginTop: 0 }}>Change password</h2>
+                <form onSubmit={handleChangePassword}>
+                  <div className="nx-field">
+                    <label htmlFor="cur-pw">Current password</label>
+                    <input id="cur-pw" type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
+                  </div>
+                  <div className="nx-field">
+                    <label htmlFor="new-pw">New password (at least 12 characters)</label>
+                    <input id="new-pw" type="password" autoComplete="new-password" required minLength={12} value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                  </div>
+                  <button className="nx-btn primary" type="submit">Update password</button>
+                </form>
+              </section>
+
+              <section className="nx-card">
+                <h2 style={{ marginTop: 0 }}>Authenticator MFA (TOTP)</h2>
+                {user.mfaEnabled ? (
+                  <p className="nx-ok">TOTP multi-factor authentication is active on your account.</p>
+                ) : mfaSecret ? (
+                  <form onSubmit={handleEnableMfa}>
+                    <p className="nx-muted">Add this shared key to your authenticator app: <code>{mfaSecret}</code></p>
+                    <div className="nx-field">
+                      <label htmlFor="mfa-code">6-digit code</label>
+                      <input id="mfa-code" type="text" inputMode="numeric" required value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
+                    </div>
+                    <button className="nx-btn primary" type="submit">Verify &amp; enable MFA</button>
+                  </form>
+                ) : (
+                  <button className="nx-btn" type="button" onClick={handleStartMfa}>Set up authenticator app</button>
+                )}
+                {recoveryCodes.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <p className="nx-muted">Save these one-time recovery codes:</p>
+                    <code>{recoveryCodes.join('  ')}</code>
+                  </div>
+                )}
+              </section>
+
+              <section className="nx-card">
+                <h2 style={{ marginTop: 0 }}>Signed-in devices ({sessions.length})</h2>
+                {sessions.map(s => (
+                  <div className="nx-row" key={s.id}>
+                    <div>
+                      <div>
+                        <strong>{s.isCurrent ? 'Current session' : 'Other session'}</strong>
+                        <span className="nx-muted"> · {s.ipAddress}</span>
+                      </div>
+                      <div className="nx-muted">{s.userAgent}</div>
+                    </div>
+                    {!s.isCurrent && (
+                      <button className="nx-btn danger" type="button" onClick={() => handleRevokeSession(s.id)}>
+                        Sign out
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </section>
+            </>
+          )}
+
+          {workspaceTab === 'hr' && user.orgRole === 'HRAdmin' && (
+            <section className="nx-card">
+              <h2 style={{ marginTop: 0 }}>HR CSV Import (M1.9)</h2>
+              <div className="nx-field">
+                <label htmlFor="hr-csv">CSV records</label>
+                <textarea id="hr-csv" rows={6} value={hrCsv} onChange={e => setHrCsv(e.target.value)} />
               </div>
-            ))}
-          </section>
+              <div className="nx-tabs">
+                <button className="nx-btn" type="button" onClick={() => void handleHrImport(true)}>Dry run (diff)</button>
+                <button className="nx-btn primary" type="button" onClick={() => void handleHrImport(false)}>Apply import</button>
+              </div>
+              {hrReport && (
+                <div>
+                  <p className="nx-muted">
+                    {hrReport.dryRun ? 'Dry run' : 'Applied'} · Total: {hrReport.totalRows} · Added: {hrReport.addedCount} · Updated: {hrReport.updatedCount} · Unchanged: {hrReport.unchangedCount} · Deactivated: {hrReport.deactivatedCount}
+                  </p>
+                  {hrReport.matchSuggestions.length > 0 && (
+                    <div>
+                      <strong>Suggested Unverified matches ({hrReport.matchSuggestions.length})</strong>
+                      {hrReport.matchSuggestions.map(m => (
+                        <div className="nx-row" key={`${m.userId}-${m.employeeCode}`}>
+                          <span>{m.displayName} (@{m.username}) → <strong>{m.employeeCode}</strong> ({m.employeeFullName})</span>
+                          <span className="nx-badge role">{m.confidence}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </>
       )}
     </main>
