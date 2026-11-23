@@ -42,10 +42,13 @@
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+  user-select: none;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.08s ease, box-shadow 0.14s ease, opacity 0.14s ease;
 }
 
-.nx-btn:hover { background: var(--bg-hover); }
+.nx-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--brand-400); }
+.nx-btn:active:not(:disabled) { background: var(--bg-active); border-color: var(--brand-500); transform: scale(0.97); }
+.nx-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
 .nx-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .nx-btn.sm { padding: 5px 10px; font-size: 12px; }
 .nx-btn.icon-only { padding: 7px; width: 34px; height: 34px; }
@@ -56,20 +59,23 @@
   border-color: var(--brand-600);
   color: var(--text-on-brand);
 }
-.nx-btn.primary:hover { background: var(--brand-700); border-color: var(--brand-700); }
+.nx-btn.primary:hover:not(:disabled) { background: var(--brand-700); border-color: var(--brand-700); }
+.nx-btn.primary:active:not(:disabled) { background: var(--brand-800); border-color: var(--brand-800); transform: scale(0.97); }
 
 .nx-btn.ghost {
   border-color: transparent;
   background: transparent;
 }
-.nx-btn.ghost:hover { background: var(--bg-hover); }
+.nx-btn.ghost:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; }
+.nx-btn.ghost:active:not(:disabled) { background: var(--bg-active); border-color: transparent; transform: scale(0.97); }
 
 .nx-btn.danger {
   border-color: var(--danger-border);
   color: var(--danger);
   background: transparent;
 }
-.nx-btn.danger:hover { background: var(--danger-bg); }
+.nx-btn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); }
+.nx-btn.danger:active:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); transform: scale(0.97); }
 
 /* Badges */
 .nx-badge {

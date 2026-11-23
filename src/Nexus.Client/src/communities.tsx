@@ -55,6 +55,7 @@ interface PostCommentDto {
   authorDisplayName: string;
   body: string;
   createdAt: string;
+  pending?: boolean;
 }
 
 interface PostReactionDto {
@@ -103,6 +104,7 @@ interface ChannelPostDto {
   comments: PostCommentDto[];
   reactions: PostReactionDto[];
   poll?: PostPollDto | null;
+  pending?: boolean;
 }
 
 interface CommunityMemberDto {
@@ -546,46 +548,132 @@ export function CommunitiesWorkspace({
 
   async function handleCreatePost(e: FormEvent) {
     e.preventDefault();
-    if (!selectedConversationId || !postBody.trim()) return;
+    if (!selectedConversationId || !postBody.trim() || posting) return;
     setError('');
     setNotice('');
     setPosting(true);
-    try {
-      const cleanedPollOptions = pollOptions.map(o => o.trim()).filter(Boolean);
-      const pollPayload = includePoll && pollQuestion.trim() && cleanedPollOptions.length >= 2
-        ? {
-            question: pollQuestion.trim(),
-            options: cleanedPollOptions,
-            allowMultiple: pollAllowMultiple
-          }
-        : null;
 
-      const res = await fetch(`/api/channels/${selectedConversationId}/posts`, {
+    const targetConvId = selectedConversationId;
+    const savedTitle = postTitle;
+    const savedBody = postBody;
+    const savedIsAnnouncement = isAnnouncement;
+    const savedRequiresAck = requiresAck;
+    const savedIncludePoll = includePoll;
+    const savedPollQuestion = pollQuestion;
+    const savedPollOptions = pollOptions;
+    const savedPollAllowMultiple = pollAllowMultiple;
+
+    const cleanedPollOptions = pollOptions.map(o => o.trim()).filter(Boolean);
+    const pollPayload = includePoll && pollQuestion.trim() && cleanedPollOptions.length >= 2
+      ? {
+          question: pollQuestion.trim(),
+          options: cleanedPollOptions,
+          allowMultiple: pollAllowMultiple
+        }
+      : null;
+
+    const tempPostId = `temp-post-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const nowIso = new Date().toISOString();
+    const optimisticPost: ChannelPostDto = {
+      id: tempPostId,
+      conversationId: targetConvId,
+      authorUserId: currentUserId,
+      authorDisplayName: currentDisplayName,
+      title: savedTitle.trim() || null,
+      body: savedBody.trim(),
+      isAnnouncement: canManage && savedIsAnnouncement,
+      requiresAcknowledgment: canManage && savedIsAnnouncement && savedRequiresAck,
+      isPinned: false,
+      createdAt: nowIso,
+      acknowledgedCount: 0,
+      totalRecipients: 0,
+      acknowledgedByMe: false,
+      poll: pollPayload
+        ? {
+            id: `temp-poll-${tempPostId}`,
+            question: pollPayload.question,
+            allowMultiple: pollPayload.allowMultiple,
+            totalVoters: 0,
+            options: pollPayload.options.map((label, idx) => ({
+              id: `opt-${idx}`,
+              label,
+              votes: 0,
+              votedByMe: false
+            }))
+          }
+        : null,
+      comments: [],
+      reactions: [],
+      pending: true
+    };
+
+    // Show the new post immediately in dimmed pending state and clear the composer in 0ms.
+    updateFeedPosts(targetConvId, prev => {
+      const pinned = prev.filter(p => p.isPinned);
+      const regular = prev.filter(p => !p.isPinned);
+      return [...pinned, optimisticPost, ...regular];
+    });
+    setPostTitle('');
+    setPostBody('');
+    setIsAnnouncement(false);
+    setRequiresAck(false);
+    setIncludePoll(false);
+    setPollQuestion('');
+    setPollOptions(['', '']);
+    setPollAllowMultiple(false);
+
+    try {
+      const res = await fetch(`/api/channels/${targetConvId}/posts`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: postTitle.trim() || null,
-          body: postBody.trim(),
-          isAnnouncement: canManage && isAnnouncement,
-          requiresAcknowledgment: canManage && isAnnouncement && requiresAck,
+          title: savedTitle.trim() || null,
+          body: savedBody.trim(),
+          isAnnouncement: canManage && savedIsAnnouncement,
+          requiresAcknowledgment: canManage && savedIsAnnouncement && savedRequiresAck,
           poll: pollPayload
         })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        updateFeedPosts(targetConvId, prev => prev.filter(p => p.id !== tempPostId));
+        setPostTitle(savedTitle);
+        setPostBody(savedBody);
+        setIsAnnouncement(savedIsAnnouncement);
+        setRequiresAck(savedRequiresAck);
+        setIncludePoll(savedIncludePoll);
+        setPollQuestion(savedPollQuestion);
+        setPollOptions(savedPollOptions);
+        setPollAllowMultiple(savedPollAllowMultiple);
         setError(data.message || 'Unable to publish post.');
         return;
       }
-      setPostTitle('');
-      setPostBody('');
-      setIsAnnouncement(false);
-      setRequiresAck(false);
-      setIncludePoll(false);
-      setPollQuestion('');
-      setPollOptions(['', '']);
-      setPollAllowMultiple(false);
-      void loadPosts(selectedConversationId, true);
+
+      updateFeedPosts(targetConvId, prev => prev.map(p =>
+        p.id === tempPostId
+          ? {
+              ...p,
+              id: data.id ?? p.id,
+              createdAt: data.createdAt ?? p.createdAt,
+              pending: false
+            }
+          : p
+      ));
+      if (pollPayload || (canManage && savedIsAnnouncement && savedRequiresAck)) {
+        void loadPosts(targetConvId, true);
+      }
+    } catch {
+      updateFeedPosts(targetConvId, prev => prev.filter(p => p.id !== tempPostId));
+      setPostTitle(savedTitle);
+      setPostBody(savedBody);
+      setIsAnnouncement(savedIsAnnouncement);
+      setRequiresAck(savedRequiresAck);
+      setIncludePoll(savedIncludePoll);
+      setPollQuestion(savedPollQuestion);
+      setPollOptions(savedPollOptions);
+      setPollAllowMultiple(savedPollAllowMultiple);
+      setError('Unable to publish post. Check your connection and try again.');
     } finally {
       setPosting(false);
     }
@@ -752,7 +840,8 @@ export function CommunitiesWorkspace({
       authorUserId: currentUserId,
       authorDisplayName: currentDisplayName,
       body: draft,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      pending: true
     };
 
     setCommentDrafts(prev => ({ ...prev, [postId]: '' }));
@@ -1204,6 +1293,12 @@ export function CommunitiesWorkspace({
                       }
                       value={postBody}
                       onChange={e => setPostBody(e.target.value)}
+                      onKeyDown={e => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && postBody.trim() && !posting) {
+                          e.preventDefault();
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }}
                       required
                     />
 
@@ -1320,12 +1415,12 @@ export function CommunitiesWorkspace({
                       </Button>
                     </div>
                   </form>
-                ) : (
+                ) : !loadingPosts ? (
                   <div className="nx-readonly-banner" role="note">
                     <Megaphone size={15} aria-hidden="true" />
                     <span>Only community owners and admins can publish new posts in this channel. You can still react, comment, and acknowledge announcements.</span>
                   </div>
-                )}
+                ) : null}
 
                 {/* Posts List */}
                 {loadingPosts && posts.length === 0 ? (
@@ -1340,7 +1435,7 @@ export function CommunitiesWorkspace({
                     return (
                       <article
                         key={post.id}
-                        className={`nx-post-card ${post.isAnnouncement ? 'announcement' : ''} ${post.isPinned ? 'pinned' : ''}`}
+                        className={`nx-post-card ${post.isAnnouncement ? 'announcement' : ''} ${post.isPinned ? 'pinned' : ''} ${post.pending ? 'pending' : ''}`}
                       >
                         <header className="nx-post-head">
                           <div className="nx-post-author">
@@ -1352,7 +1447,9 @@ export function CommunitiesWorkspace({
                             <div>
                               <div className="nx-post-author-row">
                                 <strong>{post.authorDisplayName}</strong>
-                                <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>
+                                {post.pending
+                                  ? <span className="nx-pending-label">Publishing…</span>
+                                  : <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>}
                               </div>
                             </div>
                           </div>
@@ -1506,10 +1603,12 @@ export function CommunitiesWorkspace({
                         {commentsOpen && (
                           <div className="nx-comments-box">
                             {post.comments.map(c => (
-                              <div className="nx-comment-item" key={c.id}>
+                              <div className={`nx-comment-item ${c.pending ? 'pending' : ''}`} key={c.id}>
                                 <div className="nx-comment-head">
                                   <strong>{c.authorDisplayName}</strong>
-                                  <span className="nx-msg-time">{formatPostTime(c.createdAt)}</span>
+                                  {c.pending
+                                    ? <span className="nx-pending-label">Sending…</span>
+                                    : <span className="nx-msg-time">{formatPostTime(c.createdAt)}</span>}
                                 </div>
                                 <div
                                   className="nx-msg-body"

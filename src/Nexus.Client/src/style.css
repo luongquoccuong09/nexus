@@ -773,7 +773,8 @@ body {
   border-radius: 14px 14px 4px 14px;
 }
 
-.nx-msg-row.pending .nx-msg-bubble { opacity: 0.72; }
+.nx-msg-row .nx-msg-bubble { transition: opacity 0.22s ease; }
+.nx-msg-row.pending .nx-msg-bubble { opacity: 0.58; }
 
 .nx-msg-head {
   display: flex;
@@ -1633,7 +1634,8 @@ body {
   text-align: left;
 }
 
-.nx-poll-opt-btn:hover { border-color: var(--brand-500); }
+.nx-poll-opt-btn:hover { border-color: var(--brand-500); background: var(--bg-hover); }
+.nx-poll-opt-btn:active { transform: scale(0.99); background: var(--bg-active); }
 .nx-poll-opt-btn.voted { border-color: var(--brand-600); font-weight: 600; }
 
 .nx-poll-opt-fill {
@@ -1708,6 +1710,12 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .nx-btn,
+  .nx-btn:active:not(:disabled),
+  .nx-poll-opt-btn:active,
+  .nx-post-card,
+  .nx-comment-item,
+  .nx-msg-row .nx-msg-bubble,
   .nx-react-pill,
   .nx-react-pill:active,
   .nx-react-pill.active {
@@ -1727,9 +1735,30 @@ body {
   gap: 8px;
 }
 
+.nx-post-card {
+  transition: opacity 0.22s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.nx-post-card.pending {
+  opacity: 0.58;
+  pointer-events: none;
+  border-style: dashed;
+}
+
 .nx-comment-item {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-soft);
+  transition: opacity 0.22s ease;
+}
+
+.nx-comment-item.pending {
+  opacity: 0.58;
+}
+
+.nx-pending-label {
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-muted);
 }
 
 .nx-comment-item:last-of-type {
