@@ -278,6 +278,12 @@ function App() {
     localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(''), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   // Prevent accidental file drops outside the chat dropzone from navigating WebView2/browser away.
   useEffect(() => {
     const preventFileNav = (ev: DragEvent) => {

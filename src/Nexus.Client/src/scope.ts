@@ -23,7 +23,7 @@ export function chatFetch(path: string, init?: RequestInit) {
 }
 
 export function orgFetch(orgId: string, path: string, init?: RequestInit) {
-  const scoped = /^\/api\/(?:people|org|conversations|communities|channels|posts|polls|files|sync|admin)(?:\/|\?|$)/.test(path);
+  const scoped = /^\/api\/(?:me|people|org|conversations|communities|channels|posts|polls|files|sync|admin)(?:\/|\?|$)/.test(path);
   return window.fetch(scoped ? orgApiPath(orgId, path) : path, init);
 }
 
