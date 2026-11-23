@@ -1233,18 +1233,29 @@ export function ChatWorkspace({
               <div>
                 {conversationFiles.map(f => (
                   <div className="nx-row" key={f.id}>
-                    <div className="nx-att-file-meta">
-                      {f.thumbnailUrl ? (
-                        <img src={f.thumbnailUrl} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />
-                      ) : (
+                    {f.thumbnailUrl ? (
+                      <button
+                        type="button"
+                        className="nx-file-preview-trigger"
+                        onClick={() => setLightboxImage(f)}
+                        title={`Preview ${f.fileName}`}
+                      >
+                        <img src={f.thumbnailUrl} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+                        <span style={{ minWidth: 0 }}>
+                          <div className="nx-att-file-title">{f.fileName}</div>
+                          <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="nx-att-file-meta">
                         <FileText size={18} aria-hidden="true" />
-                      )}
-                      <div style={{ minWidth: 0 }}>
-                        <div className="nx-att-file-title">{f.fileName}</div>
-                        <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="nx-att-file-title">{f.fileName}</div>
+                          <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
+                        </div>
                       </div>
-                    </div>
-                    <a href={f.downloadUrl} className="nx-btn sm" title={`Download ${f.fileName}`}>
+                    )}
+                    <a href={f.downloadUrl} className="nx-btn sm" aria-label={`Download ${f.fileName}`} title={`Download ${f.fileName}`}>
                       <Download size={13} aria-hidden="true" />
                     </a>
                   </div>
@@ -1352,6 +1363,7 @@ export function ChatWorkspace({
         open={Boolean(lightboxImage)}
         onOpenChange={open => { if (!open) setLightboxImage(null); }}
         title={lightboxImage?.fileName ?? 'Image preview'}
+        size="xl"
         footer={
           lightboxImage ? (
             <>

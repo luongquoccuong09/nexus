@@ -11,6 +11,7 @@ export function Modal({
   onOpenChange,
   title,
   description,
+  size = 'md',
   children,
   footer
 }: {
@@ -18,6 +19,7 @@ export function Modal({
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
+  size?: 'md' | 'xl';
   children: ReactNode;
   footer?: ReactNode;
 }) {
@@ -25,7 +27,7 @@ export function Modal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="nx-modal-overlay" />
-        <Dialog.Content className="nx-modal-content">
+        <Dialog.Content className={`nx-modal-content ${size === 'xl' ? 'xl' : ''}`.trim()}>
           <div className="nx-modal-head">
             <Dialog.Title asChild>
               <h3>{title}</h3>

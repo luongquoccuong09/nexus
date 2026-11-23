@@ -859,9 +859,24 @@ body {
 
 .nx-lightbox-img {
   max-width: 100%;
-  max-height: 62dvh;
+  max-height: 76dvh;
   object-fit: contain;
   border-radius: var(--radius-sm);
+}
+
+.nx-file-preview-trigger {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .nx-att-file-card {

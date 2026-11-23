@@ -286,6 +286,14 @@
   z-index: 101;
 }
 
+.nx-modal-content.xl {
+  max-width: min(92vw, 1100px);
+}
+
+.nx-modal-content.xl .nx-modal-body {
+  max-height: 82dvh;
+}
+
 .nx-modal-content:focus { outline: none; }
 
 .nx-modal-head {
