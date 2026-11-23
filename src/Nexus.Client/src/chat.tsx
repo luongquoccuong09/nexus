@@ -9,7 +9,6 @@ import {
   generateClientMsgId,
   getConversationCursor,
   listQueuedMessages,
-  QueuedMessage,
   reconnectDelayWithJitter,
   setConversationCursor
 } from './offlineQueue';
@@ -98,6 +97,24 @@ interface GroupMemberItem {
   role: string;
 }
 
+export interface CommunityFeedDelta {
+  type: 'reaction' | 'comment' | 'pin';
+  postId: string;
+  emoji?: string;
+  userId?: string;
+  reacted?: boolean;
+  isPinned?: boolean;
+  comment?: {
+    id: string;
+    postId: string;
+    authorUserId: string;
+    authorDisplayName: string;
+    authorIsUnverified: boolean;
+    body: string;
+    createdAt: string;
+  };
+}
+
 interface ChatWorkspaceProps {
   currentUserId: string;
   currentDisplayName: string;
@@ -108,7 +125,7 @@ interface ChatWorkspaceProps {
   onNewChat: () => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
-  onCommunityFeedChanged: (conversationId?: string) => void;
+  onCommunityFeedChanged: (conversationId?: string, delta?: CommunityFeedDelta | null) => void;
   onVersionStale: () => void;
 }
 
@@ -207,6 +224,9 @@ export function ChatWorkspace({
   const messagesCacheRef = useRef(new Map<string, { items: ChatMessageItem[]; hasMore: boolean; nextBeforeSeq: number | null; lastRead: number }>());
   const cursorCacheRef = useRef(new Map<string, number>());
   const flushOfflineQueueRef = useRef<() => Promise<void>>(async () => {});
+  const markReadRef = useRef<(convId: string, seq: number) => Promise<void>>(async () => {});
+  const currentUserIdRef = useRef(currentUserId);
+  currentUserIdRef.current = currentUserId;
   connStateCbRef.current = onConnectionStateChange;
   communityFeedCbRef.current = onCommunityFeedChanged;
 
@@ -522,6 +542,7 @@ export function ChatWorkspace({
   syncDeltaRef.current = requestConversationDelta;
   reconcileRef.current = reconcileAll;
   flushOfflineQueueRef.current = flushOfflineQueue;
+  markReadRef.current = markRead;
 
   useEffect(() => {
     void loadConversations();
@@ -566,8 +587,68 @@ export function ChatWorkspace({
       })
       .build();
 
-    connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number }) => {
-      if (evt.conversationId === activeConvRef.current) {
+    connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number; message?: ChatMessageItem | null }) => {
+      const incoming = evt.message;
+      const isActive = evt.conversationId === activeConvRef.current;
+
+      if (incoming) {
+        const isOwn = incoming.senderId === currentUserIdRef.current;
+        const mergeMessage = (prev: ChatMessageItem[]) => {
+          const byClientId = new Map(prev.map(m => [m.clientMsgId, m]));
+          byClientId.set(incoming.clientMsgId, incoming);
+          return [...byClientId.values()].sort((a, b) => a.seq - b.seq);
+        };
+
+        const cached = messagesCacheRef.current.get(evt.conversationId);
+        if (cached) {
+          messagesCacheRef.current.set(evt.conversationId, { ...cached, items: mergeMessage(cached.items) });
+        }
+        if (isActive) {
+          setMessages(prev => mergeMessage(prev));
+          requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+          if (!isOwn) void markReadRef.current(evt.conversationId, incoming.seq).catch(() => {});
+        }
+
+        let foundInList = false;
+        setConversations(prev => {
+          const next = prev.map(c => {
+            if (c.id !== evt.conversationId) return c;
+            foundInList = true;
+            const nextSeq = Math.max(c.nextSeq, incoming.seq);
+            const lastReadSeq = isActive || isOwn ? Math.max(c.lastReadSeq, incoming.seq) : c.lastReadSeq;
+            return {
+              ...c,
+              nextSeq,
+              changeSeq: Math.max(c.changeSeq, evt.changeSeq),
+              lastReadSeq,
+              unreadCount: Math.max(0, nextSeq - lastReadSeq),
+              updatedAt: incoming.createdAt
+            };
+          });
+          return foundInList
+            ? next.sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+            : prev;
+        });
+
+        const knownSeq = cursorCacheRef.current.get(evt.conversationId) ?? 0;
+        if (knownSeq > 0 && evt.changeSeq === knownSeq + 1) {
+          cursorCacheRef.current.set(evt.conversationId, evt.changeSeq);
+          void setConversationCursor(offlineScope, evt.conversationId, evt.changeSeq);
+          if (!foundInList) scheduleConversationRefresh();
+          return;
+        }
+        if (knownSeq > 0 && evt.changeSeq <= knownSeq) {
+          if (!foundInList) scheduleConversationRefresh();
+          return;
+        }
+        if (isActive) {
+          void syncDeltaRef.current(evt.conversationId).catch(() => {});
+        }
+        if (!foundInList) scheduleConversationRefresh();
+        return;
+      }
+
+      if (isActive) {
         const knownSeq = cursorCacheRef.current.get(evt.conversationId) ?? 0;
         if (evt.changeSeq > knownSeq) {
           void syncDeltaRef.current(evt.conversationId)
@@ -587,8 +668,8 @@ export function ChatWorkspace({
       ));
     });
 
-    connection.on('CommunityFeedChanged', (evt: { conversationId: string }) => {
-      communityFeedCbRef.current(evt.conversationId);
+    connection.on('CommunityFeedChanged', (evt: { conversationId: string; delta?: CommunityFeedDelta | null }) => {
+      communityFeedCbRef.current(evt.conversationId, evt.delta ?? null);
     });
 
     connection.on('TypingIndicator', (evt: { conversationId: string; displayName: string }) => {
@@ -682,10 +763,10 @@ export function ChatWorkspace({
       if (cached) messagesCacheRef.current.set(targetConvId, { ...cached, items: next });
       return next;
     });
-    const previewText = body || (attached.length === 1 ? `[Attachment: ${attached[0].fileName}]` : `[${attached.length} attachments]`);
-    setConversations(prev => prev.map(c =>
-      c.id === targetConvId ? { ...c, lastMessagePreview: previewText, lastMessageAt: createdAt } : c
-    ));
+    setConversations(prev => prev
+      .map(c => c.id === targetConvId ? { ...c, updatedAt: createdAt } : c)
+      .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
+    );
     requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
 
     const queueWrite = attached.length === 0

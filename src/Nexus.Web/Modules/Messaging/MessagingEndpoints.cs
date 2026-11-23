@@ -256,7 +256,7 @@ public static class MessagingEndpoints
         var committedAt = Stopwatch.GetTimestamp();
         if (conv is not null)
         {
-            await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, conv.Kind, conv.CommunityId, ct);
+            await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, conv.Kind, conv.CommunityId, dto, ct);
         }
         else
         {

@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users
 } from 'lucide-react';
+import { CommunityFeedDelta } from './chat';
 import { renderSafeMarkdown } from './markdown';
 import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
 
@@ -129,11 +130,12 @@ export interface DepartmentLite {
 
 interface CommunitiesWorkspaceProps {
   currentUserId: string;
+  currentDisplayName: string;
   currentOrgRole: string;
   currentIsUnverified: boolean;
   directoryUsers: DirectoryUserLite[];
   departments: DepartmentLite[];
-  feedListenerRef: RefObject<((conversationId?: string) => void) | null>;
+  feedListenerRef: RefObject<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>;
 }
 
 const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
@@ -165,6 +167,7 @@ function formatPostTime(iso: string): string {
 
 export function CommunitiesWorkspace({
   currentUserId,
+  currentDisplayName,
   currentOrgRole,
   currentIsUnverified,
   directoryUsers,
@@ -374,15 +377,64 @@ export function CommunitiesWorkspace({
     };
   }, [selectedConversationId, loadPosts]);
 
+  const updateFeedPosts = useCallback((conversationId: string, updater: (prev: ChannelPostDto[]) => ChannelPostDto[]) => {
+    const cached = postsCacheRef.current.get(conversationId);
+    if (cached) {
+      const nextCached = updater(cached.items);
+      postsCacheRef.current.set(conversationId, { ...cached, items: nextCached });
+    }
+    if (activeFeedRef.current === conversationId) {
+      setPosts(prev => updater(prev));
+    }
+  }, []);
+
   useEffect(() => {
-    feedListenerRef.current = (changedConversationId) => {
+    feedListenerRef.current = (changedConversationId, delta) => {
+      const targetId = changedConversationId ?? activeFeedRef.current;
+      if (!targetId) return;
+
+      if (delta && changedConversationId) {
+        if (delta.type === 'reaction' && delta.emoji && typeof delta.reacted === 'boolean') {
+          if (delta.userId === currentUserId) return;
+          updateFeedPosts(changedConversationId, prev => prev.map(post => {
+            if (post.id !== delta.postId) return post;
+            const existing = post.reactions.find(r => r.emoji === delta.emoji);
+            const others = post.reactions.filter(r => r.emoji !== delta.emoji);
+            const nextCount = Math.max(0, (existing?.count ?? 0) + (delta.reacted ? 1 : -1));
+            if (nextCount > 0) {
+              others.push({ emoji: delta.emoji!, count: nextCount, reactedByMe: Boolean(existing?.reactedByMe) });
+            }
+            return { ...post, reactions: others.sort((a, b) => b.count - a.count) };
+          }));
+          return;
+        }
+
+        if (delta.type === 'comment' && delta.comment) {
+          const incoming = delta.comment;
+          updateFeedPosts(changedConversationId, prev => prev.map(post => {
+            if (post.id !== delta.postId) return post;
+            if (post.comments.some(c => c.id === incoming.id)) return post;
+            return { ...post, comments: [...post.comments, incoming] };
+          }));
+          return;
+        }
+
+        if (delta.type === 'pin' && typeof delta.isPinned === 'boolean') {
+          updateFeedPosts(changedConversationId, prev => prev
+            .map(post => post.id === delta.postId ? { ...post, isPinned: delta.isPinned! } : post)
+            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          );
+          return;
+        }
+      }
+
       const activeConversationId = activeFeedRef.current;
       if (activeConversationId && (!changedConversationId || changedConversationId === activeConversationId)) {
         void loadPosts(activeConversationId, true);
       }
     };
     return () => { feedListenerRef.current = null; };
-  }, [feedListenerRef, loadPosts]);
+  }, [currentUserId, feedListenerRef, loadPosts, updateFeedPosts]);
 
   useEffect(() => {
     if (selectedCommunity) {
@@ -533,7 +585,7 @@ export function CommunitiesWorkspace({
       setPollQuestion('');
       setPollOptions(['', '']);
       setPollAllowMultiple(false);
-      await loadPosts(selectedConversationId);
+      void loadPosts(selectedConversationId, true);
     } finally {
       setPosting(false);
     }
@@ -541,30 +593,53 @@ export function CommunitiesWorkspace({
 
   async function handleTogglePin(post: ChannelPostDto) {
     setError('');
+    const nextPinned = !post.isPinned;
+    updateFeedPosts(post.conversationId, prev => prev
+      .map(p => p.id === post.id ? { ...p, isPinned: nextPinned } : p)
+      .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    );
     const res = await fetch(`/api/posts/${post.id}/pin`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isPinned: !post.isPinned })
+      body: JSON.stringify({ isPinned: nextPinned })
     });
     if (!res.ok) {
+      updateFeedPosts(post.conversationId, prev => prev
+        .map(p => p.id === post.id ? { ...p, isPinned: post.isPinned } : p)
+        .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      );
       setError('Unable to update pin state.');
-      return;
     }
-    if (selectedConversationId) await loadPosts(selectedConversationId);
   }
 
   async function handleAcknowledge(postId: string) {
     setError('');
+    const convId = selectedConversationId;
+    if (convId) {
+      updateFeedPosts(convId, prev => prev.map(p =>
+        p.id === postId && !p.acknowledgedByMe
+          ? { ...p, acknowledgedByMe: true, acknowledgedCount: p.acknowledgedCount + 1 }
+          : p
+      ));
+    }
     const res = await fetch(`/api/posts/${postId}/acknowledge`, {
       method: 'PUT',
       credentials: 'same-origin'
     });
     if (!res.ok) {
+      if (convId) void loadPosts(convId, true);
       setError('Unable to record acknowledgment.');
       return;
     }
-    if (selectedConversationId) await loadPosts(selectedConversationId);
+    const data = await res.json().catch(() => null);
+    if (convId && data && typeof data.acknowledgedCount === 'number') {
+      updateFeedPosts(convId, prev => prev.map(p =>
+        p.id === postId
+          ? { ...p, acknowledgedByMe: true, acknowledgedCount: data.acknowledgedCount, totalRecipients: data.totalRecipients ?? p.totalRecipients }
+          : p
+      ));
+    }
   }
 
   async function handleRemind(postId: string) {
@@ -621,14 +696,34 @@ export function CommunitiesWorkspace({
 
   async function handleVotePoll(poll: PostPollDto, optionId: string) {
     let nextIds: string[];
+    const previousIds = poll.options.filter(o => o.votedByMe).map(o => o.id);
     if (poll.allowMultiple) {
-      const current = poll.options.filter(o => o.votedByMe).map(o => o.id);
-      nextIds = current.includes(optionId)
-        ? current.filter(id => id !== optionId)
-        : [...current, optionId];
+      nextIds = previousIds.includes(optionId)
+        ? previousIds.filter(id => id !== optionId)
+        : [...previousIds, optionId];
       if (nextIds.length === 0) return;
     } else {
       nextIds = [optionId];
+    }
+
+    const convId = selectedConversationId;
+    if (convId) {
+      const hadVoted = previousIds.length > 0;
+      const nextTotalVoters = hadVoted ? poll.totalVoters : poll.totalVoters + 1;
+      updateFeedPosts(convId, prev => prev.map(p => {
+        if (!p.poll || p.poll.id !== poll.id) return p;
+        const nextOptions = p.poll.options.map(opt => {
+          const wasSelected = previousIds.includes(opt.id);
+          const nowSelected = nextIds.includes(opt.id);
+          const nextVotes = Math.max(0, opt.votes + (nowSelected ? 1 : 0) - (wasSelected ? 1 : 0));
+          return {
+            ...opt,
+            votedByMe: nowSelected,
+            votes: nextVotes
+          };
+        });
+        return { ...p, poll: { ...p.poll, totalVoters: nextTotalVoters, options: nextOptions } };
+      }));
     }
 
     const res = await fetch(`/api/polls/${poll.id}/vote`, {
@@ -638,17 +733,36 @@ export function CommunitiesWorkspace({
       body: JSON.stringify({ optionIds: nextIds })
     });
     if (!res.ok) {
+      if (convId) void loadPosts(convId, true);
       const data = await res.json().catch(() => ({}));
       setError(data.message || 'Unable to submit vote.');
-      return;
     }
-    if (selectedConversationId) await loadPosts(selectedConversationId);
   }
 
   async function handleAddComment(e: FormEvent, postId: string) {
     e.preventDefault();
     const draft = (commentDrafts[postId] ?? '').trim();
     if (!draft) return;
+
+    const convId = selectedConversationId;
+    const tempId = `temp-comment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticComment: PostCommentDto = {
+      id: tempId,
+      postId,
+      authorUserId: currentUserId,
+      authorDisplayName: currentDisplayName,
+      body: draft,
+      createdAt: new Date().toISOString()
+    };
+
+    setCommentDrafts(prev => ({ ...prev, [postId]: '' }));
+    setExpandedComments(prev => ({ ...prev, [postId]: true }));
+    if (convId) {
+      updateFeedPosts(convId, prev => prev.map(p =>
+        p.id === postId ? { ...p, comments: [...p.comments, optimisticComment] } : p
+      ));
+    }
+
     const res = await fetch(`/api/posts/${postId}/comments`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -656,13 +770,25 @@ export function CommunitiesWorkspace({
       body: JSON.stringify({ body: draft })
     });
     if (!res.ok) {
+      if (convId) {
+        updateFeedPosts(convId, prev => prev.map(p =>
+          p.id === postId ? { ...p, comments: p.comments.filter(c => c.id !== tempId) } : p
+        ));
+      }
+      setCommentDrafts(prev => ({ ...prev, [postId]: draft }));
       const data = await res.json().catch(() => ({}));
       setError(data.message || 'Unable to post comment.');
       return;
     }
-    setCommentDrafts(prev => ({ ...prev, [postId]: '' }));
-    setExpandedComments(prev => ({ ...prev, [postId]: true }));
-    if (selectedConversationId) await loadPosts(selectedConversationId);
+
+    const created: PostCommentDto | null = await res.json().catch(() => null);
+    if (convId && created) {
+      updateFeedPosts(convId, prev => prev.map(p => {
+        if (p.id !== postId) return p;
+        const withoutTemp = p.comments.filter(c => c.id !== tempId && c.id !== created.id);
+        return { ...p, comments: [...withoutTemp, created] };
+      }));
+    }
   }
 
   async function handleAddMember(e: FormEvent) {

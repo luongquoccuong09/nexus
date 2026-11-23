@@ -15,40 +15,49 @@ public sealed class MessagingFanoutService(
         Guid conversationId,
         long changeSeq,
         CancellationToken cancellationToken = default) =>
-        NotifyConversationChangedInternalAsync(conversationId, changeSeq, null, null, cancellationToken);
+        NotifyConversationChangedInternalAsync(conversationId, changeSeq, null, null, null, cancellationToken);
 
     public Task NotifyConversationChangedAsync(
         Guid conversationId,
         long changeSeq,
         ConversationKind conversationKind,
         Guid? communityId,
+        object? message = null,
         CancellationToken cancellationToken = default) =>
-        NotifyConversationChangedInternalAsync(conversationId, changeSeq, conversationKind, communityId, cancellationToken);
+        NotifyConversationChangedInternalAsync(conversationId, changeSeq, conversationKind, communityId, message, cancellationToken);
 
     private async Task NotifyConversationChangedInternalAsync(
         Guid conversationId,
         long changeSeq,
         ConversationKind? conversationKind,
         Guid? communityId,
+        object? message,
         CancellationToken cancellationToken)
     {
         var recipientIds = await ResolveAuthorizedRecipientsAsync(conversationId, conversationKind, communityId, cancellationToken);
         if (recipientIds.Count == 0) return;
 
-        var payload = new { conversationId, changeSeq };
+        var payload = new { conversationId, changeSeq, message };
         var groups = recipientIds.Select(id => MessagingHub.UserGroupName(db.OrganizationScopeId, id)).ToArray();
         await hubContext.Clients.Groups(groups).SendAsync("ConversationChanged", payload, cancellationToken);
     }
 
+    public Task NotifyCommunityFeedChangedAsync(
+        Guid communityId,
+        Guid conversationId,
+        CancellationToken cancellationToken = default) =>
+        NotifyCommunityFeedChangedAsync(communityId, conversationId, null, cancellationToken);
+
     public async Task NotifyCommunityFeedChangedAsync(
         Guid communityId,
         Guid conversationId,
+        object? delta,
         CancellationToken cancellationToken = default)
     {
         var recipientIds = await ResolveCommunityRecipientsAsync(communityId, cancellationToken);
         if (recipientIds.Count == 0) return;
 
-        var payload = new { communityId, conversationId };
+        var payload = new { communityId, conversationId, delta };
         var groups = recipientIds.Select(id => MessagingHub.UserGroupName(db.OrganizationScopeId, id)).ToArray();
         await hubContext.Clients.Groups(groups).SendAsync("CommunityFeedChanged", payload, cancellationToken);
     }

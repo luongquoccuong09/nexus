@@ -98,10 +98,11 @@ public static class CommunityFeedEndpoints
                 .Where(r => postIds.Contains(r.PostId))
                 .ToListAsync(ct);
 
-        var acks = postIds.Count == 0
+        var ackPostIds = posts.Where(p => p.RequiresAcknowledgment).Select(p => p.Id).ToList();
+        var acks = ackPostIds.Count == 0
             ? []
             : await db.AnnouncementAcknowledgments.AsNoTracking()
-                .Where(a => postIds.Contains(a.PostId))
+                .Where(a => ackPostIds.Contains(a.PostId))
                 .ToListAsync(ct);
 
         var polls = postIds.Count == 0
@@ -132,7 +133,9 @@ public static class CommunityFeedEndpoints
                     u => u.Id,
                     u => (DisplayName: u.DisplayName, IsUnverified: u.TrustLevel == TrustLevel.Unverified, AvatarUrl: string.IsNullOrEmpty(u.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{u.Id}/avatar"));
 
-        var totalRecipients = await CountEligibleRecipientsAsync(db, access.Community, ct);
+        var totalRecipients = ackPostIds.Count == 0
+            ? 0
+            : await CountEligibleRecipientsAsync(db, access.Community, ct);
 
         var commentsByPost = comments.GroupBy(c => c.PostId).ToDictionary(g => g.Key, g => g.ToList());
         var reactionsByPost = reactions.GroupBy(r => r.PostId).ToDictionary(g => g.Key, g => g.ToList());
@@ -357,7 +360,11 @@ public static class CommunityFeedEndpoints
         post.PinnedAt = request.IsPinned ? DateTimeOffset.UtcNow : null;
         post.PinnedByUserId = request.IsPinned ? actorId : null;
         await db.SaveChangesAsync(ct);
-        await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
+        await fanout.NotifyCommunityFeedChangedAsync(
+            access.Community.Id,
+            post.ConversationId,
+            new { type = "pin", postId, isPinned = post.IsPinned },
+            ct);
 
         return Results.Ok(new { id = post.Id, isPinned = post.IsPinned });
     }
@@ -400,9 +407,8 @@ public static class CommunityFeedEndpoints
         };
         db.PostComments.Add(comment);
         await db.SaveChangesAsync(ct);
-        await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
 
-        return Results.Created($"/api/organizations/{actor.OrganizationId}/posts/{postId}/comments/{comment.Id}", new
+        var commentDto = new
         {
             id = comment.Id,
             postId,
@@ -411,7 +417,14 @@ public static class CommunityFeedEndpoints
             authorIsUnverified = actor.TrustLevel == TrustLevel.Unverified,
             body = comment.Body,
             createdAt = comment.CreatedAt
-        });
+        };
+        await fanout.NotifyCommunityFeedChangedAsync(
+            access.Community.Id,
+            post.ConversationId,
+            new { type = "comment", postId, comment = commentDto },
+            ct);
+
+        return Results.Created($"/api/organizations/{actor.OrganizationId}/posts/{postId}/comments/{comment.Id}", commentDto);
     }
 
     private static async Task<IResult> HandleAddReactionAsync(
@@ -451,7 +464,11 @@ public static class CommunityFeedEndpoints
 
         if (access.Community is not null)
         {
-            await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
+            await fanout.NotifyCommunityFeedChangedAsync(
+                access.Community.Id,
+                post.ConversationId,
+                new { type = "reaction", postId, emoji = decodedEmoji, userId = actorId, reacted = true },
+                ct);
         }
 
         return Results.NoContent();
@@ -486,7 +503,11 @@ public static class CommunityFeedEndpoints
 
         if (access.Community is not null)
         {
-            await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
+            await fanout.NotifyCommunityFeedChangedAsync(
+                access.Community.Id,
+                post.ConversationId,
+                new { type = "reaction", postId, emoji = decodedEmoji, userId = actorId, reacted = false },
+                ct);
         }
 
         return Results.NoContent();

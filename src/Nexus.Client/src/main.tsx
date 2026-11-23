@@ -3,7 +3,7 @@ import { ContactControls, OrganizationControls } from "./organizationControls";
 import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
-import { ChatWorkspace } from './chat';
+import { ChatWorkspace, CommunityFeedDelta } from './chat';
 import { CommunitiesWorkspace } from './communities';
 import { Avatar, Badge, Button, Card, Field, Modal, ToastBar } from './ui';
 import './style.css';
@@ -168,7 +168,7 @@ function App() {
   const [communitiesVisited, setCommunitiesVisited] = useState(() => workspaceTab === 'communities');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const communityFeedListenerRef = useRef<((conversationId?: string) => void) | null>(null);
+  const communityFeedListenerRef = useRef<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>(null);
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nexus-theme') === 'dark');
@@ -836,7 +836,7 @@ function App() {
               onNewChat={() => setNewChatOpen(true)}
               onConnectionStateChange={setConnState}
               onUnreadTotalChange={setUnreadTotal}
-              onCommunityFeedChanged={conversationId => communityFeedListenerRef.current?.(conversationId)}
+              onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
               onVersionStale={handleVersionStale}
             />
           </div>
@@ -851,6 +851,7 @@ function App() {
             <div className={`nx-tab-keepalive ${workspaceTab === 'communities' ? '' : 'hidden'}`}>
               <CommunitiesWorkspace
                 currentUserId={user.id}
+                currentDisplayName={user.displayName}
                 currentOrgRole={user.orgRole}
                 currentIsUnverified={user.isUnverified}
                 directoryUsers={directory}
