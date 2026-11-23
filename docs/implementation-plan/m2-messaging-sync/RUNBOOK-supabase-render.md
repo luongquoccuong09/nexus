@@ -27,13 +27,22 @@ $env:ConnectionStrings__Migration = "Host=<POOLER_HOST>;Port=5432;Database=postg
 dotnet run --project src/Nexus.Web -- --migrate
 
 $env:ConnectionStrings__Runtime = "Host=<POOLER_HOST>;Port=5432;Database=postgres;Username=nexus_runtime.<PROJECT_REF>;Password=<RUNTIME_PASSWORD>;SSL Mode=Require"
-dotnet run --project src/Nexus.Web -- --bootstrap-admin --username admin --password "Choose-A-Strong-Admin-Password-2026!" --display-name "System Admin"
+$env:BootstrapAdmin__Username = "nexus_sysadmin"
+$env:BootstrapAdmin__Password = "Choose-A-Strong-Admin-Password-2026!"
+$env:BootstrapAdmin__DisplayName = "System Admin"
+dotnet run --project src/Nexus.Web -- --bootstrap-admin
+```
+
+Or copy `.env.example` to `.env` (gitignored) and run:
+
+```powershell
+pwsh -File .\scripts\deploy\Invoke-SupabaseMigrate.ps1
 ```
 
 Clear temporary shell secrets afterwards:
 
 ```powershell
-Remove-Item Env:ConnectionStrings__Migration, Env:ConnectionStrings__Runtime -ErrorAction SilentlyContinue
+Remove-Item Env:ConnectionStrings__Migration, Env:ConnectionStrings__Runtime, Env:BootstrapAdmin__Username, Env:BootstrapAdmin__Password, Env:BootstrapAdmin__DisplayName -ErrorAction SilentlyContinue
 ```
 
 ## Step 3 — Deploy `Nexus.Web` on Render
