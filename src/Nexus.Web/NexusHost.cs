@@ -2,7 +2,9 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
+using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 using Serilog.Core;
@@ -23,6 +25,8 @@ public static class NexusHost
         builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
         builder.Services.AddIdentityModule(builder.Configuration);
+        builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
+        builder.Services.AddScoped<MessagingFanoutService>();
 
         configureBuilder?.Invoke(builder);
 
@@ -37,6 +41,10 @@ public static class NexusHost
         app.MapIdentityEndpoints();
         app.MapOrgEndpoints();
         app.MapPeopleEndpoints();
+        app.MapPeopleSafetyEndpoints();
+        app.MapConversationEndpoints();
+        app.MapMessagingEndpoints();
+        app.MapHub<MessagingHub>("/hubs/messaging");
 
         configureApp?.Invoke(app);
 

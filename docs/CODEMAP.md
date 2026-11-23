@@ -1,7 +1,7 @@
 # Code Map — Read Before Grepping
 
 - Status: active
-- Last updated: 2026-11-23 (M0.1 baseline)
+- Last updated: 2026-11-23 (M2 Core Messaging & Sync)
 - Audience: a new AI session or engineer picking up a feature, bug fix, or review.
 
 Use this map before running broad searches across the repository. Recommended lookup order:
@@ -78,6 +78,10 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Modules/Org/OrgEntities.cs` | Single `Organization`, `Department`, `Branch`, and `Employee` entities (`M1.1`) |
 | `src/Nexus.Web/Modules/Org/HrCsvImportService.cs` & `OrgEndpoints.cs` | RFC-4180 HR CSV upsert with dry-run diff, `Unverified` match suggestions, and department list (`M1.9`) |
 | `src/Nexus.Web/Modules/People/AvatarProcessor.cs` & `PeopleEndpoints.cs` | Vietnamese `unaccent` + `pg_trgm` directory search (`M1.10`), custom status (`UX-06`), and SkiaSharp 256×256 PNG avatar re-encoding (`M1.11`) |
+| `src/Nexus.Web/Modules/People/SafetyEntities.cs` & `SafetyEndpoints.cs` | DM user blocking (`user_blocks`) and audited user reporting (`user_reports`) (`M2.11`) |
+| `src/Nexus.Web/Modules/Conversations/ConversationEntities.cs` & `ConversationEndpoints.cs` | `conversations`, `conversation_members`, atomic `dm_key` upsert (`M2.2`), idempotent group creation, membership/admin/rejoin (`visible_from_seq`), and `ConditionalTransition` ownership transfer (`M2.8`) |
+| `src/Nexus.Web/Modules/Messaging/MessagingEntities.cs` & `MessagingEndpoints.cs` | `messages`, `conversation_events`, single-transaction `seq`/`change_seq` allocation, `client_msg_id` idempotency/`409` (`M2.3`), cursor history + `/changes` (`410 Gone` trigger) + `/api/sync/reconcile` (`M2.5`), monotonic `GREATEST(last_read_seq)` (`M2.7`) |
+| `src/Nexus.Web/Modules/Messaging/MessagingHub.cs`, `MessagingFanoutService.cs` & `PresenceAndTypingTracker.cs` | SignalR `/hubs/messaging` strictly scoped to `user:{id}` groups (`M2.4`, `SEC-07`), DB-resolved fanout (`ConversationChanged`, `ReadStateUpdated`), and in-memory presence + 2s throttled `TypingIndicator` (`M2.10`) |
 | `src/Nexus.Web/Modules/Admin/AuditLogEntity.cs` | Append-only `audit_logs` entity (`M1.6` / `M7.1`) |
 | `src/Nexus.Web/Modules/Identity/NexusUser.cs` | `NexusUser : IdentityUser<Guid>` + `AdminPasswordResetLinkEntity` (`M1.2` / `M1.5`) |
 | `src/Nexus.Web/Modules/Identity/UsernameAndPasswordPolicies.cs` | `UsernamePolicy` (3–32 chars, reserved list) + `CommonPasswordValidator` (`>= 12` chars, `SEC-21`) |
@@ -94,14 +98,16 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `Directory.Build.props` | Roslyn security analyzers (`AnalysisModeSecurity=All`, security rules promoted to build errors) |
 | `scripts/audit/Test-SecurityGuardrails.ps1` | Static security guardrails rejecting `AllowAnyOrigin`, disabled TLS validation, client storage secrets, and Supabase port `6543` |
 | `.github/workflows/ci.yml` | CI workflow running build/test, Roslyn analyzers, `dotnet list package --vulnerable`, `npm audit`, Gitleaks, Trivy, and audit scripts |
-| `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` to `http://127.0.0.1:5080` |
-| `src/Nexus.Client/src/main.tsx` | React client bootstrap |
+| `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` and `/hubs` (`ws: true`) to `http://127.0.0.1:5080` |
+| `src/Nexus.Client/src/main.tsx`, `chat.tsx`, `offlineQueue.ts` & `markdown.ts` | React SPA (Auth, Directory, Security, Realtime Chat with IndexedDB offline queue, SignalR reconnect with jitter, `/api/version` banner, `New messages` divider, XSS-safe Markdown renderer) |
+| `src/Nexus.Client/tests/markdown.test.mjs` | Node built-in unit tests verifying `SEC-10` XSS/URL sanitization and safe Markdown subset (`M2.9`) |
 | `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
 | `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
 | `tests/Nexus.IntegrationTests/PostgresFoundationTests.cs` | Testcontainers PostgreSQL 17 tests verifying separate roles (`nexus_runtime` denied DDL), `IdempotencyEndpointFilter` (`SEC-19`), `ConditionalTransition`, Data Protection keys, PostgreSQL sessions, SignalR, and private PDF acceptance |
 | `tests/Nexus.IntegrationTests/IdentityM1aTests.cs` | Testcontainers PostgreSQL 17 tests for `M1a` covering `SEC-01`, `SEC-08`, `SEC-16`, `SEC-20`, `SEC-20b`, `SEC-21`, `SEC-24`, `M1.7` devices, and `M1.8` RFC 6238 TOTP admin MFA |
 | `tests/Nexus.IntegrationTests/DirectoryM1bTests.cs` | Testcontainers PostgreSQL 17 tests for `M1b` covering HR CSV dry-run/upsert/diff/match suggestions (`M1.9`), Vietnamese `unaccent`+`pg_trgm` directory search (`M1.10`), custom status, and SkiaSharp avatar re-encoding/EXIF stripping (`M1.11`) |
+| `tests/Nexus.IntegrationTests/MessagingM2Tests.cs` | Testcontainers PostgreSQL 17 tests for `M2` covering atomic DM open race & `Unverified` daily quota (`SEC-20b`), realtime SignalR isolation (`SEC-03`, `SEC-05`, `SEC-07`, `SEC-15`), `client_msg_id` idempotency/`409` (`SEC-19`), delta sync/`410 Gone`/read state (`SEC-17`), group lifecycle/removal/rejoin `visible_from_seq` (`SEC-18`), and DM block/report (`M2.11`) |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

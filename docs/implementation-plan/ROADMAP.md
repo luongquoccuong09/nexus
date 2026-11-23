@@ -76,18 +76,18 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 ## M2 — Core messaging and synchronization
 
-- [ ] **M2.1** Create conversations (kind, dm_key, next_seq, change_seq), conversation_members (role, last_read_seq, muted, left_at), messages and conversation_events.
-- [ ] **M2.2** Open a DM with an active employee (D01). Upsert by dm_key so concurrent tabs open one conversation.
-- [ ] **M2.3** In one transaction check membership, allocate seq, enforce unique(sender_id, client_msg_id) and write the event. Return the existing message on retry or 409 for different payloads.
-- [ ] **M2.4** Fan out to SignalR groups named `user:{id}`. Read recipients from the database and send (conversation_id, change_seq).
-- [ ] **M2.5** Cursor-page history by seq, capped at 50. Expose `GET /changes?after=N`.
-- [ ] **M2.6** Use IndexedDB for queued offline sends, optimistic UI, deduplication, gap detection and sync. Reconnect with jitter, show connection status and reload when /api/version changes.
-- [ ] **M2.7** Advance reads with GREATEST(last_read_seq), update unread counts across devices and show a New messages divider (UX-09).
-- [ ] **M2.8** Create groups using Idempotency-Key. Add/remove members, leave, transfer ownership and appoint admins/deputies. Removal revokes history access.
-- [ ] **M2.9** Render a sanitized Markdown subset with automatic links and emoji. Test SEC-10.
-- [ ] **M2.10** Keep throttled presence and typing indicators in memory.
-- [ ] **M2.11** Implement blocking and reporting for direct messaging.
-- [ ] **M2.12** Test SEC-03, 05, 07, 15, 17 (complete sync), 18 (removal) and 19 (409 on conflicting retries). Use Playwright with A/B/C and two devices.
+- [x] **M2.1** Create conversations (kind, dm_key, next_seq, change_seq), conversation_members (role, last_read_seq, muted, left_at), messages and conversation_events.
+- [x] **M2.2** Open a DM with an active employee (D01). Upsert by dm_key so concurrent tabs open one conversation.
+- [x] **M2.3** In one transaction check membership, allocate seq, enforce unique(sender_id, client_msg_id) and write the event. Return the existing message on retry or 409 for different payloads.
+- [x] **M2.4** Fan out to SignalR groups named `user:{id}`. Read recipients from the database and send (conversation_id, change_seq).
+- [x] **M2.5** Cursor-page history by seq, capped at 50. Expose `GET /changes?after=N`.
+- [x] **M2.6** Use IndexedDB for queued offline sends, optimistic UI, deduplication, gap detection and sync. Reconnect with jitter, show connection status and reload when /api/version changes.
+- [x] **M2.7** Advance reads with GREATEST(last_read_seq), update unread counts across devices and show a New messages divider (UX-09).
+- [x] **M2.8** Create groups using Idempotency-Key. Add/remove members, leave, transfer ownership and appoint admins/deputies. Removal revokes history access.
+- [x] **M2.9** Render a sanitized Markdown subset with automatic links and emoji. Test SEC-10.
+- [x] **M2.10** Keep throttled presence and typing indicators in memory.
+- [x] **M2.11** Implement blocking and reporting for direct messaging.
+- [ ] **M2.12** Test SEC-03, 05, 07, 15, 17 (complete sync), 18 (removal) and 19 (409 on conflicting retries). Use Playwright with A/B/C and two devices. *(Backend HTTP + multi-client SignalR Testcontainers suite verified in `MessagingM2Tests.cs` + `SEC-10` in `markdown.test.mjs`; headless Playwright browser suite under `tests/e2e/` deferred.)*
 - **M2 acceptance:** Realtime DM and group chat survive disconnects, retries and deploys without duplicates or loss. C receives none of A/B's private data. This milestone delivers usable chat.
 
 ## M3 — Files

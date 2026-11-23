@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ChatWorkspace } from './chat';
 import './style.css';
 
 interface UserSummary {
@@ -95,10 +96,12 @@ function AvatarThumb({ displayName, avatarUrl, cacheKey }: { displayName: string
 
 function App() {
   const [apiStatus, setApiStatus] = useState('Connecting…');
+  const [apiVersion, setApiVersion] = useState<string | null>(null);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
-  const [workspaceTab, setWorkspaceTab] = useState<'directory' | 'security' | 'hr'>('directory');
+  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'directory' | 'security' | 'hr'>('chat');
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -184,6 +187,7 @@ function App() {
         const verRes = await fetch('/api/version', { signal: controller.signal });
         if (!verRes.ok) throw new Error('API unavailable');
         const ver = await verRes.json();
+        setApiVersion(ver.version ?? null);
         setApiStatus(`Connected · API v${ver.version}`);
 
         const polRes = await fetch('/api/auth/registration-policy', { signal: controller.signal });
@@ -470,6 +474,9 @@ function App() {
       ) : (
         <>
           <div className="nx-tabs">
+            <button type="button" className={`nx-btn ${workspaceTab === 'chat' ? 'primary' : ''}`} onClick={() => setWorkspaceTab('chat')}>
+              Chat
+            </button>
             <button type="button" className={`nx-btn ${workspaceTab === 'directory' ? 'primary' : ''}`} onClick={() => setWorkspaceTab('directory')}>
               Directory
             </button>
@@ -482,6 +489,17 @@ function App() {
               </button>
             )}
           </div>
+
+          {workspaceTab === 'chat' && (
+            <ChatWorkspace
+              currentUserId={user.id}
+              currentDisplayName={user.displayName}
+              currentIsUnverified={user.isUnverified}
+              initialVersion={apiVersion}
+              selectedConversationId={activeConvId}
+              onSelectConversation={setActiveConvId}
+            />
+          )}
 
           {workspaceTab === 'directory' && (
             <section className="nx-card">
@@ -522,6 +540,29 @@ function App() {
                         {p.customStatus && <div className="nx-muted">Status: {p.customStatus}</div>}
                       </div>
                     </div>
+                    {p.id !== user.id && (
+                      <button
+                        type="button"
+                        className="nx-btn"
+                        onClick={async () => {
+                          const res = await fetch('/api/conversations/dm', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ targetUserId: p.id })
+                          });
+                          if (res.ok) {
+                            const dm = await res.json();
+                            setActiveConvId(dm.id);
+                            setWorkspaceTab('chat');
+                          } else {
+                            setError('Unable to open direct message.');
+                          }
+                        }}
+                      >
+                        Message
+                      </button>
+                    )}
                   </div>
                 ))
               )}

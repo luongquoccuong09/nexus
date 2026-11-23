@@ -111,6 +111,61 @@ body {
 
 .nx-flex { display: flex; align-items: center; gap: 10px; }
 
+.nx-chat-grid {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 360px;
+}
+.nx-chat-list {
+  border-right: 1px solid var(--border);
+  padding-right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nx-conv-btn {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+}
+.nx-conv-btn:hover { background: #edf2f8; }
+.nx-conv-btn.active { background: var(--brand-100); border-color: #b7daf7; }
+.nx-chat-pane { display: flex; flex-direction: column; min-width: 0; }
+.nx-msg-list {
+  flex: 1;
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nx-msg {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f4f7fb;
+  border: 1px solid var(--border);
+}
+.nx-msg.own { background: #e6f2fd; border-color: #bddcf8; }
+.nx-new-divider {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+  margin: 6px 0;
+  border-bottom: 1px solid var(--danger);
+}
+.nx-code-block {
+  background: #13263a;
+  color: #f4f7fb;
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
 .nx-error { color: var(--danger); font-size: 13px; margin: 8px 0; }
 .nx-ok { color: var(--ok-text); font-size: 13px; margin: 8px 0; }
 .nx-muted { color: var(--muted); font-size: 13px; }

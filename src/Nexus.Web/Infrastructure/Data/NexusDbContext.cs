@@ -4,8 +4,11 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Idempotency;
 using Nexus.Web.Modules.Admin;
+using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
+using Nexus.Web.Modules.People;
 
 namespace Nexus.Web.Infrastructure.Data;
 
@@ -28,6 +31,13 @@ public sealed class NexusDbContext
 
     public DbSet<AdminPasswordResetLinkEntity> AdminPasswordResetLinks => Set<AdminPasswordResetLinkEntity>();
     public DbSet<AuditLogEntity> AuditLogs => Set<AuditLogEntity>();
+
+    public DbSet<ConversationEntity> Conversations => Set<ConversationEntity>();
+    public DbSet<ConversationMemberEntity> ConversationMembers => Set<ConversationMemberEntity>();
+    public DbSet<MessageEntity> Messages => Set<MessageEntity>();
+    public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
+    public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
+    public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
 
     [DbFunction("immutable_unaccent", Schema = "public")]
     public static string ImmutableUnaccent(string input) =>

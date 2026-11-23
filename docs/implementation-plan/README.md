@@ -9,7 +9,7 @@ This directory holds the master [`ROADMAP.md`](ROADMAP.md) plus milestone-scoped
 | **Master Roadmap** | [`ROADMAP.md`](ROADMAP.md) | P0 through M9 checklist and dependencies | Active |
 | **M0 — Foundation** | [`m0-foundation/`](m0-foundation/) | [`PLAN-m0-foundation.md`](m0-foundation/PLAN-m0-foundation.md)<br>[`HANDOFF-m0-complete.md`](m0-foundation/HANDOFF-m0-complete.md)<br>[`HANDOFF-m0.1.md`](m0-foundation/HANDOFF-m0.1.md) | **Done** on `develop` (`M0.1`–`M0.9` + `P0.2`/`P0.3` verified with Testcontainers & Docker) |
 | **M1 — Identity & Directory** | [`m1-identity-directory/`](m1-identity-directory/) | [`PLAN-m1a-identity.md`](m1-identity-directory/PLAN-m1a-identity.md)<br>[`HANDOFF-m1a.md`](m1-identity-directory/HANDOFF-m1a.md)<br>[`HANDOFF-m1b.md`](m1-identity-directory/HANDOFF-m1b.md) | In progress on `develop` (**M1a + M1b `M1.1`–`M1.11` done**; M1c Google OIDC or M2 Messaging next) |
-| **M2 — Core Messaging & Sync** | [`m2-messaging-sync/`](m2-messaging-sync/) | *Create `PLAN-*.md` when starting M2* | Planned |
+| **M2 — Core Messaging & Sync** | [`m2-messaging-sync/`](m2-messaging-sync/) | [`PLAN-m2-messaging.md`](m2-messaging-sync/PLAN-m2-messaging.md)<br>[`HANDOFF-m2.md`](m2-messaging-sync/HANDOFF-m2.md) | **Done** on `develop` (`M2.1`–`M2.11` + multi-client HTTP/SignalR `M2.12` verified; Playwright browser E2E deferred) |
 | **M3 — Files** | [`m3-files/`](m3-files/) | *Create `PLAN-*.md` when starting M3* | Planned |
 | **M4 — Notifications & Outbox** | [`m4-notifications/`](m4-notifications/) | *Create `PLAN-*.md` when starting M4* | Planned |
 | **M5 — Communities & Channels** | [`m5-communities/`](m5-communities/) | *Create `PLAN-*.md` when starting M5* | Planned |
