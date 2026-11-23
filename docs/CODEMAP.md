@@ -56,14 +56,25 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | **Notifications** | `src/Nexus.Web/Modules/Notifications/` | Transactional outbox worker, mentions, notification center, mute/quiet hours, Web Push (VAPID), email digest | M4 |
 | **Admin** | `src/Nexus.Web/Modules/Admin/` | Account/role management, audit log, emergency ownership transfer, retention/break-glass, aggregate metrics | M7 |
 
-## 2. Current runtime entry points (M0.1)
+## 2. Current runtime entry points (M0.1 / M0.3 / M0.4 / M0.6)
 
 | File | Role |
 |---|---|
 | `src/Nexus.Web/Program.cs` | Minimal entry point calling `NexusHost.Build(args).Run()` |
-| `src/Nexus.Web/NexusHost.cs` | Configures static files, `GET /api/version`, `/api/{**path}` 404 fallback, and SPA `index.html` fallback |
+| `src/Nexus.Web/NexusHost.cs` | Composition root: Security headers, Serilog request logging, static files, security defaults, operational endpoints, `/api/{**path}` 404 fallback, and SPA fallback |
+| `src/Nexus.Web/Infrastructure/Security/SecurityDefaultsExtensions.cs` | Cookie auth, `FallbackPolicy`, strict CORS (rejects `*`), antiforgery, IP rate limiter, SignalR + `ActiveUserHubFilter`, Kestrel body limit |
+| `src/Nexus.Web/Infrastructure/Security/ActiveUserMiddleware.cs` | Rejects `Disabled`/`Former` authenticated users on HTTP (`403`) |
+| `src/Nexus.Web/Infrastructure/Security/ActiveUserHubFilter.cs` | Rejects `Disabled`/`Former` users on SignalR connect & every hub invocation |
+| `src/Nexus.Web/Infrastructure/Security/WebSocketOriginMiddleware.cs` | Enforces same-origin / allowlisted `Origin` on WebSocket and `/hubs/*` paths |
+| `src/Nexus.Web/Infrastructure/Security/NexusAuthorizationService.cs` | Centralized deny-by-default `IAuthorizationService.Can(actor, action, resource)` implementing `P0.2` |
+| `src/Nexus.Web/Infrastructure/Security/PaginationGuard.cs` | Hard max page size (`50`) helper |
+| `src/Nexus.Web/Infrastructure/Observability/ObservabilityExtensions.cs` | Serilog Compact JSON + OpenTelemetry tracing/metrics + health checks |
+| `src/Nexus.Web/Infrastructure/Observability/SensitiveDataRedactingEnricher.cs` | Redacts message bodies, passwords, cookies, and tokens from all logs |
+| `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` | `GET /healthz`, `GET /readyz`, `GET /api/version` |
 | `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` to `http://127.0.0.1:5080` |
 | `src/Nexus.Client/src/main.tsx` | React client bootstrap |
+| `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
+| `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

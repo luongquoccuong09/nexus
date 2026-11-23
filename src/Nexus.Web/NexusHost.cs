@@ -1,19 +1,36 @@
+using Nexus.Web.Infrastructure.Observability;
+using Nexus.Web.Infrastructure.Security;
+using Serilog.Core;
+
 namespace Nexus.Web;
 
 public static class NexusHost
 {
-    public static WebApplication Build(string[] args)
+    public static WebApplication Build(
+        string[] args,
+        Action<WebApplicationBuilder>? configureBuilder = null,
+        Action<WebApplication>? configureApp = null,
+        ILogEventSink? additionalLogSink = null)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.AddNexusObservability(additionalLogSink);
+        builder.Services.AddNexusSecurityDefaults(builder.Configuration);
+
+        configureBuilder?.Invoke(builder);
+
         var app = builder.Build();
 
+        app.UseMiddleware<SecurityHeadersMiddleware>();
+        app.UseNexusRequestLogging();
         app.UseStaticFiles();
-        app.MapGet("/api/version", () => new
-        {
-            version = typeof(NexusHost).Assembly.GetName().Version!.ToString(3)
-        });
-        app.MapFallback("/api/{**path}", () => Results.NotFound());
-        app.MapFallbackToFile("index.html");
+        app.UseNexusSecurityDefaults();
+
+        app.MapNexusOperationalEndpoints();
+
+        configureApp?.Invoke(app);
+
+        app.MapFallback("/api/{**path}", () => Results.NotFound()).AllowAnonymous();
+        app.MapFallbackToFile("index.html").AllowAnonymous();
         return app;
     }
 }

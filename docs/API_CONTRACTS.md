@@ -18,13 +18,13 @@
   - Authenticated requests failing `IAuthorizationService.Can` or `ActiveUserMiddleware` return `403` (or `401` on revoked session).
   - Sign-in failures return generic error messages that do not disclose username existence.
 
-## 2. Implemented endpoints (M0.1)
+## 2. Implemented endpoints (M0.1 / M0.6)
 
 | Method & path | Auth | Response | Owner |
 |---|---|---|---|
-| `GET /api/version` | Public | `{ "version": "<major.minor.build>" }` — client reloads when version changes across deploys (M2.6) | `src/Nexus.Web/NexusHost.cs` |
-
-Planned health endpoints (M0.6): `GET /healthz` (liveness), `GET /readyz` (readiness).
+| `GET /api/version` | Public (`AllowAnonymous`) | `{ "version": "<major.minor.build>" }` — client reloads when version changes across deploys (M2.6) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
+| `GET /healthz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — process liveness probe (excluded from rate limiting) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
+| `GET /readyz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — dependency readiness probe (will include PostgreSQL in M0.2) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
 
 ## 3. SignalR hub contract (planned M0 / M2.4)
 

@@ -20,8 +20,8 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 ## P0 — Decisions and documentation
 
 - [ ] **P0.1** Resolve P0-D05 through D12 with IT/HR (audit §7) and record outcomes in [`docs/decisions/`](../decisions/INDEX.md). Accepted on November 23, 2026: D01 direct DMs, D02 one Organization, D04 Community → Channel, D03 password first and Google linking later, and D13 open trial registration with Unverified accounts.
-- [ ] **P0.2** Complete the [authorization matrix](../SECURITY_AND_AUTHZ.md) by role, action and scope (audit §3.3). Cover administrative access and content access, community creation and joining, Owner/Admin channel creation, member reads and posts, and Unverified restrictions. Derive tests from the matrix.
-- [ ] **P0.3** Complete the [sync protocol](../SYNC_PROTOCOL.md) for `client_msg_id`, `seq`, `change_seq`, `conversation_events`, reconnects, gaps, reconciliation and idempotency keys (audit §4).
+- [x] **P0.2** Complete the [authorization matrix](../SECURITY_AND_AUTHZ.md) by role, action and scope (audit §3.3). Cover administrative access and content access, community creation and joining, Owner/Admin channel creation, member reads and posts, and Unverified restrictions. Derive tests from the matrix.
+- [x] **P0.3** Complete the [sync protocol](../SYNC_PROTOCOL.md) for `client_msg_id`, `seq`, `change_seq`, `conversation_events`, reconnects, gaps, reconciliation and idempotency keys (audit §4).
 - [x] **P0.4** [Glossary](../GLOSSARY.md) covering Organization, Community, Channel, Conversation (dm/group/channel), official designation, Owner/Admin/Member and Former/Disabled.
 - [ ] **P0.5** Update the proposal to v0.4 with 1,000 accounts, revised D02 and D04, consistent terminology, SEC-17 through SEC-24 and a pilot budget.
 - [x] **P0.6** Prototypes in [`docs/mockups/`](../mockups/README.md) cover open DMs (D01), password registration and sign-in (D03/D13), the Unverified badge and simulated Google linking. The end-user prototype has a community/channel tree, General channel creation, additional channels and per-channel posts. Backend work belongs to M5.
@@ -32,10 +32,10 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 - [ ] **M0.1** Same-origin ASP.NET Core (.NET LTS) and React/Vite/TypeScript solution. Modules: Identity, Org, People, Conversations, Messaging, Files, Notifications and Admin. Solution, client, HTTP smoke test and integrated publish verified locally. CI build and test remain pending Git host connection.
 - [ ] **M0.2** PostgreSQL, EF Core and a migration pipeline with separate runtime and migration roles, verified TLS and Testcontainers tests.
-- [ ] **M0.3** Secure defaults: authenticated `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, antiforgery, WebSocket Origin checks, CSP, body/page limits and rate limiting.
-- [ ] **M0.4** Implement `IAuthorizationService.Can(actor, action, resource)` and matrix-derived tests, initially denying all cases. → P0.2
+- [x] **M0.3** Secure defaults: authenticated `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, antiforgery, WebSocket Origin checks, CSP, body/page limits and rate limiting.
+- [x] **M0.4** Implement `IAuthorizationService.Can(actor, action, resource)` and matrix-derived tests, initially denying all cases. → P0.2
 - [ ] **M0.5** Add the `idempotency_keys` table, an `Idempotency-Key` filter and a conditional state-transition helper. → P0.3
-- [ ] **M0.6** Serilog JSON logging without bodies or tokens, OpenTelemetry, `/healthz`, `/readyz` and `/api/version`.
+- [x] **M0.6** Serilog JSON logging without bodies or tokens, OpenTelemetry, `/healthz`, `/readyz` and `/api/version`.
 - [ ] **M0.7** CI checks: Gitleaks, `dotnet list package --vulnerable`, `npm audit`, Trivy and Roslyn security analyzers. Reject AllowAnyOrigin, disabled certificate validation and privileged storage credentials in the frontend.
 - [ ] **M0.8** Containerize and deploy the demo. Sleeping PaaS instances are acceptable for demos. Persist Data Protection keys and sessions in PostgreSQL. Use development-only seeded accounts for M0.
 - [ ] **M0.9** Provide `IFileStorage` for private Supabase storage/local volumes and an `IFileScanner` stub returning `skipped_prototype`.
