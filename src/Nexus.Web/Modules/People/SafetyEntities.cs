@@ -16,7 +16,7 @@ public sealed class UserBlockEntity
 public sealed class UserReportEntity
 {
     public Guid Id { get; set; }
-    public Guid OrganizationId { get; set; }
+    public Guid? OrganizationId { get; set; }
     public Guid ReporterUserId { get; set; }
     public Guid ReportedUserId { get; set; }
     public Guid? ConversationId { get; set; }
@@ -30,7 +30,7 @@ public sealed class UserBlockEntityConfiguration : IEntityTypeConfiguration<User
     public void Configure(EntityTypeBuilder<UserBlockEntity> builder)
     {
         builder.ToTable("user_blocks");
-        builder.HasKey(x => new { x.BlockerUserId, x.BlockedUserId });
+        builder.HasKey(x => new { x.OrganizationId, x.BlockerUserId, x.BlockedUserId });
 
         builder.Property(x => x.BlockerUserId).HasColumnName("blocker_user_id").IsRequired();
         builder.Property(x => x.BlockedUserId).HasColumnName("blocked_user_id").IsRequired();
@@ -39,7 +39,6 @@ public sealed class UserBlockEntityConfiguration : IEntityTypeConfiguration<User
 
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.BlockerUserId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.BlockedUserId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasOne<OrganizationEntity>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -51,7 +50,7 @@ public sealed class UserReportEntityConfiguration : IEntityTypeConfiguration<Use
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");
-        builder.Property(x => x.OrganizationId).HasColumnName("organization_id").IsRequired();
+        builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.ReporterUserId).HasColumnName("reporter_user_id").IsRequired();
         builder.Property(x => x.ReportedUserId).HasColumnName("reported_user_id").IsRequired();
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id");

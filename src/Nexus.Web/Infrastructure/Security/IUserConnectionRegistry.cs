@@ -12,6 +12,7 @@ public interface IUserConnectionRegistry
     void Register(Guid userId, HubCallerContext callerContext);
     void Unregister(Guid userId, string connectionId);
     int AbortUserConnections(Guid userId);
+    void AbortOrganizationConnections(Guid organizationId, Guid userId);
 }
 
 public sealed class InMemoryUserConnectionRegistry : IUserConnectionRegistry
@@ -58,5 +59,15 @@ public sealed class InMemoryUserConnectionRegistry : IUserConnectionRegistry
         }
 
         return aborted;
+    }
+
+    public void AbortOrganizationConnections(Guid organizationId, Guid userId)
+    {
+        if (!_connections.TryGetValue(userId, out var sockets)) return;
+
+        foreach (var socket in sockets.Values)
+        {
+            if (Modules.Org.OrganizationScope.GetId(socket.GetHttpContext()) == organizationId) socket.Abort();
+        }
     }
 }

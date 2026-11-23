@@ -4,8 +4,10 @@ title: "Single Organization per deployment"
 summary: "Each Nexus deployment uses one Organization as its account boundary; department and branch are optional directory metadata."
 date: 2026-11-23
 decided-by: owner
-status: accepted
+status: superseded
 ---
+
+Superseded by [P0-D14](2026-11-23-p0-d14-personal-chat-and-organizations.md).
 
 # Single Organization per deployment
 

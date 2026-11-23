@@ -252,13 +252,13 @@ public static class HrCsvImportService
         IEnumerable<(Guid Id, string EmployeeCode, string FullName, bool IsActive)> employees,
         CancellationToken ct)
     {
-        var linkedEmployeeIds = await db.Users
+        var linkedEmployeeIds = await db.OrganizationPeople
             .AsNoTracking()
             .Where(u => u.OrganizationId == organizationId && u.EmployeeId != null)
             .Select(u => u.EmployeeId!.Value)
             .ToHashSetAsync(ct);
 
-        var unverifiedUsers = await db.Users
+        var unverifiedUsers = await db.OrganizationPeople
             .AsNoTracking()
             .Where(u =>
                 u.OrganizationId == organizationId &&

@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -29,7 +28,7 @@ public static class PeopleEndpoints
 
     public static IEndpointRouteBuilder MapPeopleEndpoints(this IEndpointRouteBuilder app)
     {
-        var people = app.MapGroup("/api/people");
+        var people = app.MapGroup(OrganizationScope.Api + "/people");
 
         people.MapGet("/directory", HandleDirectorySearchAsync);
         people.MapPut("/me/status", HandleUpdateCustomStatusAsync);
@@ -43,7 +42,6 @@ public static class PeopleEndpoints
     private static async Task<IResult> HandleDirectorySearchAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         string? q,
         Guid? departmentId,
@@ -55,7 +53,7 @@ public static class PeopleEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
@@ -72,9 +70,7 @@ public static class PeopleEndpoints
         }
 
         // Hide Disabled and Former accounts strictly in SQL (M1.10).
-        var baseQuery = db.Users
-            .AsNoTracking()
-            .Where(u => u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active);
+        var baseQuery = db.ActiveScopePeople.AsNoTracking();
 
         if (departmentId.HasValue)
         {
@@ -83,7 +79,7 @@ public static class PeopleEndpoints
 
         var normalizedQuery = HrCsvImportService.NormalizeVietnamese(q ?? string.Empty);
 
-        IQueryable<NexusUser> orderedQuery;
+        IQueryable<OrganizationMembership> orderedQuery;
         if (!string.IsNullOrEmpty(normalizedQuery))
         {
             var likePattern = $"%{EscapeLike(normalizedQuery)}%";
@@ -137,7 +133,7 @@ public static class PeopleEndpoints
             r.DepartmentId.HasValue && deptNames.TryGetValue(r.DepartmentId.Value, out var dn) ? dn : null,
             r.BranchId.HasValue && branchNames.TryGetValue(r.BranchId.Value, out var bn) ? bn : null,
             r.CustomStatus,
-            string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/people/{r.Id}/avatar"))
+            string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{r.Id}/avatar"))
             .ToList();
 
         return Results.Ok(new { items });
@@ -146,14 +142,14 @@ public static class PeopleEndpoints
     private static async Task<IResult> HandleUpdateCustomStatusAsync(
         HttpContext ctx,
         UpdateCustomStatusRequest request,
-        UserManager<NexusUser> userManager)
+        [FromServices] NexusDbContext db)
     {
         if (!ctx.User.TryGetUserId(out var userId))
         {
             return Results.Unauthorized();
         }
 
-        var user = await userManager.FindByIdAsync(userId.ToString());
+        var user = await db.FindOrganizationActorAsync(userId, ctx.RequestAborted);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -170,13 +166,13 @@ public static class PeopleEndpoints
         }
 
         user.CustomStatus = cleaned;
-        await userManager.UpdateAsync(user);
+        await db.SaveChangesAsync();
         return Results.Ok(new { customStatus = user.CustomStatus });
     }
 
     private static async Task<IResult> HandleUploadAvatarAsync(
         HttpContext ctx,
-        UserManager<NexusUser> userManager,
+        [FromServices] NexusDbContext db,
         IFileStorage storage,
         IFileScanner scanner,
         CancellationToken ct)
@@ -186,7 +182,7 @@ public static class PeopleEndpoints
             return Results.Unauthorized();
         }
 
-        var user = await userManager.FindByIdAsync(userId.ToString());
+        var user = await db.FindOrganizationActorAsync(userId, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -238,7 +234,7 @@ public static class PeopleEndpoints
 
             var previousKey = user.AvatarObjectKey;
             user.AvatarObjectKey = stored.ObjectKey;
-            await userManager.UpdateAsync(user);
+            await db.SaveChangesAsync(ct);
 
             if (!string.IsNullOrEmpty(previousKey) && !string.Equals(previousKey, stored.ObjectKey, StringComparison.Ordinal))
             {
@@ -247,7 +243,7 @@ public static class PeopleEndpoints
 
             return Results.Ok(new
             {
-                avatarUrl = $"/api/people/{user.Id}/avatar",
+                avatarUrl = $"/api/organizations/{user.OrganizationId}/people/{user.Id}/avatar",
                 sizeBytes = stored.SizeBytes,
                 sha256 = stored.Sha256Hex,
                 scanStatus = scan.StatusCode
@@ -257,7 +253,7 @@ public static class PeopleEndpoints
 
     private static async Task<IResult> HandleDeleteAvatarAsync(
         HttpContext ctx,
-        UserManager<NexusUser> userManager,
+        [FromServices] NexusDbContext db,
         IFileStorage storage,
         CancellationToken ct)
     {
@@ -266,7 +262,7 @@ public static class PeopleEndpoints
             return Results.Unauthorized();
         }
 
-        var user = await userManager.FindByIdAsync(userId.ToString());
+        var user = await db.FindOrganizationActorAsync(userId, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -274,7 +270,7 @@ public static class PeopleEndpoints
 
         var previousKey = user.AvatarObjectKey;
         user.AvatarObjectKey = null;
-        await userManager.UpdateAsync(user);
+        await db.SaveChangesAsync(ct);
 
         if (!string.IsNullOrEmpty(previousKey))
         {
@@ -288,7 +284,6 @@ public static class PeopleEndpoints
         HttpContext ctx,
         Guid targetUserId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IFileStorage storage,
         CancellationToken ct)
     {
@@ -297,15 +292,15 @@ public static class PeopleEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
         }
 
-        var target = await db.Users
+        var target = await db.ActiveScopePeople
             .AsNoTracking()
-            .Where(u => u.Id == targetUserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active)
+            .Where(u => u.Id == targetUserId)
             .Select(u => new { u.AvatarObjectKey })
             .SingleOrDefaultAsync(ct);
 

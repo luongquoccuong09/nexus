@@ -18,7 +18,7 @@ public enum AttachmentState
 public sealed class AttachmentEntity
 {
     public Guid Id { get; set; }
-    public Guid OrganizationId { get; set; }
+    public Guid? OrganizationId { get; set; }
     public Guid ConversationId { get; set; }
     public Guid? MessageId { get; set; }
     public Guid UploaderUserId { get; set; }
@@ -46,7 +46,7 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");
-        builder.Property(x => x.OrganizationId).HasColumnName("organization_id").IsRequired();
+        builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id").IsRequired();
         builder.Property(x => x.MessageId).HasColumnName("message_id");
         builder.Property(x => x.UploaderUserId).HasColumnName("uploader_user_id").IsRequired();

@@ -1,9 +1,10 @@
+using Nexus.Web.Modules.Org;
 using System.Data;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -21,6 +22,7 @@ public static class MessagingEndpoints
 {
     public const int MaxMessageBodyLength = 4000;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly string[] AttachmentUrlFields = ["downloadUrl", "thumbnailUrl", "previewUrl"];
 
     public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null);
     public sealed record MarkReadRequest(long LastReadSeq);
@@ -39,15 +41,15 @@ public static class MessagingEndpoints
         DateTimeOffset? DeletedAt,
         IReadOnlyList<AttachmentDto>? Attachments = null);
 
-    public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
-        var convs = app.MapGroup("/api/conversations/{conversationId:guid}");
+        var convs = app.MapGroup(prefix + "/conversations/{conversationId:guid}");
         convs.MapPost("/messages", HandleSendMessageAsync);
         convs.MapGet("/messages", HandleGetMessagesAsync);
         convs.MapGet("/changes", HandleGetChangesAsync);
         convs.MapPut("/read", HandleMarkReadAsync);
 
-        app.MapGet("/api/sync/reconcile", HandleReconcileAsync);
+        app.MapGet(prefix + "/sync/reconcile", HandleReconcileAsync);
         return app;
     }
 
@@ -56,7 +58,6 @@ public static class MessagingEndpoints
         Guid conversationId,
         SendMessageRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         IOptions<FilePolicyOptions> filePolicy,
@@ -64,7 +65,7 @@ public static class MessagingEndpoints
     {
         var requestStarted = Stopwatch.GetTimestamp();
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var clientMsgId = (request.ClientMsgId ?? string.Empty).Trim();
@@ -97,7 +98,7 @@ public static class MessagingEndpoints
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         var conv = await db.Conversations
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
 
         var member = await db.ConversationMembers
             .AsNoTracking()
@@ -115,8 +116,8 @@ public static class MessagingEndpoints
             if (peerId != Guid.Empty)
             {
                 isBlocked = await db.UserBlocks.AnyAsync(
-                    b => (b.BlockerUserId == actorId && b.BlockedUserId == peerId) ||
-                         (b.BlockerUserId == peerId && b.BlockedUserId == actorId),
+                    b => b.OrganizationId == db.OrganizationScopeId && ((b.BlockerUserId == actorId && b.BlockedUserId == peerId) ||
+                         (b.BlockerUserId == peerId && b.BlockedUserId == actorId)),
                     ct);
             }
         }
@@ -260,21 +261,20 @@ public static class MessagingEndpoints
         var fanoutMs = Stopwatch.GetElapsedTime(committedAt).TotalMilliseconds;
         ctx.Response.Headers.Append("Server-Timing", FormattableString.Invariant($"message_commit;dur={commitMs:F1}, message_fanout;dur={fanoutMs:F1}"));
 
-        return Results.Created($"/api/conversations/{conversationId}/messages/{message.Id}", dto);
+        return Results.Created($"{OrganizationScope.ApiPath(db.ConversationOrganizationId)}/conversations/{conversationId}/messages/{message.Id}", dto);
     }
 
     private static async Task<IResult> HandleGetMessagesAsync(
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         long? beforeSeq,
         int? limit,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -283,7 +283,7 @@ public static class MessagingEndpoints
         }
 
         var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
@@ -306,7 +306,7 @@ public static class MessagingEndpoints
             .OrderByDescending(m => m.Seq)
             .Take(pageSize + 1)
             .Join(
-                db.Users.AsNoTracking(),
+                db.OrganizationPeople.AsNoTracking(),
                 m => m.SenderId,
                 u => u.Id,
                 (m, u) => new
@@ -364,14 +364,13 @@ public static class MessagingEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         long after = 0,
         int? limit = null,
         CancellationToken ct = default)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -380,7 +379,7 @@ public static class MessagingEndpoints
         }
 
         var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
@@ -435,7 +434,7 @@ public static class MessagingEndpoints
                 changeSeq = e.ChangeSeq,
                 eventType = e.EventType,
                 actorUserId = e.ActorUserId,
-                payload,
+                payload = ScopeLegacyAttachmentUrls(e.EventType, payload, conv.OrganizationId),
                 createdAt = e.CreatedAt
             });
         }
@@ -449,15 +448,40 @@ public static class MessagingEndpoints
         });
     }
 
+    private static JsonElement ScopeLegacyAttachmentUrls(string eventType, JsonElement payload, Guid? organizationId)
+    {
+        const string legacyFilesPath = "/api/files/";
+        if (eventType != "message.created" ||
+            !payload.TryGetProperty("attachments", out var attachments) ||
+            attachments.ValueKind != JsonValueKind.Array ||
+            !attachments.GetRawText().Contains(legacyFilesPath, StringComparison.Ordinal))
+        {
+            return payload;
+        }
+
+        var message = JsonNode.Parse(payload.GetRawText())!.AsObject();
+        foreach (var attachment in message["attachments"]!.AsArray().OfType<JsonObject>())
+        {
+            foreach (var field in AttachmentUrlFields)
+            {
+                if (attachment[field]?.GetValue<string>() is { } url && url.StartsWith(legacyFilesPath, StringComparison.Ordinal))
+                {
+                    attachment[field] = OrganizationScope.ApiPath(organizationId) + url["/api".Length..];
+                }
+            }
+        }
+
+        return JsonSerializer.SerializeToElement(message, WebJsonOptions);
+    }
+
     private static async Task<IResult> HandleReconcileAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         int? limit,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -469,7 +493,7 @@ public static class MessagingEndpoints
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
-                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == actor.OrganizationId),
+                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == db.ConversationOrganizationId),
                 m => m.ConversationId,
                 c => c.Id,
                 (m, c) => new
@@ -494,17 +518,16 @@ public static class MessagingEndpoints
         Guid conversationId,
         MarkReadRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
@@ -583,7 +606,7 @@ public static class MessagingEndpoints
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{conversationId:N}\n{body}{attSuffix}")));
     }
 
-    private static MessageDto ToMessageDto(MessageEntity m, NexusUser sender, IReadOnlyList<AttachmentDto>? attachments = null) => new(
+    private static MessageDto ToMessageDto(MessageEntity m, OrganizationMembership sender, IReadOnlyList<AttachmentDto>? attachments = null) => new(
         m.Id,
         m.ConversationId,
         m.Seq,

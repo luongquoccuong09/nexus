@@ -149,9 +149,9 @@ P1 affects a common task, accessibility, or a consequential product choice. P2 c
 
 **Observed.** Create community defaults to `Public — Discoverable by colleagues` and offers `Private — Invite only`. In an internal app, `Public` needs an explicit organization boundary. The current copy also leaves the distinction between discovery and joining unclear.
 
-**Fix.** Replaced the visibility dropdown with plain-English **Organization-wide** and **Invite only** radio cards with policy helper text (including Official Community Verified-only behavior) in `src/Nexus.Client/src/communities.tsx`.
+**Fix.** The P0-D14 build uses **Open to organization members** and **Invite only** with helper text for discovery, joining and Official Community eligibility. The Community header shows the member's role. **Add channel** is available to a Community Owner or Admin.
 
-**Retest.** Describe who can find and join each choice in plain English. Proposed options are **Organization-wide** and **Invite only**, with short helper text matching policy for eligible accounts. Make the selected scope easy to review before creation. Verify the wording against actual behavior for the supported account roles and the Official Community policy. [Community and Channel decision](../decisions/2026-11-23-p0-d04-community-channel-hierarchy.md)
+**Retest.** Ready for a browser review with populated Communities. Compare the visibility choices as a member and as an account in another Organization. Verify **Your role** and **Add channel** as Owner, Admin and Member, and verify the Official Community eligibility rule. [Community and Channel decision](../decisions/2026-11-23-p0-d04-community-channel-hierarchy.md)
 
 ## Proposed enterprise UI rules
 
@@ -182,7 +182,7 @@ These are proposed additions to the [Nexus Design System & UX Conventions](READM
 | `Add colleagues (optional)` | `Add people (optional)` |
 | `Select colleague…` | `Select a person` |
 | `Discover public` | `Browse communities` |
-| `Public — Discoverable by colleagues` | `Organization-wide` with policy-specific helper text |
+| `Public — Discoverable by colleagues` | `Open to organization members` with policy-specific helper text |
 | `Add sub-channel` | `Add channel` |
 
 References for proposed rules include [Microsoft sentence case](https://learn.microsoft.com/en-us/style-guide/text-formatting/using-type/use-sentence-style-capitalization), [Microsoft acronym guidance](https://learn.microsoft.com/en-us/style-guide/checklists/acronyms-checklist), [WAI dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/), [WAI tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), [WCAG target size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum), and [WCAG reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html).

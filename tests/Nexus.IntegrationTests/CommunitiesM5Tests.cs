@@ -302,15 +302,15 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
             db.Departments.Add(new DepartmentEntity
             {
                 Id = deptId,
-                OrganizationId = owner.OrganizationId,
+                OrganizationId = owner.OrganizationId!.Value,
                 Code = $"ENG-{suffix}",
                 Name = $"Engineering {suffix}",
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
 
-            await db.Users
-                .Where(u => u.Id == deptUser1.Id || u.Id == deptUser2.Id)
+            await db.OrganizationMemberships
+                .Where(u => u.OrganizationId == owner.OrganizationId && (u.Id == deptUser1.Id || u.Id == deptUser2.Id))
                 .ExecuteUpdateAsync(s => s.SetProperty(u => u.DepartmentId, deptId));
         }
 
@@ -459,6 +459,8 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
+        OrganizationFixtureHandler.Add(db, org.Id, user);
+        await db.SaveChangesAsync();
         return user;
     }
 
@@ -488,7 +490,7 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
             CookieContainer = new CookieContainer(),
             CheckCertificateRevocationList = true
         };
-        return new HttpClient(handler) { BaseAddress = new Uri(GetBaseAddress(app)) };
+        return new HttpClient(new OrganizationFixtureHandler(app.Services, handler)) { BaseAddress = new Uri(GetBaseAddress(app)) };
     }
 
     private static string GetBaseAddress(WebApplication app)

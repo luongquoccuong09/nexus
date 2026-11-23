@@ -1,5 +1,6 @@
+using Nexus.Web.Modules.People;
+using Nexus.Web.Modules.Org;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -19,9 +20,9 @@ public static class ConversationEndpoints
     public sealed record TransferOwnershipRequest(Guid NewOwnerUserId);
     public sealed record SetAdminRoleRequest(bool IsAdmin);
 
-    public static IEndpointRouteBuilder MapConversationEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapConversationEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
-        var group = app.MapGroup("/api/conversations");
+        var group = app.MapGroup(prefix + "/conversations");
 
         group.MapGet("/", HandleListConversationsAsync);
         group.MapPost("/dm", HandleOpenDmAsync);
@@ -48,7 +49,6 @@ public static class ConversationEndpoints
     private static async Task<IResult> HandleListConversationsAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IPresenceTracker presence,
         int? limit,
         CancellationToken ct)
@@ -58,7 +58,7 @@ public static class ConversationEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
@@ -73,7 +73,7 @@ public static class ConversationEndpoints
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
-                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == actor.OrganizationId && c.Kind != ConversationKind.Channel),
+                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == db.ConversationOrganizationId && c.Kind != ConversationKind.Channel),
                 m => m.ConversationId,
                 c => c.Id,
                 (m, c) => new { Member = m, Conv = c })
@@ -88,7 +88,7 @@ public static class ConversationEndpoints
                 .AsNoTracking()
                 .Where(m => convIds.Contains(m.ConversationId) && m.LeftAt == null)
                 .Join(
-                    db.Users.AsNoTracking(),
+                    db.OrganizationPeople.AsNoTracking(),
                     m => m.UserId,
                     u => u.Id,
                     (m, u) => new
@@ -131,8 +131,8 @@ public static class ConversationEndpoints
                     username = peer.Username,
                     displayName = peer.DisplayName,
                     isUnverified = peer.TrustLevel == TrustLevel.Unverified,
-                    isOnline = presence.IsOnline(peer.UserId),
-                    avatarUrl = string.IsNullOrEmpty(peer.AvatarObjectKey) ? null : $"/api/people/{peer.UserId}/avatar"
+                    isOnline = presence.IsOnline(db.OrganizationScopeId, peer.UserId),
+                    avatarUrl = string.IsNullOrEmpty(peer.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{peer.UserId}/avatar"
                 }
             };
         }).ToList();
@@ -144,7 +144,6 @@ public static class ConversationEndpoints
         HttpContext ctx,
         OpenDmRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IOptions<IdentityModuleOptions> identityOptions,
         MessagingFanoutService fanout,
@@ -155,39 +154,39 @@ public static class ConversationEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
         }
 
-        var target = await db.Users
+        var target = await db.OrganizationPeople
             .AsNoTracking()
-            .Where(u => u.Id == request.TargetUserId && u.OrganizationId == actor.OrganizationId)
+            .Where(u => u.Id == request.TargetUserId && u.Status == AccountStatus.Active)
             .Select(u => new { u.Id, u.Status, u.DisplayName, u.TrustLevel })
             .SingleOrDefaultAsync(ct);
 
-        if (target is null)
+        if (target is null || (db.IsPersonalScope && !await PersonalConnections.AcceptedContactIds(db, actorId).ContainsAsync(request.TargetUserId, ct)))
         {
             return Results.NotFound(new { code = "user_not_found", message = "Target user not found." });
         }
 
         var isBlocked = await db.UserBlocks.AnyAsync(
-            b => (b.BlockerUserId == actorId && b.BlockedUserId == target.Id) ||
-                 (b.BlockerUserId == target.Id && b.BlockedUserId == actorId),
+            b => b.OrganizationId == db.OrganizationScopeId && ((b.BlockerUserId == actorId && b.BlockedUserId == target.Id) ||
+                 (b.BlockerUserId == target.Id && b.BlockedUserId == actorId)),
             ct);
 
         var dmKey = BuildDmKey(actorId, target.Id);
         var existing = await db.Conversations
             .AsNoTracking()
-            .SingleOrDefaultAsync(c => c.OrganizationId == actor.OrganizationId && c.DmKey == dmKey, ct);
+            .SingleOrDefaultAsync(c => c.OrganizationId == db.ConversationOrganizationId && c.DmKey == dmKey, ct);
 
         var dailyQuotaExceeded = false;
         if (existing is null && actor.TrustLevel == TrustLevel.Unverified)
         {
             var utcDayStart = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
             var todayCount = await db.Conversations.CountAsync(
-                c => c.OrganizationId == actor.OrganizationId &&
+                c => c.OrganizationId == db.ConversationOrganizationId &&
                      c.Kind == ConversationKind.Dm &&
                      c.CreatedByUserId == actorId &&
                      c.CreatedAt >= utcDayStart,
@@ -232,12 +231,12 @@ public static class ConversationEndpoints
         // Atomic upsert by dm_key so concurrent tabs open exactly one DM conversation (M2.2).
         var inserted = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO conversations (id, organization_id, kind, community_id, is_community_main_feed, posting_policy, title, dm_key, next_seq, change_seq, min_available_change_seq, created_by_user_id, created_at, updated_at)
-            VALUES ({newConvId}, {actor.OrganizationId}, {"Dm"}, NULL, {false}, {"Members"}, NULL, {dmKey}, {0L}, {1L}, {1L}, {actorId}, {now}, {now})
+            VALUES ({newConvId}, {db.ConversationOrganizationId}, {"Dm"}, NULL, {false}, {"Members"}, NULL, {dmKey}, {0L}, {1L}, {1L}, {actorId}, {now}, {now})
             ON CONFLICT (organization_id, dm_key) WHERE dm_key IS NOT NULL DO NOTHING
             """, ct);
 
         var conv = await db.Conversations
-            .SingleAsync(c => c.OrganizationId == actor.OrganizationId && c.DmKey == dmKey, ct);
+            .SingleAsync(c => c.OrganizationId == db.ConversationOrganizationId && c.DmKey == dmKey, ct);
 
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO conversation_members (conversation_id, user_id, role, last_read_seq, visible_from_seq, muted, joined_at, left_at)
@@ -283,7 +282,6 @@ public static class ConversationEndpoints
         HttpContext ctx,
         CreateGroupRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
@@ -293,7 +291,7 @@ public static class ConversationEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
@@ -310,6 +308,7 @@ public static class ConversationEndpoints
             return Results.BadRequest(new { code = "invalid_title", message = "Group title must be 1 to 120 characters." });
         }
 
+        var allowedContacts = PersonalConnections.AcceptedContactIds(db, actorId);
         var requestedIds = (request.MemberUserIds ?? [])
             .Where(id => id != actorId)
             .Distinct()
@@ -318,17 +317,22 @@ public static class ConversationEndpoints
 
         var validMemberIds = requestedIds.Count == 0
             ? []
-            : await db.Users
+            : await db.ActiveScopePeople
                 .AsNoTracking()
-                .Where(u => requestedIds.Contains(u.Id) && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active)
+                .Where(u => requestedIds.Contains(u.Id) && (!db.IsPersonalScope || allowedContacts.Contains(u.Id)))
                 .Select(u => u.Id)
                 .ToListAsync(ct);
+
+        if (db.IsPersonalScope && validMemberIds.Count != requestedIds.Count)
+        {
+            return Results.Forbid();
+        }
 
         var now = DateTimeOffset.UtcNow;
         var conv = new ConversationEntity
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = actor.OrganizationId,
+            OrganizationId = db.ConversationOrganizationId,
             Kind = ConversationKind.Group,
             Title = title,
             NextSeq = 0,
@@ -373,7 +377,7 @@ public static class ConversationEndpoints
         await db.SaveChangesAsync(ct);
         await fanout.NotifyConversationChangedAsync(conv.Id, conv.ChangeSeq, ct);
 
-        return Results.Created($"/api/conversations/{conv.Id}", new
+        return Results.Created($"{OrganizationScope.ApiPath(db.ConversationOrganizationId)}/conversations/{conv.Id}", new
         {
             id = conv.Id,
             kind = "group",
@@ -387,18 +391,17 @@ public static class ConversationEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         int? limit,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
 
-        var conv = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+        var conv = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
         var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
@@ -410,7 +413,7 @@ public static class ConversationEndpoints
         var items = await db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.LeftAt == null)
-            .Join(db.Users.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
+            .Join(db.OrganizationPeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
             {
                 userId = u.Id,
                 username = u.UserName ?? string.Empty,
@@ -431,16 +434,15 @@ public static class ConversationEndpoints
         Guid conversationId,
         AddMemberRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId && c.Kind == ConversationKind.Group, ct);
+        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
         if (conv is null || !authz.Can(actor.ToActorContext(), ResourceAction.GroupAddMember, new ResourceContext(ResourceKind.GroupChat, actor.OrganizationId, MembershipRole: myMembership?.Role)))
@@ -448,7 +450,8 @@ public static class ConversationEndpoints
             return Results.Forbid();
         }
 
-        var target = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.UserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
+        if (db.IsPersonalScope && !await PersonalConnections.AcceptedContactIds(db, actorId).ContainsAsync(request.UserId, ct)) return Results.Forbid();
+        var target = await db.OrganizationPeople.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.UserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
         if (target is null)
         {
             return Results.NotFound(new { code = "user_not_found", message = "Active target user not found." });
@@ -509,16 +512,15 @@ public static class ConversationEndpoints
         Guid conversationId,
         Guid targetUserId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId && c.Kind == ConversationKind.Group, ct);
+        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMembership = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == targetUserId && m.LeftAt == null, ct);
 
@@ -568,16 +570,15 @@ public static class ConversationEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId && c.Kind == ConversationKind.Group, ct);
+        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
         var myMembership = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         if (conv is null || myMembership is null) return Results.Forbid();
 
@@ -619,19 +620,18 @@ public static class ConversationEndpoints
         Guid conversationId,
         TransferOwnershipRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId && c.Kind == ConversationKind.Group, ct);
+        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == request.NewOwnerUserId && m.LeftAt == null, ct);
-        var targetUser = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId, ct);
+        var targetUser = await db.OrganizationPeople.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId, ct);
 
         if (conv is null || myMembership is null || targetMember is null || targetUser is null)
         {
@@ -706,16 +706,15 @@ public static class ConversationEndpoints
         Guid targetUserId,
         SetAdminRoleRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId && c.Kind == ConversationKind.Group, ct);
+        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == targetUserId && m.LeftAt == null, ct);
 

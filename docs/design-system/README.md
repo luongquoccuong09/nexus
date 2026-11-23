@@ -22,7 +22,7 @@
 | **Brand ramp (Ocean Blue)** | `--brand-950` (`#0B1F33`) → `--brand-600` (`#1E70B8`) → `--brand-50` (`#F0F7FD`) | Left App Rail uses `--brand-950`; primary buttons & accents use `--brand-600`/`--brand-700` |
 | **Surfaces** | `--bg-app`, `--bg-sidebar`, `--bg-surface`, `--bg-subtle`, `--bg-hover`, `--bg-active`, `--bg-msg-own`, `--bg-msg-other` | Full light and `body.dark` overrides (`localStorage['nexus-theme']`) |
 | **Text & borders** | `--text-primary`, `--text-secondary`, `--text-muted`, `--border`, `--border-soft`, `--border-focus`, `--focus-ring` | High contrast across light and dark themes |
-| **Semantic & presence** | `--success`, `--warning`, `--danger`, `--dot-online`, `--dot-reconnecting`, `--dot-offline` | Presence dots, `Unverified`/`Verified` pills, inline toasts |
+| **Semantic & presence** | `--success`, `--warning`, `--danger`, `--dot-online`, `--dot-reconnecting`, `--dot-offline` | Presence dots, inline status messages, inline toasts |
 | **Spacing & radii** | `--space-1` (`4px`) → `--space-8` (`32px`), `--radius-sm`/`md`/`lg`/`xl`/`pill` | Consistent density across desktop & mobile |
 | **Layout** | `--rail-w: 68px`, `--side-w: 304px`, `--drawer-w: 296px`, `--topbar-h: 48px` | Collapses cleanly under `860px` viewport width |
 
@@ -33,7 +33,7 @@ Import from `./ui` rather than duplicating markup or ad-hoc CSS:
 | Component | File | Purpose |
 |---|---|---|
 | `Button` | `ui/Button.tsx` | Variants: `default`, `primary`, `ghost`, `danger`; sizes: `sm`, `md`; `iconOnly` (must carry `aria-label`), `fullWidth` |
-| `Badge`, `TrustBadge`, `UserNameWithBadge` | `ui/Badge.tsx` | Standardized `Unverified`, `Verified`, and role pills (`M1.4b`) |
+| `Badge` | `ui/Badge.tsx` | Standardized role and success pills. Verification state remains enforced by server policy and is not shown as a warning badge in member-facing UI. |
 | `Avatar`, `getInitials` | `ui/Avatar.tsx` | User (`circle`) and Group (`rounded-square`) avatars in `sm`/`md`/`lg`, optional online/offline presence dot & cache busting |
 | `Modal` | `ui/Modal.tsx` | Accessible focus-trapped dialog powered by headless `@radix-ui/react-dialog` (Escape key, backdrop click, `aria-modal`) |
 | `ToastBar` | `ui/Toast.tsx` | Inline `error`/`ok`/`info` status banner with dismiss button and proper ARIA role |

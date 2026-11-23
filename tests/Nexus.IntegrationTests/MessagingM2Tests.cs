@@ -72,6 +72,7 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
             termsAccepted = true
         });
         Assert.Equal(HttpStatusCode.Created, regResp.StatusCode);
+        await OrganizationFixtureHandler.AdmitAsync(app.Services, (await regResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
 
         using var dm1 = await trialClient.PostAsJsonAsync("/api/conversations/dm", new { targetUserId = userA.Id });
         Assert.Equal(HttpStatusCode.OK, dm1.StatusCode);
@@ -117,10 +118,10 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         var cEvents = new ConcurrentQueue<JsonElement>();
         var adminEvents = new ConcurrentQueue<JsonElement>();
 
-        await using var hubA = BuildMessagingHub(app, cookiesA);
-        await using var hubB = BuildMessagingHub(app, cookiesB);
-        await using var hubC = BuildMessagingHub(app, cookiesC);
-        await using var hubAdmin = BuildMessagingHub(app, cookiesAdmin);
+        await using var hubA = await BuildMessagingHub(app, cookiesA);
+        await using var hubB = await BuildMessagingHub(app, cookiesB);
+        await using var hubC = await BuildMessagingHub(app, cookiesC);
+        await using var hubAdmin = await BuildMessagingHub(app, cookiesAdmin);
 
         hubB.On<JsonElement>("ConversationChanged", payload => bEvents.Enqueue(payload.Clone()));
         hubB.On<JsonElement>("TypingIndicator", payload => bTyping.Enqueue(payload.Clone()));
@@ -309,7 +310,7 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
 
         // M2.7: Connect B to SignalR and verify monotonic GREATEST(last_read_seq) + ReadStateUpdated fan-out
         var readUpdates = new ConcurrentQueue<JsonElement>();
-        await using var hubB = BuildMessagingHub(app, cookiesB);
+        await using var hubB = await BuildMessagingHub(app, cookiesB);
         hubB.On<JsonElement>("ReadStateUpdated", payload => readUpdates.Enqueue(payload.Clone()));
         await hubB.StartAsync();
 
@@ -575,6 +576,8 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
+        OrganizationFixtureHandler.Add(db, org.Id, user);
+        await db.SaveChangesAsync();
         return user;
     }
 
@@ -606,15 +609,15 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
             CookieContainer = cookies,
             CheckCertificateRevocationList = true
         };
-        var client = new HttpClient(handler) { BaseAddress = new Uri(GetBaseAddress(app)) };
+        var client = new HttpClient(new OrganizationFixtureHandler(app.Services, handler)) { BaseAddress = new Uri(GetBaseAddress(app)) };
         return (cookies, client);
     }
 
-    private static HubConnection BuildMessagingHub(WebApplication app, CookieContainer cookies)
+    private static async Task<HubConnection> BuildMessagingHub(WebApplication app, CookieContainer cookies)
     {
         var baseUri = new Uri(GetBaseAddress(app));
         return new HubConnectionBuilder()
-            .WithUrl(new Uri(baseUri, "hubs/messaging"), opts =>
+            .WithUrl(new Uri(baseUri, $"hubs/organizations/{await OrganizationFixtureHandler.GetIdAsync(app.Services)}/messaging"), opts =>
             {
                 opts.Cookies = cookies;
                 opts.Headers.Add("Origin", baseUri.ToString().TrimEnd('/'));

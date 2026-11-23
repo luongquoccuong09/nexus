@@ -9,6 +9,7 @@ public sealed class OrganizationEntity
     public required string Name { get; set; }
     public required string Slug { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    public bool LegacyReviewPending { get; set; }
 }
 
 public sealed class DepartmentEntity
@@ -53,6 +54,7 @@ public sealed class OrganizationEntityConfiguration : IEntityTypeConfiguration<O
         builder.Property(x => x.Name).HasColumnName("name").HasMaxLength(120).IsRequired();
         builder.Property(x => x.Slug).HasColumnName("slug").HasMaxLength(64).IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
+        builder.Property(x => x.LegacyReviewPending).HasColumnName("legacy_review_pending");
         builder.HasIndex(x => x.Slug).IsUnique().HasDatabaseName("ux_organizations_slug");
     }
 }

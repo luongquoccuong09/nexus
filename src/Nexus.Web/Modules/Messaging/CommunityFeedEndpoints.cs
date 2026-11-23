@@ -1,6 +1,6 @@
+using Nexus.Web.Modules.Org;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -25,10 +25,10 @@ public static class CommunityFeedEndpoints
 
     public static IEndpointRouteBuilder MapCommunityFeedEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/channels/{conversationId:guid}/posts", HandleListPostsAsync);
-        app.MapPost("/api/channels/{conversationId:guid}/posts", HandleCreatePostAsync);
+        app.MapGet(OrganizationScope.Api + "/channels/{conversationId:guid}/posts", HandleListPostsAsync);
+        app.MapPost(OrganizationScope.Api + "/channels/{conversationId:guid}/posts", HandleCreatePostAsync);
 
-        var posts = app.MapGroup("/api/posts/{postId:guid}");
+        var posts = app.MapGroup(OrganizationScope.Api + "/posts/{postId:guid}");
         posts.MapPut("/pin", HandlePinPostAsync);
         posts.MapPost("/comments", HandleCreateCommentAsync);
         posts.MapPut("/reactions/{emoji}", HandleAddReactionAsync);
@@ -37,7 +37,7 @@ public static class CommunityFeedEndpoints
         posts.MapGet("/acknowledgments", HandleGetAcknowledgmentReportAsync);
         posts.MapPost("/remind", HandleRemindOutstandingAsync);
 
-        app.MapPut("/api/polls/{pollId:guid}/vote", HandleVotePollAsync);
+        app.MapPut(OrganizationScope.Api + "/polls/{pollId:guid}/vote", HandleVotePollAsync);
 
         return app;
     }
@@ -46,14 +46,13 @@ public static class CommunityFeedEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         DateTimeOffset? before,
         int? limit,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -125,13 +124,13 @@ public static class CommunityFeedEndpoints
 
         var authors = authorIds.Count == 0
             ? new Dictionary<Guid, (string DisplayName, bool IsUnverified, string? AvatarUrl)>()
-            : (await db.Users.AsNoTracking()
+            : (await db.OrganizationPeople.AsNoTracking()
                 .Where(u => authorIds.Contains(u.Id))
                 .Select(u => new { u.Id, u.DisplayName, u.TrustLevel, u.AvatarObjectKey })
                 .ToListAsync(ct))
                 .ToDictionary(
                     u => u.Id,
-                    u => (DisplayName: u.DisplayName, IsUnverified: u.TrustLevel == TrustLevel.Unverified, AvatarUrl: string.IsNullOrEmpty(u.AvatarObjectKey) ? null : $"/api/people/{u.Id}/avatar"));
+                    u => (DisplayName: u.DisplayName, IsUnverified: u.TrustLevel == TrustLevel.Unverified, AvatarUrl: string.IsNullOrEmpty(u.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{u.Id}/avatar"));
 
         var totalRecipients = await CountEligibleRecipientsAsync(db, access.Community, ct);
 
@@ -231,13 +230,12 @@ public static class CommunityFeedEndpoints
         Guid conversationId,
         CreatePostRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
@@ -318,7 +316,7 @@ public static class CommunityFeedEndpoints
         await db.SaveChangesAsync(ct);
         await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, conversationId, ct);
 
-        return Results.Created($"/api/posts/{post.Id}", new
+        return Results.Created($"/api/organizations/{actor.OrganizationId}/posts/{post.Id}", new
         {
             id = post.Id,
             conversationId,
@@ -336,13 +334,12 @@ public static class CommunityFeedEndpoints
         Guid postId,
         PinPostRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var post = await db.ChannelPosts.SingleOrDefaultAsync(p => p.Id == postId && p.OrganizationId == actor.OrganizationId && p.DeletedAt == null, ct);
@@ -370,13 +367,12 @@ public static class CommunityFeedEndpoints
         Guid postId,
         CreateCommentRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var post = await db.ChannelPosts.AsNoTracking().SingleOrDefaultAsync(p => p.Id == postId && p.OrganizationId == actor.OrganizationId && p.DeletedAt == null, ct);
@@ -406,7 +402,7 @@ public static class CommunityFeedEndpoints
         await db.SaveChangesAsync(ct);
         await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
 
-        return Results.Created($"/api/posts/{postId}/comments/{comment.Id}", new
+        return Results.Created($"/api/organizations/{actor.OrganizationId}/posts/{postId}/comments/{comment.Id}", new
         {
             id = comment.Id,
             postId,
@@ -423,12 +419,11 @@ public static class CommunityFeedEndpoints
         Guid postId,
         string emoji,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var decodedEmoji = Uri.UnescapeDataString(emoji ?? string.Empty).Trim();
@@ -461,12 +456,11 @@ public static class CommunityFeedEndpoints
         Guid postId,
         string emoji,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var decodedEmoji = Uri.UnescapeDataString(emoji ?? string.Empty).Trim();
@@ -490,12 +484,11 @@ public static class CommunityFeedEndpoints
         HttpContext ctx,
         Guid postId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var post = await db.ChannelPosts.AsNoTracking()
@@ -528,13 +521,12 @@ public static class CommunityFeedEndpoints
         HttpContext ctx,
         Guid postId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         string format = "json",
         CancellationToken ct = default)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var post = await db.ChannelPosts.AsNoTracking()
@@ -552,7 +544,7 @@ public static class CommunityFeedEndpoints
         var recipientsQuery = db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == access.Community.Id && m.LeftAt == null)
             .Join(
-                db.Users.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
+                db.OrganizationPeople.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
                 m => m.UserId,
                 u => u.Id,
                 (m, u) => new { u.Id, Username = u.UserName ?? string.Empty, u.DisplayName, u.TrustLevel });
@@ -610,12 +602,11 @@ public static class CommunityFeedEndpoints
         HttpContext ctx,
         Guid postId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var post = await db.ChannelPosts.AsNoTracking()
@@ -657,12 +648,11 @@ public static class CommunityFeedEndpoints
         Guid pollId,
         VotePollRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var poll = await db.Polls.AsNoTracking().SingleOrDefaultAsync(p => p.Id == pollId, ct);
@@ -737,7 +727,7 @@ public static class CommunityFeedEndpoints
         var query = db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == community.Id && m.LeftAt == null)
             .Join(
-                db.Users.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
+                db.OrganizationPeople.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
                 m => m.UserId,
                 u => u.Id,
                 (m, u) => u.TrustLevel);

@@ -1,3 +1,4 @@
+using Nexus.Web.Modules.Org;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -105,12 +106,11 @@ public static class IdentityEndpoints
         auth.MapPost("/mfa/setup", HandleMfaSetupAsync);
         auth.MapPost("/mfa/enable", HandleMfaEnableAsync);
 
-        var admin = app.MapGroup("/api/admin/accounts");
+        var admin = app.MapGroup(OrganizationScope.Api + "/admin/accounts");
         admin.MapGet("/", HandleAdminListAccountsAsync);
         admin.MapPost("/{targetUserId:guid}/verify", HandleAdminVerifyAccountAsync);
         admin.MapPost("/{targetUserId:guid}/rename", HandleAdminRenameAccountAsync);
         admin.MapPost("/{targetUserId:guid}/status", HandleAdminChangeStatusAsync);
-        admin.MapPost("/{targetUserId:guid}/reset-link", HandleAdminIssueResetLinkAsync);
 
         return app;
     }
@@ -158,7 +158,7 @@ public static class IdentityEndpoints
 
         if (!request.TermsAccepted)
         {
-            return Results.BadRequest(new { code = "terms_required", message = "You must accept the trial terms to register." });
+            return Results.BadRequest(new { code = "terms_required", message = "Accept the terms of use to create an account." });
         }
 
         if (!UsernamePolicy.TryValidate(request.Username, out var normalizedUsername, out var usernameError))
@@ -178,13 +178,11 @@ public static class IdentityEndpoints
             return Results.Conflict(new { code = "username_taken", message = "This username is already taken." });
         }
 
-        var org = await IdentityBootstrapService.EnsureDefaultOrganizationAsync(db, opts, ct);
         var now = DateTimeOffset.UtcNow;
 
         var user = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = normalizedUsername,
             DisplayName = displayName,
             Status = AccountStatus.Active,
@@ -203,7 +201,7 @@ public static class IdentityEndpoints
         }
 
         await SignInSessionAsync(ctx, user, mfaVerified: false);
-        await WriteAuditAsync(db, org.Id, user.Id, "ACCOUNT_REGISTER", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await WriteAuditAsync(db, Guid.Empty, user.Id, "ACCOUNT_REGISTER", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
 
         return Results.Created($"/api/auth/me", ToSummaryDto(user));
     }
@@ -276,7 +274,7 @@ public static class IdentityEndpoints
         }
 
         await SignInSessionAsync(ctx, user, mfaVerified);
-        await WriteAuditAsync(db, user.OrganizationId, user.Id, "AUTH_PASSWORD_LOGIN", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await WriteAuditAsync(db, Guid.Empty, user.Id, "AUTH_PASSWORD_LOGIN", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
 
         return Results.Ok(ToSummaryDto(user));
     }
@@ -341,7 +339,7 @@ public static class IdentityEndpoints
         var mfaVerified = string.Equals(ctx.User.FindFirstValue(ClaimsPrincipalExtensions.MfaVerifiedClaimType), "true", StringComparison.Ordinal);
         await SignInSessionAsync(ctx, user, mfaVerified);
 
-        await WriteAuditAsync(db, user.OrganizationId, user.Id, "PASSWORD_CHANGED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await WriteAuditAsync(db, Guid.Empty, user.Id, "PASSWORD_CHANGED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
         return Results.Ok(new { changed = true });
     }
 
@@ -397,7 +395,7 @@ public static class IdentityEndpoints
             .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now), ct);
         connectionRegistry.AbortUserConnections(user.Id);
 
-        await WriteAuditAsync(db, user.OrganizationId, user.Id, "PASSWORD_RESET_REDEEMED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await WriteAuditAsync(db, Guid.Empty, user.Id, "PASSWORD_RESET_REDEEMED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
         return Results.Ok(new { reset = true });
     }
 
@@ -556,7 +554,7 @@ public static class IdentityEndpoints
         // Renew current session ticket in-place with mfa_verified = true.
         await SignInSessionAsync(ctx, user, mfaVerified: true);
 
-        await WriteAuditAsync(db, user.OrganizationId, user.Id, "MFA_ENABLED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await WriteAuditAsync(db, Guid.Empty, user.Id, "MFA_ENABLED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
         return Results.Ok(new { mfaEnabled = true, recoveryCodes });
     }
 
@@ -569,7 +567,7 @@ public static class IdentityEndpoints
         CancellationToken ct)
     {
         var (actorUser, guardResult) = await AuthorizeAdminAsync(
-            ctx, userManager, authz, ResourceAction.AdminVerifyAccount,
+            ctx, db, authz, ResourceAction.AdminVerifyAccount,
             new ResourceContext(ResourceKind.UserAccount), requireMfa: true);
         if (guardResult is not null)
         {
@@ -581,12 +579,12 @@ public static class IdentityEndpoints
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
 
-        var items = await db.Users
+        var items = await db.OrganizationPeople
             .AsNoTracking()
             .Where(u => u.OrganizationId == actorUser!.OrganizationId)
             .OrderByDescending(u => u.CreatedAt)
             .Take(pageSize)
-            .Select(u => ToSummaryDto(u))
+            .Select(u => ToMemberSummaryDto(u))
             .ToListAsync(ct);
 
         return Results.Ok(new { items });
@@ -602,14 +600,14 @@ public static class IdentityEndpoints
         CancellationToken ct)
     {
         var (actorUser, guardResult) = await AuthorizeAdminAsync(
-            ctx, userManager, authz, ResourceAction.AdminVerifyAccount,
+            ctx, db, authz, ResourceAction.AdminVerifyAccount,
             new ResourceContext(ResourceKind.UserAccount), requireMfa: true);
         if (guardResult is not null)
         {
             return guardResult;
         }
 
-        var target = await userManager.FindByIdAsync(targetUserId.ToString());
+        var target = await db.OrganizationPeople.SingleOrDefaultAsync(m => m.Id == targetUserId, ct);
         if (target is null || target.OrganizationId != actorUser!.OrganizationId)
         {
             return Results.NotFound();
@@ -628,7 +626,7 @@ public static class IdentityEndpoints
             return Results.BadRequest(new { code = "employee_not_found", message = "Active employee record not found." });
         }
 
-        var alreadyLinked = await db.Users.AnyAsync(u => u.EmployeeId == employee.Id && u.Id != target.Id, ct);
+        var alreadyLinked = await db.OrganizationPeople.AnyAsync(u => u.EmployeeId == employee.Id && u.Id != target.Id, ct);
         if (alreadyLinked)
         {
             return Results.Conflict(new { code = "employee_already_linked", message = "This employee record is already linked to another account." });
@@ -638,13 +636,13 @@ public static class IdentityEndpoints
         target.DepartmentId = employee.DepartmentId;
         target.BranchId = employee.BranchId;
         target.TrustLevel = TrustLevel.Verified;
-        await userManager.UpdateAsync(target);
+        await db.SaveChangesAsync(ct);
 
         await WriteAuditAsync(
             db, actorUser.OrganizationId, actorUser.Id, "ACCOUNT_VERIFY", "UserAccount", target.Id.ToString(), "Allowed",
             JsonSerializer.Serialize(new { employeeCode = empCode }), ctx, ct);
 
-        return Results.Ok(ToSummaryDto(target));
+        return Results.Ok(ToMemberSummaryDto(target));
     }
 
     private static async Task<IResult> HandleAdminRenameAccountAsync(
@@ -657,14 +655,14 @@ public static class IdentityEndpoints
         CancellationToken ct)
     {
         var (actorUser, guardResult) = await AuthorizeAdminAsync(
-            ctx, userManager, authz, ResourceAction.AdminVerifyAccount,
+            ctx, db, authz, ResourceAction.AdminVerifyAccount,
             new ResourceContext(ResourceKind.UserAccount), requireMfa: true);
         if (guardResult is not null)
         {
             return guardResult;
         }
 
-        var target = await userManager.FindByIdAsync(targetUserId.ToString());
+        var target = await db.OrganizationPeople.SingleOrDefaultAsync(m => m.Id == targetUserId, ct);
         if (target is null || target.OrganizationId != actorUser!.OrganizationId)
         {
             return Results.NotFound();
@@ -678,13 +676,13 @@ public static class IdentityEndpoints
 
         var previousName = target.DisplayName;
         target.DisplayName = newName;
-        await userManager.UpdateAsync(target);
+        await db.SaveChangesAsync(ct);
 
         await WriteAuditAsync(
             db, actorUser.OrganizationId, actorUser.Id, "ACCOUNT_RENAME", "UserAccount", target.Id.ToString(), "Allowed",
             JsonSerializer.Serialize(new { previousName, newName }), ctx, ct);
 
-        return Results.Ok(ToSummaryDto(target));
+        return Results.Ok(ToMemberSummaryDto(target));
     }
 
     private static async Task<IResult> HandleAdminChangeStatusAsync(
@@ -703,7 +701,7 @@ public static class IdentityEndpoints
         }
 
         var (actorUser, guardResult) = await AuthorizeAdminAsync(
-            ctx, userManager, authz, ResourceAction.AdminDisableOrEnableAccount,
+            ctx, db, authz, ResourceAction.AdminDisableOrEnableAccount,
             new ResourceContext(ResourceKind.UserAccount, TargetIsSelf: actorId == targetUserId),
             requireMfa: true);
         if (guardResult is not null)
@@ -717,81 +715,32 @@ public static class IdentityEndpoints
             return Results.BadRequest(new { code = "invalid_status", message = "Status must be Active or Disabled." });
         }
 
-        var target = await userManager.FindByIdAsync(targetUserId.ToString());
+        var target = await db.OrganizationPeople.SingleOrDefaultAsync(m => m.Id == targetUserId, ct);
         if (target is null || target.OrganizationId != actorUser!.OrganizationId)
         {
             return Results.NotFound();
         }
 
+        if (target.IsOwner || target.Status == AccountStatus.Former) return Results.Forbid();
         target.Status = nextStatus;
-        await userManager.UpdateAsync(target);
-        await userManager.UpdateSecurityStampAsync(target);
+        await db.SaveChangesAsync(ct);
 
         if (nextStatus != AccountStatus.Active)
         {
             var now = DateTimeOffset.UtcNow;
-            await db.AppSessions
-                .Where(s => s.UserId == target.Id && s.RevokedAt == null)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now), ct);
-            connectionRegistry.AbortUserConnections(target.Id);
+            connectionRegistry.AbortOrganizationConnections(target.OrganizationId, target.Id);
         }
 
         await WriteAuditAsync(
             db, actorUser.OrganizationId, actorUser.Id, "ACCOUNT_STATUS_CHANGE", "UserAccount", target.Id.ToString(), "Allowed",
             JsonSerializer.Serialize(new { status = nextStatus.ToString() }), ctx, ct);
 
-        return Results.Ok(ToSummaryDto(target));
+        return Results.Ok(ToMemberSummaryDto(target));
     }
 
-    private static async Task<IResult> HandleAdminIssueResetLinkAsync(
+    private static async Task<(OrganizationMembership? Actor, IResult? ErrorResult)> AuthorizeAdminAsync(
         HttpContext ctx,
-        Guid targetUserId,
-        [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
-        IAuthorizationService authz,
-        IOptions<IdentityModuleOptions> optionsAccessor,
-        CancellationToken ct)
-    {
-        var (actorUser, guardResult) = await AuthorizeAdminAsync(
-            ctx, userManager, authz, ResourceAction.AdminDisableOrEnableAccount,
-            new ResourceContext(ResourceKind.UserAccount, TargetIsSelf: false),
-            requireMfa: true);
-        if (guardResult is not null)
-        {
-            return guardResult;
-        }
-
-        var target = await userManager.FindByIdAsync(targetUserId.ToString());
-        if (target is null || target.OrganizationId != actorUser!.OrganizationId)
-        {
-            return Results.NotFound();
-        }
-
-        var rawToken = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-        var now = DateTimeOffset.UtcNow;
-        var expiresAt = now.AddMinutes(optionsAccessor.Value.ResetLinkExpiryMinutes);
-
-        db.AdminPasswordResetLinks.Add(new AdminPasswordResetLinkEntity
-        {
-            Id = Guid.CreateVersion7(),
-            TargetUserId = target.Id,
-            IssuedByUserId = actorUser.Id,
-            TokenHash = ComputeSha256Hex(rawToken),
-            CreatedAt = now,
-            ExpiresAt = expiresAt
-        });
-        await db.SaveChangesAsync(ct);
-
-        await WriteAuditAsync(
-            db, actorUser.OrganizationId, actorUser.Id, "ADMIN_RESET_LINK_ISSUED", "UserAccount", target.Id.ToString(), "Allowed",
-            JsonSerializer.Serialize(new { expiresAt }), ctx, ct);
-
-        return Results.Ok(new { resetToken = rawToken, expiresAt });
-    }
-
-    private static async Task<(NexusUser? Actor, IResult? ErrorResult)> AuthorizeAdminAsync(
-        HttpContext ctx,
-        UserManager<NexusUser> userManager,
+        NexusDbContext db,
         IAuthorizationService authz,
         ResourceAction action,
         ResourceContext resource,
@@ -802,7 +751,7 @@ public static class IdentityEndpoints
             return (null, Results.Unauthorized());
         }
 
-        var actorUser = await userManager.FindByIdAsync(actorId.ToString());
+        var actorUser = await db.FindOrganizationActorAsync(actorId, ctx.RequestAborted);
         if (actorUser is null)
         {
             return (null, Results.Unauthorized());
@@ -814,14 +763,14 @@ public static class IdentityEndpoints
             return (null, Results.Forbid());
         }
 
-        if (requireMfa && actorUser.RequiresMfa)
+        if (requireMfa)
         {
             var mfaClaim = string.Equals(
                 ctx.User.FindFirstValue(ClaimsPrincipalExtensions.MfaVerifiedClaimType),
                 "true",
                 StringComparison.Ordinal);
 
-            if (!actorUser.TwoFactorEnabled || !mfaClaim)
+            if (!mfaClaim)
             {
                 return (null, Results.Json(
                     new { code = "admin_mfa_required", message = "TOTP multi-factor authentication is required for administrative actions." },
@@ -880,6 +829,11 @@ public static class IdentityEndpoints
         });
         await db.SaveChangesAsync(ct);
     }
+
+    private static UserSummaryDto ToMemberSummaryDto(OrganizationMembership m) => new(
+        m.Id, m.UserName, m.DisplayName, m.Status.ToString(), m.TrustLevel.ToString(),
+        m.TrustLevel == TrustLevel.Unverified, m.OrgRole.ToString(), m.EmployeeId, false, false, false,
+        m.CustomStatus, m.AvatarObjectKey is null ? null : $"/api/organizations/{m.OrganizationId}/people/{m.Id}/avatar");
 
     private static UserSummaryDto ToSummaryDto(NexusUser u) => new(
         u.Id,

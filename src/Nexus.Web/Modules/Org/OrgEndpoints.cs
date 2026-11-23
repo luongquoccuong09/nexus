@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -16,7 +15,7 @@ public static class OrgEndpoints
 
     public static IEndpointRouteBuilder MapOrgEndpoints(this IEndpointRouteBuilder app)
     {
-        var org = app.MapGroup("/api/org");
+        var org = app.MapGroup(OrganizationScope.Api + "/org");
 
         org.MapGet("/departments", HandleListDepartmentsAsync);
         org.MapPost("/employees/import", HandleImportEmployeesAsync);
@@ -28,7 +27,6 @@ public static class OrgEndpoints
     private static async Task<IResult> HandleListDepartmentsAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         int? limit,
         CancellationToken ct)
@@ -38,7 +36,7 @@ public static class OrgEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(userId.ToString());
+        var actor = await db.FindOrganizationActorAsync(userId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
@@ -69,13 +67,12 @@ public static class OrgEndpoints
         HttpContext ctx,
         CsvImportRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         bool dryRun = true,
         CancellationToken ct = default)
     {
         var (actor, errorResult) = await AuthorizeHrAdminWithMfaAsync(
-            ctx, userManager, authz, ResourceAction.AdminImportDirectory, ResourceKind.Organization);
+            ctx, db, authz, ResourceAction.AdminImportDirectory, ResourceKind.Organization);
         if (errorResult is not null)
         {
             return errorResult;
@@ -120,12 +117,11 @@ public static class OrgEndpoints
     private static async Task<IResult> HandleGetMatchSuggestionsAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         var (actor, errorResult) = await AuthorizeHrAdminWithMfaAsync(
-            ctx, userManager, authz, ResourceAction.AdminVerifyAccount, ResourceKind.UserAccount);
+            ctx, db, authz, ResourceAction.AdminVerifyAccount, ResourceKind.UserAccount);
         if (errorResult is not null)
         {
             return errorResult;
@@ -135,9 +131,9 @@ public static class OrgEndpoints
         return Results.Ok(new { items = suggestions });
     }
 
-    private static async Task<(NexusUser? Actor, IResult? ErrorResult)> AuthorizeHrAdminWithMfaAsync(
+    private static async Task<(OrganizationMembership? Actor, IResult? ErrorResult)> AuthorizeHrAdminWithMfaAsync(
         HttpContext ctx,
-        UserManager<NexusUser> userManager,
+        NexusDbContext db,
         IAuthorizationService authz,
         ResourceAction action,
         ResourceKind kind)
@@ -147,7 +143,7 @@ public static class OrgEndpoints
             return (null, Results.Unauthorized());
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ctx.RequestAborted);
         if (actor is null)
         {
             return (null, Results.Unauthorized());
@@ -165,7 +161,7 @@ public static class OrgEndpoints
                 "true",
                 StringComparison.Ordinal);
 
-            if (!actor.TwoFactorEnabled || !mfaClaim)
+            if (!mfaClaim)
             {
                 return (null, Results.Json(
                     new { code = "admin_mfa_required", message = "TOTP multi-factor authentication is required for administrative actions." },

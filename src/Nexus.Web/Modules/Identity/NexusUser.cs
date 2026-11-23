@@ -8,7 +8,7 @@ namespace Nexus.Web.Modules.Identity;
 
 public sealed class NexusUser : IdentityUser<Guid>
 {
-    public Guid OrganizationId { get; set; }
+    public Guid? OrganizationId { get; set; }
     public required string DisplayName { get; set; }
     public AccountStatus Status { get; set; } = AccountStatus.Active;
     public TrustLevel TrustLevel { get; set; } = TrustLevel.Unverified;
@@ -25,7 +25,7 @@ public sealed class NexusUser : IdentityUser<Guid>
     public bool RequiresMfa => OrgRole is OrgRole.SystemAdmin or OrgRole.HRAdmin or OrgRole.CommsAdmin;
 
     public ActorContext ToActorContext() =>
-        new(Id, OrganizationId, Status, TrustLevel, OrgRole);
+        new(Id, OrganizationId ?? Guid.Empty, Status, TrustLevel, OrgRole);
 }
 
 public sealed class AdminPasswordResetLinkEntity
@@ -43,7 +43,7 @@ public sealed class NexusUserConfiguration : IEntityTypeConfiguration<NexusUser>
 {
     public void Configure(EntityTypeBuilder<NexusUser> builder)
     {
-        builder.Property(x => x.OrganizationId).HasColumnName("organization_id").IsRequired();
+        builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(80).IsRequired();
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(24).IsRequired();
         builder.Property(x => x.TrustLevel).HasColumnName("trust_level").HasConversion<string>().HasMaxLength(24).IsRequired();

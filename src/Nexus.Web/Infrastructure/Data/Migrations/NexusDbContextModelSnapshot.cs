@@ -503,7 +503,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("next_seq");
 
-                    b.Property<Guid>("OrganizationId")
+                    b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
@@ -533,6 +533,8 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_conversations_org_dm_key")
                         .HasFilter("dm_key IS NOT NULL");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "DmKey"), false);
 
                     b.HasIndex("OrganizationId", "UpdatedAt")
                         .HasDatabaseName("ix_conversations_org_updated");
@@ -639,7 +641,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("object_key");
 
-                    b.Property<Guid>("OrganizationId")
+                    b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
@@ -817,7 +819,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("org_role");
 
-                    b.Property<Guid>("OrganizationId")
+                    b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
@@ -1366,6 +1368,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<bool>("LegacyReviewPending")
+                        .HasColumnType("boolean")
+                        .HasColumnName("legacy_review_pending");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -1387,8 +1393,216 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("organizations", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Org.OrganizationInvitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset?>("RedeemedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("redeemed_at");
+
+                    b.Property<Guid?>("RedeemedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("redeemed_by_user_id");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("token_hash");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("RedeemedByUserId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "CreatedAt");
+
+                    b.ToTable("organization_invitations", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Org.OrganizationMembership", b =>
+                {
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("AvatarObjectKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("avatar_object_key");
+
+                    b.Property<Guid?>("BranchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("branch_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CustomStatus")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("custom_status");
+
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("department_id");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("display_name");
+
+                    b.Property<Guid?>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<bool>("IsOwner")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_owner");
+
+                    b.Property<string>("OrgRole")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("org_role");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TrustLevel")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("trust_level");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("username");
+
+                    b.HasKey("OrganizationId", "Id");
+
+                    b.HasIndex("BranchId");
+
+                    b.HasIndex("DepartmentId");
+
+                    b.HasIndex("EmployeeId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique()
+                        .HasFilter("is_owner");
+
+                    b.HasIndex("Id", "Status");
+
+                    b.ToTable("organization_memberships", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PersonalConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DeclinedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FirstUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SecondUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecondUserId");
+
+                    b.HasIndex("FirstUserId", "SecondUserId")
+                        .IsUnique();
+
+                    b.ToTable("personal_connections", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PersonalContactLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("personal_contact_links", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.People.UserBlockEntity", b =>
                 {
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
                     b.Property<Guid>("BlockerUserId")
                         .HasColumnType("uuid")
                         .HasColumnName("blocker_user_id");
@@ -1401,15 +1615,11 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("organization_id");
-
-                    b.HasKey("BlockerUserId", "BlockedUserId");
+                    b.HasKey("OrganizationId", "BlockerUserId", "BlockedUserId");
 
                     b.HasIndex("BlockedUserId");
 
-                    b.HasIndex("OrganizationId");
+                    b.HasIndex("BlockerUserId");
 
                     b.ToTable("user_blocks", (string)null);
                 });
@@ -1434,7 +1644,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("details");
 
-                    b.Property<Guid>("OrganizationId")
+                    b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
@@ -1568,8 +1778,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.ConversationMemberEntity", b =>
@@ -1603,8 +1812,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()
@@ -1648,8 +1856,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.AnnouncementAcknowledgmentEntity", b =>
@@ -1803,6 +2010,84 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Org.OrganizationInvitation", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("RedeemedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Org.OrganizationMembership", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Org.BranchEntity", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Org.DepartmentEntity", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Org.EmployeeEntity", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", "Account")
+                        .WithMany()
+                        .HasForeignKey("Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PersonalConnection", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("FirstUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("SecondUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PersonalContactLink", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.People.UserBlockEntity", b =>
                 {
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
@@ -1816,12 +2101,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasForeignKey("BlockerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.People.UserReportEntity", b =>
@@ -1829,8 +2108,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()

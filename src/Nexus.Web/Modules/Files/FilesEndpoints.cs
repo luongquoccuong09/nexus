@@ -1,6 +1,6 @@
+using Nexus.Web.Modules.Org;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -70,12 +70,12 @@ public static class FilesEndpoints
 {
     private static readonly JsonSerializerOptions AuditJsonOptions = new(JsonSerializerDefaults.Web);
 
-    public static IEndpointRouteBuilder MapFilesEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapFilesEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
-        app.MapPost("/api/conversations/{conversationId:guid}/attachments", HandleUploadAttachmentAsync);
-        app.MapGet("/api/conversations/{conversationId:guid}/files", HandleListConversationFilesAsync);
+        app.MapPost(prefix + "/conversations/{conversationId:guid}/attachments", HandleUploadAttachmentAsync);
+        app.MapGet(prefix + "/conversations/{conversationId:guid}/files", HandleListConversationFilesAsync);
 
-        var files = app.MapGroup("/api/files/{attachmentId:guid}");
+        var files = app.MapGroup(prefix + "/files/{attachmentId:guid}");
         files.MapGet("/download", HandleDownloadAttachmentAsync);
         files.MapGet("/thumbnail", HandleGetThumbnailAsync);
         files.MapGet("/preview", HandleGetImagePreviewAsync);
@@ -101,9 +101,9 @@ public static class FilesEndpoints
             a.ImageHeight,
             a.State.ToString().ToLowerInvariant(),
             a.ScanStatus,
-            $"/api/files/{a.Id}/download",
-            hasThumb ? $"/api/files/{a.Id}/thumbnail" : null,
-            hasThumb ? $"/api/files/{a.Id}/preview" : null,
+            $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/download",
+            hasThumb ? $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/thumbnail" : null,
+            hasThumb ? $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/preview" : null,
             a.CreatedAt);
     }
 
@@ -111,7 +111,6 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IFileStorage storage,
         IFileScanner scanner,
@@ -119,7 +118,7 @@ public static class FilesEndpoints
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
@@ -313,7 +312,7 @@ public static class FilesEndpoints
         var entity = new AttachmentEntity
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = actor.OrganizationId,
+            OrganizationId = db.ConversationOrganizationId,
             ConversationId = conversationId,
             UploaderUserId = actorId,
             ClientUploadId = clientUploadId,
@@ -335,7 +334,7 @@ public static class FilesEndpoints
         await db.SaveChangesAsync(ct);
 
         var quota = await BuildQuotaSummaryAsync(db, actorId, conversationId, policy, ct);
-        return Results.Created($"/api/files/{entity.Id}/download", new
+        return Results.Created($"{OrganizationScope.ApiPath(entity.OrganizationId)}/files/{entity.Id}/download", new
         {
             attachment = ToDto(entity),
             quota
@@ -346,7 +345,6 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid conversationId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IOptions<FilePolicyOptions> policyOptions,
         DateTimeOffset? before,
@@ -354,7 +352,7 @@ public static class FilesEndpoints
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -409,12 +407,11 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid attachmentId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IFileStorage storage,
         CancellationToken ct)
     {
-        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, userManager, authz, ct);
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, authz, ct);
         if (errorResult is not null || attachment is null)
         {
             return errorResult ?? Results.Forbid();
@@ -442,12 +439,11 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid attachmentId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IFileStorage storage,
         CancellationToken ct)
     {
-        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, userManager, authz, ct);
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, authz, ct);
         if (errorResult is not null || attachment is null)
         {
             return errorResult ?? Results.Forbid();
@@ -480,12 +476,11 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid attachmentId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         IFileStorage storage,
         CancellationToken ct)
     {
-        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, userManager, authz, ct);
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, authz, ct);
         if (errorResult is not null || attachment is null)
         {
             return errorResult ?? Results.Forbid();
@@ -521,13 +516,11 @@ public static class FilesEndpoints
         Guid attachmentId,
         CreateSignedUrlRequest? request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
-        IFileStorage storage,
         IOptions<FilePolicyOptions> policyOptions,
         CancellationToken ct)
     {
-        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, userManager, authz, ct);
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, authz, ct);
         if (errorResult is not null || attachment is null)
         {
             return errorResult ?? Results.Forbid();
@@ -543,21 +536,10 @@ public static class FilesEndpoints
             });
         }
 
-        var ttl = TimeSpan.FromSeconds(requestedSeconds);
-        var signedUri = await storage.TryCreateSignedDownloadUrlAsync(attachment.ObjectKey, ttl, ct);
-        if (signedUri is not null)
-        {
-            return Results.Ok(new
-            {
-                url = signedUri.ToString(),
-                expiresInSeconds = requestedSeconds,
-                mode = "signed"
-            });
-        }
-
+        // The streaming endpoint rechecks membership when the file is opened.
         return Results.Ok(new
         {
-            url = $"/api/files/{attachment.Id}/download",
+            url = $"{OrganizationScope.ApiPath(attachment.OrganizationId)}/files/{attachment.Id}/download",
             expiresInSeconds = requestedSeconds,
             mode = "stream"
         });
@@ -567,7 +549,6 @@ public static class FilesEndpoints
         HttpContext ctx,
         Guid attachmentId,
         NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
@@ -576,14 +557,14 @@ public static class FilesEndpoints
             return (null, Results.Unauthorized());
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return (null, Results.Unauthorized());
         }
 
         var attachment = await db.Attachments.AsNoTracking()
-            .SingleOrDefaultAsync(a => a.Id == attachmentId && a.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(a => a.Id == attachmentId && a.OrganizationId == db.ConversationOrganizationId, ct);
 
         if (attachment is null || attachment.State is AttachmentState.Quarantined or AttachmentState.Rejected)
         {

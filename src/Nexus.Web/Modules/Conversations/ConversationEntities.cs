@@ -16,7 +16,7 @@ public enum ConversationKind
 public sealed class ConversationEntity
 {
     public Guid Id { get; set; }
-    public Guid OrganizationId { get; set; }
+    public Guid? OrganizationId { get; set; }
     public ConversationKind Kind { get; set; }
     public Guid? CommunityId { get; set; }
     public bool IsCommunityMainFeed { get; set; }
@@ -51,7 +51,7 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");
-        builder.Property(x => x.OrganizationId).HasColumnName("organization_id").IsRequired();
+        builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(x => x.CommunityId).HasColumnName("community_id");
         builder.Property(x => x.IsCommunityMainFeed).HasColumnName("is_community_main_feed").IsRequired();
@@ -74,6 +74,7 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
 
         builder.HasIndex(x => new { x.OrganizationId, x.DmKey })
             .IsUnique()
+            .AreNullsDistinct(false)
             .HasFilter("dm_key IS NOT NULL")
             .HasDatabaseName("ux_conversations_org_dm_key");
 

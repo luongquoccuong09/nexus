@@ -1,3 +1,4 @@
+import { scopedFetch as fetch } from "./scope";
 import { FormEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -21,7 +22,7 @@ import {
   Users
 } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
-import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar, UserNameWithBadge } from './ui';
+import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
 
 export interface CommunityChannelDto {
   id: string;
@@ -51,7 +52,6 @@ interface PostCommentDto {
   postId: string;
   authorUserId: string;
   authorDisplayName: string;
-  authorIsUnverified: boolean;
   body: string;
   createdAt: string;
 }
@@ -89,7 +89,6 @@ interface ChannelPostDto {
   conversationId: string;
   authorUserId: string;
   authorDisplayName: string;
-  authorIsUnverified: boolean;
   authorAvatarUrl?: string | null;
   title?: string | null;
   body: string;
@@ -109,7 +108,6 @@ interface CommunityMemberDto {
   userId: string;
   username: string;
   displayName: string;
-  isUnverified: boolean;
   avatarUrl?: string | null;
   role: string;
   joinedAt: string;
@@ -119,7 +117,6 @@ export interface DirectoryUserLite {
   id: string;
   username: string;
   displayName: string;
-  isUnverified: boolean;
   departmentName?: string | null;
   avatarUrl?: string | null;
 }
@@ -733,7 +730,7 @@ export function CommunitiesWorkspace({
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setError(data.message || 'Only Verified Comms Admins with MFA can change Official status.');
+      setError(data.message || 'Changing Official status requires a communications admin with a confirmed employee profile and an authenticator.');
       return;
     }
     await loadCommunities();
@@ -824,7 +821,7 @@ export function CommunitiesWorkspace({
             loadingDiscover ? (
               <div className="nx-empty-side" role="status">Loading communities…</div>
             ) : discoverCommunities.length === 0 ? (
-              <div className="nx-empty-side">No organization-wide communities available yet.</div>
+              <div className="nx-empty-side">No communities open to organization members yet.</div>
             ) : (
               discoverCommunities.map(comm => (
                 <div className="nx-discover-card" key={comm.id}>
@@ -940,12 +937,12 @@ export function CommunitiesWorkspace({
               icon={<Compass size={36} aria-hidden="true" />}
               title={
                 discoverCommunities.length === 0
-                  ? 'No organization-wide communities yet'
+                  ? 'No communities open to organization members yet'
                   : 'Browse communities'
               }
               description={
                 discoverCommunities.length === 0
-                  ? 'Organization-wide communities created in your organization will appear here to join.'
+                  ? 'Communities open to organization members will appear here.'
                   : 'Select a community from the list on the left to join or open its feed.'
               }
               actions={
@@ -994,10 +991,11 @@ export function CommunitiesWorkspace({
                       </span>
                     )}
                     {selectedCommunity.isOfficial && <Badge variant="role">Official</Badge>}
-                    {activePolicy === 'AdminsOnly' && <Badge variant="warning">Admins only</Badge>}
+                    {activePolicy === 'AdminsOnly' && <Badge variant="role">Admins only</Badge>}
                   </h3>
                   <div className="nx-stage-subtitle">
-                    <span>{selectedCommunity.visibility === 'Private' ? 'Invite only' : 'Organization-wide'}</span>
+                    <span>{selectedCommunity.visibility === 'Private' ? 'Invite only' : 'Open to organization members'}</span>
+                    <span>Your role: {selectedCommunity.myRole ?? 'Member'}</span>
                     <span>·</span>
                     <span>{selectedCommunity.memberCount} members</span>
                     {selectedCommunity.description && (
@@ -1206,9 +1204,7 @@ export function CommunitiesWorkspace({
                             />
                             <div>
                               <div className="nx-post-author-row">
-                                <UserNameWithBadge
-                                  user={{ displayName: post.authorDisplayName, isUnverified: post.authorIsUnverified }}
-                                />
+                                <strong>{post.authorDisplayName}</strong>
                                 <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>
                               </div>
                             </div>
@@ -1221,7 +1217,7 @@ export function CommunitiesWorkspace({
                               </Badge>
                             )}
                             {post.isAnnouncement && (
-                              <Badge variant="warning">
+                              <Badge variant="role">
                                 <Megaphone size={11} aria-hidden="true" /> Announcement
                               </Badge>
                             )}
@@ -1365,9 +1361,7 @@ export function CommunitiesWorkspace({
                             {post.comments.map(c => (
                               <div className="nx-comment-item" key={c.id}>
                                 <div className="nx-comment-head">
-                                  <UserNameWithBadge
-                                    user={{ displayName: c.authorDisplayName, isUnverified: c.authorIsUnverified }}
-                                  />
+                                  <strong>{c.authorDisplayName}</strong>
                                   <span className="nx-msg-time">{formatPostTime(c.createdAt)}</span>
                                 </div>
                                 <div
@@ -1493,7 +1487,7 @@ export function CommunitiesWorkspace({
                         <div className="nx-member-row" key={m.userId}>
                           <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" />
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <UserNameWithBadge user={m} />
+                            <strong>{m.displayName}</strong>
                             <div className="nx-muted">
                               @{m.username} · <Badge variant="role">{m.role}</Badge>
                             </div>
@@ -1577,8 +1571,8 @@ export function CommunitiesWorkspace({
                 onChange={() => setNewCommVisibility('Public')}
               />
               <div>
-                <strong>Organization-wide</strong>
-                <p>Any active member in your organization can browse and join. If designated Official later, access is limited to Verified members.</p>
+                <strong>Open to organization members</strong>
+                <p>Any active member of this workspace can browse and join. Official communities require a confirmed employee profile.</p>
               </div>
             </label>
             <label className={`nx-vis-option ${newCommVisibility === 'Private' ? 'selected' : ''}`}>

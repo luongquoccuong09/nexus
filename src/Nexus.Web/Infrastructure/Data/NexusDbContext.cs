@@ -26,6 +26,40 @@ public sealed class NexusDbContext
     public DbSet<IdempotencyKeyEntity> IdempotencyKeys => Set<IdempotencyKeyEntity>();
 
     public DbSet<OrganizationEntity> Organizations => Set<OrganizationEntity>();
+    public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+
+    public Guid OrganizationScopeId { get; set; }
+    public bool IsPersonalScope { get; set; }
+    public Guid? ConversationOrganizationId => IsPersonalScope ? null : OrganizationScopeId;
+    public OrganizationMembership? OrganizationActor { get; set; }
+    public IQueryable<OrganizationMembership> OrganizationPeople => IsPersonalScope
+        ? Users.AsNoTracking().Select(account => new OrganizationMembership
+        {
+            Id = account.Id, OrganizationId = OrganizationScopeId, UserName = account.UserName!, DisplayName = account.DisplayName,
+            Status = account.Status, TrustLevel = Security.TrustLevel.Unverified, OrgRole = Security.OrgRole.Member,
+            AvatarObjectKey = null, CustomStatus = null
+        })
+        : OrganizationMemberships.Where(member => member.OrganizationId == OrganizationScopeId);
+
+    public IQueryable<OrganizationMembership> ActiveScopePeople => IsPersonalScope
+        ? OrganizationPeople.Where(member => member.Status == Security.AccountStatus.Active)
+        : OrganizationPeople.Where(member => member.Status == Security.AccountStatus.Active && member.Account.Status == Security.AccountStatus.Active);
+
+    public DbSet<PersonalConnection> PersonalConnections => Set<PersonalConnection>();
+    public DbSet<PersonalContactLink> PersonalContactLinks => Set<PersonalContactLink>();
+
+    public async Task<OrganizationMembership?> FindPersonalActorAsync(Guid userId, CancellationToken ct)
+    {
+        var account = await Users.AsNoTracking().SingleOrDefaultAsync(u => u.Id == userId && u.Status == Security.AccountStatus.Active, ct);
+        return account is null ? null : OrganizationMembership.Create(Guid.Empty, account, account.CreatedAt);
+    }
+
+    public Task<OrganizationMembership?> FindOrganizationActorAsync(Guid userId, CancellationToken ct = default) =>
+        OrganizationActor is { } actor && actor.Id == userId
+            ? Task.FromResult<OrganizationMembership?>(actor)
+            : OrganizationPeople.SingleOrDefaultAsync(member => member.Id == userId && member.Status == Security.AccountStatus.Active &&
+                member.Account.Status == Security.AccountStatus.Active && !member.Organization.LegacyReviewPending, ct);
     public DbSet<DepartmentEntity> Departments => Set<DepartmentEntity>();
     public DbSet<BranchEntity> Branches => Set<BranchEntity>();
     public DbSet<EmployeeEntity> Employees => Set<EmployeeEntity>();

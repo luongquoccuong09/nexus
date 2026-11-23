@@ -1,3 +1,4 @@
+import { scopedFetch as fetch, organizationId, messagingHub } from "./scope";
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { ArrowLeft, Ban, Download, FileText, Flag, FolderOpen, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Users, X } from 'lucide-react';
@@ -12,7 +13,7 @@ import {
   reconnectDelayWithJitter,
   setConversationCursor
 } from './offlineQueue';
-import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar, TrustBadge } from './ui';
+import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
 
 export interface ConversationListItem {
   id: string;
@@ -29,7 +30,6 @@ export interface ConversationListItem {
     id: string;
     username: string;
     displayName: string;
-    isUnverified: boolean;
     isOnline: boolean;
     avatarUrl?: string | null;
   } | null;
@@ -66,12 +66,8 @@ export interface AttachmentItem {
 }
 
 export interface StorageQuotaSummary {
-  userUsedBytes: number;
-  userQuotaBytes: number;
-  userWarning: boolean;
   conversationUsedBytes: number;
   conversationQuotaBytes: number;
-  conversationWarning: boolean;
 }
 
 export interface ChatMessageItem {
@@ -80,7 +76,6 @@ export interface ChatMessageItem {
   seq: number;
   senderId: string;
   senderDisplayName: string;
-  senderIsUnverified: boolean;
   clientMsgId: string;
   body: string;
   createdAt: string;
@@ -92,7 +87,6 @@ export interface DirectoryUserLite {
   id: string;
   username: string;
   displayName: string;
-  isUnverified: boolean;
   departmentName?: string | null;
   avatarUrl?: string | null;
 }
@@ -101,19 +95,17 @@ interface GroupMemberItem {
   userId: string;
   username: string;
   displayName: string;
-  isUnverified: boolean;
   role: string;
 }
 
 interface ChatWorkspaceProps {
   currentUserId: string;
   currentDisplayName: string;
-  currentIsUnverified: boolean;
   initialVersion: string | null;
   selectedConversationId: string | null;
   directoryUsers: DirectoryUserLite[];
   onSelectConversation: (id: string | null) => void;
-  onOpenDirectory: () => void;
+  onNewChat: () => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
   onCommunityFeedChanged: (conversationId?: string) => void;
@@ -146,17 +138,17 @@ function formatDateLabel(iso: string): string {
 export function ChatWorkspace({
   currentUserId,
   currentDisplayName,
-  currentIsUnverified,
   initialVersion,
   selectedConversationId,
   directoryUsers,
   onSelectConversation,
-  onOpenDirectory,
+  onNewChat,
   onConnectionStateChange,
   onUnreadTotalChange,
   onCommunityFeedChanged,
   onVersionStale
 }: ChatWorkspaceProps) {
+  const offlineScope = `${currentUserId}:${organizationId ?? "personal"}`;
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [convSearch, setConvSearch] = useState('');
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
@@ -287,7 +279,7 @@ export function ChatWorkspace({
     if (!res.ok) return;
     const data = await res.json();
     const serverItems: ChatMessageItem[] = data.items ?? [];
-    const queued = (await listQueuedMessages()).filter(q => q.conversationId === convId);
+    const queued = (await listQueuedMessages(offlineScope)).filter(q => q.conversationId === convId);
     if (activeConvRef.current !== convId) return;
 
     const seen = new Set(serverItems.map(m => m.clientMsgId));
@@ -299,7 +291,6 @@ export function ChatWorkspace({
         seq: Number.MAX_SAFE_INTEGER,
         senderId: currentUserId,
         senderDisplayName: currentDisplayName,
-        senderIsUnverified: currentIsUnverified,
         clientMsgId: q.clientMsgId,
         body: q.body,
         createdAt: q.createdAt,
@@ -311,14 +302,14 @@ export function ChatWorkspace({
     setNextBeforeSeq(typeof data.nextBeforeSeq === 'number' ? data.nextBeforeSeq : null);
     setMessages([...serverItems, ...optimistic]);
     if (typeof data.changeSeq === 'number') {
-      await setConversationCursor(convId, data.changeSeq);
+      await setConversationCursor(offlineScope, convId, data.changeSeq);
     }
     const maxSeq = serverItems.length > 0 ? serverItems[serverItems.length - 1].seq : 0;
     if (maxSeq > (data.lastReadSeq ?? 0)) {
       await markRead(convId, maxSeq);
     }
     requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'auto' }));
-  }, [currentDisplayName, currentIsUnverified, currentUserId, markRead]);
+  }, [currentDisplayName, currentUserId, markRead, offlineScope]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!selectedConversationId || !nextBeforeSeq) return;
@@ -409,7 +400,7 @@ export function ChatWorkspace({
   }, [selectedConversationId]);
 
   const syncConversationDelta = useCallback(async (convId: string) => {
-    let cursor = await getConversationCursor(convId);
+    let cursor = await getConversationCursor(offlineScope, convId);
     if (activeConvRef.current !== convId) return;
     if (cursor <= 0) {
       await loadMessagesFull(convId);
@@ -451,7 +442,7 @@ export function ChatWorkspace({
         const lastEventSeq = events.at(-1)?.changeSeq ?? cursor;
         const nextCursor = Math.max(lastEventSeq, typeof data.nextAfter === 'number' ? data.nextAfter : cursor);
         if (nextCursor <= cursor) return;
-        await setConversationCursor(convId, nextCursor);
+        await setConversationCursor(offlineScope, convId, nextCursor);
         cursor = nextCursor;
         if (!data.hasMore) return;
       }
@@ -462,7 +453,7 @@ export function ChatWorkspace({
         });
       }
     }
-  }, [loadMessagesFull, markRead]);
+  }, [loadMessagesFull, markRead, offlineScope]);
 
   const requestConversationDelta = useCallback((convId: string, full = false) => {
     const existing = deltaRequests.current.get(convId);
@@ -486,7 +477,7 @@ export function ChatWorkspace({
   }, [loadMessagesFull, syncConversationDelta]);
 
   const flushOfflineQueue = useCallback(async () => {
-    const queued = await listQueuedMessages();
+    const queued = await listQueuedMessages(offlineScope);
     for (const item of queued) {
       try {
         const res = await fetch(`/api/conversations/${item.conversationId}/messages`, {
@@ -496,13 +487,13 @@ export function ChatWorkspace({
           body: JSON.stringify({ clientMsgId: item.clientMsgId, body: item.body })
         });
         if (res.ok || res.status === 403 || res.status === 409) {
-          await dequeueOfflineMessage(item.clientMsgId);
+          await dequeueOfflineMessage(offlineScope, item.clientMsgId);
         }
       } catch {
         break;
       }
     }
-  }, []);
+  }, [offlineScope]);
 
   const reconcileAll = useCallback(async () => {
     await checkApiVersion();
@@ -546,7 +537,7 @@ export function ChatWorkspace({
   useEffect(() => {
     let disposed = false;
     const connection = new signalR.HubConnectionBuilder()
-      .withUrl('/hubs/messaging')
+      .withUrl(messagingHub)
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: ctx => reconnectDelayWithJitter(ctx.previousRetryCount)
       })
@@ -583,13 +574,15 @@ export function ChatWorkspace({
     connection.onreconnecting(() => {
       if (!disposed) connStateCbRef.current('reconnecting');
     });
-    connection.onreconnected(() => {
+    const onConnected = () => {
       if (!disposed) {
         connStateCbRef.current('connected');
         communityFeedCbRef.current();
         void reconcileRef.current();
       }
-    });
+    };
+
+    connection.onreconnected(onConnected);
     connection.onclose(() => {
       if (!disposed) connStateCbRef.current('offline');
     });
@@ -597,9 +590,7 @@ export function ChatWorkspace({
     hubRef.current = connection;
     connStateCbRef.current('reconnecting');
     connection.start()
-      .then(() => {
-        if (!disposed) connStateCbRef.current('connected');
-      })
+      .then(onConnected)
       .catch(() => {
         if (!disposed) connStateCbRef.current('offline');
       });
@@ -611,10 +602,12 @@ export function ChatWorkspace({
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onVisible);
 
     return () => {
       disposed = true;
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
       if (typingTimerRef.current) window.clearTimeout(typingTimerRef.current);
       const refresh = conversationRefreshRef.current;
       if (refresh.timer !== null) window.clearTimeout(refresh.timer);
@@ -643,7 +636,7 @@ export function ChatWorkspace({
         body,
         createdAt
       };
-      await enqueueOfflineMessage(item);
+      await enqueueOfflineMessage(offlineScope, item);
     }
 
     setMessages(prev => [
@@ -654,7 +647,6 @@ export function ChatWorkspace({
         seq: Number.MAX_SAFE_INTEGER,
         senderId: currentUserId,
         senderDisplayName: currentDisplayName,
-        senderIsUnverified: currentIsUnverified,
         clientMsgId,
         body,
         createdAt,
@@ -677,7 +669,7 @@ export function ChatWorkspace({
       });
       if (res.ok) {
         const saved: ChatMessageItem = await res.json();
-        await dequeueOfflineMessage(clientMsgId);
+        await dequeueOfflineMessage(offlineScope, clientMsgId);
         setMessages(prev => prev.map(m => (m.clientMsgId === clientMsgId ? saved : m)));
         scheduleConversationRefresh();
         if (rightDrawer === 'files' && attached.length > 0) {
@@ -687,7 +679,7 @@ export function ChatWorkspace({
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Unable to send message.');
         if (res.status === 400 || res.status === 403 || res.status === 409) {
-          await dequeueOfflineMessage(clientMsgId);
+          await dequeueOfflineMessage(offlineScope, clientMsgId);
           setMessages(prev => prev.filter(m => m.clientMsgId !== clientMsgId));
           if (attached.length > 0) setPendingAttachments(attached);
         }
@@ -921,7 +913,6 @@ export function ChatWorkspace({
           <div className="nx-conv-top">
             <span className="nx-conv-name">
               <span>{c.title}</span>
-              {c.peer && <TrustBadge isUnverified={c.peer.isUnverified} showVerified={false} />}
             </span>
             {c.unreadCount > 0 && <span className="nx-unread-pill">{c.unreadCount > 99 ? '99+' : c.unreadCount}</span>}
           </div>
@@ -944,10 +935,10 @@ export function ChatWorkspace({
             <h2>Chat</h2>
           </div>
           <div className="nx-side-actions">
-            <Button size="sm" onClick={onOpenDirectory}>
+            <Button variant="primary" size="sm" onClick={onNewChat}>
               <MessageSquare size={14} aria-hidden="true" /> New chat
             </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowNewGroupModal(true)}>
+            <Button size="sm" onClick={() => setShowNewGroupModal(true)}>
               <Plus size={14} aria-hidden="true" /> Create group chat
             </Button>
           </div>
@@ -967,9 +958,6 @@ export function ChatWorkspace({
           {filteredConvs.length === 0 ? (
             <div className="nx-empty-side">
               <p style={{ margin: '0 0 12px' }}>No conversations yet.</p>
-              <Button variant="primary" size="sm" onClick={onOpenDirectory}>
-                Find people in Directory
-              </Button>
             </div>
           ) : (
             <>
@@ -1008,7 +996,7 @@ export function ChatWorkspace({
             description="Select a conversation on the left, start a new chat, or create a group chat."
             actions={
               <>
-                <Button variant="primary" onClick={onOpenDirectory}>
+                <Button variant="primary" onClick={onNewChat}>
                   <MessageSquare size={15} aria-hidden="true" /> New chat
                 </Button>
                 <Button onClick={() => setShowNewGroupModal(true)}>
@@ -1039,7 +1027,6 @@ export function ChatWorkspace({
                 <div className="nx-stage-identity">
                   <h3>
                     <span className="nx-stage-name">{activeConv.title}</span>
-                    {activeConv.peer && <TrustBadge isUnverified={activeConv.peer.isUnverified} showVerified={false} />}
                   </h3>
                   <div className="nx-stage-subtitle">
                     {activeConv.kind === 'dm' ? (
@@ -1049,7 +1036,7 @@ export function ChatWorkspace({
                         {activeConv.peer?.username && <span className="nx-stage-handle">· @{activeConv.peer.username}</span>}
                       </>
                     ) : (
-                      <span>{activeConv.memberCount} members · Role: {activeConv.role}</span>
+                      <span>{activeConv.memberCount} {activeConv.memberCount === 1 ? 'member' : 'members'} · Role: {activeConv.role}</span>
                     )}
                   </div>
                 </div>
@@ -1184,7 +1171,6 @@ export function ChatWorkspace({
                         {!compact && (
                           <div className="nx-msg-head">
                             <strong>{isOwn ? 'You' : m.senderDisplayName}</strong>
-                            {!isOwn && <TrustBadge isUnverified={m.senderIsUnverified} showVerified={false} />}
                             <span className="nx-msg-time">
                               {m.pending ? 'Sending…' : formatTime(m.createdAt)}
                             </span>
@@ -1364,7 +1350,6 @@ export function ChatWorkspace({
                     <div className="nx-user-name-wrap">
                       <strong style={{ fontSize: 13 }}>{gm.displayName}</strong>
                       <Badge variant="role">{gm.role}</Badge>
-                      <TrustBadge isUnverified={gm.isUnverified} showVerified={false} />
                     </div>
                     <div className="nx-muted">@{gm.username}</div>
                   </div>
@@ -1406,17 +1391,10 @@ export function ChatWorkspace({
                 </div>
                 <div className="nx-quota-bar">
                   <div
-                    className={`nx-quota-fill ${quota.conversationWarning ? 'warn' : ''}`}
+                    className="nx-quota-fill"
                     style={{ width: `${Math.min(100, Math.round((quota.conversationUsedBytes / Math.max(1, quota.conversationQuotaBytes)) * 100))}%` }}
                   />
                 </div>
-                {(quota.conversationWarning || quota.userWarning) && (
-                  <ToastBar
-                    variant="error"
-                    rounded
-                    message="Storage usage has exceeded 80% of quota."
-                  />
-                )}
               </div>
             )}
 
@@ -1512,7 +1490,6 @@ export function ChatWorkspace({
                       <div>
                         <div className="nx-user-name-wrap">
                           <strong style={{ fontSize: 13 }}>{u.displayName}</strong>
-                          <TrustBadge isUnverified={u.isUnverified} showVerified={false} />
                         </div>
                         <div className="nx-muted">@{u.username}{u.departmentName ? ` · ${u.departmentName}` : ''}</div>
                       </div>

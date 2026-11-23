@@ -1,9 +1,11 @@
+import { scopedFetch as fetch, isWorkspaceHome, organizationId, personalContactLink, rememberWorkspace, scopeApi, workspaceInvitation } from "./scope";
+import { ContactControls, OrganizationControls } from "./organizationControls";
 import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Briefcase, Info, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users, X } from 'lucide-react';
+import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
 import { ChatWorkspace } from './chat';
 import { CommunitiesWorkspace } from './communities';
-import { Avatar, Badge, Button, Card, Field, ToastBar, UserNameWithBadge } from './ui';
+import { Avatar, Badge, Button, Card, Field, Modal, ToastBar } from './ui';
 import './style.css';
 
 interface UserSummary {
@@ -11,7 +13,6 @@ interface UserSummary {
   username: string;
   displayName: string;
   status: string;
-  trustLevel: string;
   isUnverified: boolean;
   orgRole: string;
   mfaEnabled: boolean;
@@ -25,8 +26,6 @@ interface DirectoryProfile {
   id: string;
   username: string;
   displayName: string;
-  trustLevel: string;
-  isUnverified: boolean;
   departmentId?: string | null;
   departmentName?: string | null;
   branchName?: string | null;
@@ -51,9 +50,6 @@ interface SessionItem {
 
 interface RegistrationPolicy {
   mode: string;
-  captchaEnabled: boolean;
-  termsVersion: string;
-  confidentialityNotice: string;
 }
 
 interface HrImportReport {
@@ -75,18 +71,101 @@ interface HrImportReport {
   }>;
 }
 
+async function searchDirectory(query: string, departmentId: string, signal?: AbortSignal): Promise<DirectoryProfile[]> {
+  const params = new URLSearchParams({ limit: '50' });
+  const name = query.trim().replace(/^@/, '');
+  if (name) params.set('q', name);
+  if (departmentId) params.set('departmentId', departmentId);
+  const res = await fetch(`/api/people/directory?${params}`, { signal });
+  if (!res.ok) throw new Error(organizationId ? 'Unable to load workspace members.' : 'Unable to load contacts.');
+  return (await res.json()).items;
+}
+
+function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
+  currentUserId: string;
+  onClose: () => void;
+  onOpenChat: (userId: string) => Promise<void>;
+  onOpenContacts: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [people, setPeople] = useState<DirectoryProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchError, setSearchError] = useState('');
+  const [openError, setOpenError] = useState('');
+  const [opening, setOpening] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void searchDirectory(query, '', controller.signal).then(items => {
+        if (!controller.signal.aborted) setPeople(items.filter(item => item.id !== currentUserId));
+      }).catch((failure: Error) => {
+        if (!controller.signal.aborted) setSearchError(failure.message);
+      }).finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    }, query.trim() ? 180 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [attempt, currentUserId, query]);
+
+  async function choose(userId: string) {
+    setOpenError('');
+    setOpening(true);
+    try { await onOpenChat(userId); onClose(); }
+    catch (failure) { setOpenError((failure as Error).message); }
+    finally { setOpening(false); }
+  }
+
+  return <Modal open onOpenChange={open => { if (!open && !opening) onClose(); }} title="New chat"
+    description={organizationId ? 'Find someone in this workspace.' : 'Find an accepted contact or send a connection request.'}
+    initialFocusRef={searchInput}>
+    <Field label={organizationId ? 'Search workspace members' : 'Search contacts'} htmlFor="new-chat-search">
+      <input ref={searchInput} id="new-chat-search" type="search" placeholder="Name or username" value={query} onChange={event => {
+        setLoading(true);
+        setSearchError('');
+        setOpenError('');
+        setQuery(event.currentTarget.value);
+      }} />
+    </Field>
+    {openError && <p className="nx-error" role="alert">{openError}</p>}
+    {loading ? <p className="nx-muted" role="status">Searching…</p> : searchError ? (
+      <div className="nx-row">
+        <p className="nx-error" role="alert">{searchError}</p>
+        <Button size="sm" onClick={() => { setLoading(true); setSearchError(''); setAttempt(n => n + 1); }}>Retry</Button>
+      </div>
+    ) : people.length > 0 ? (
+      <ul className="nx-new-chat-results" aria-label={organizationId ? 'Workspace members' : 'Contacts'}>
+        {people.map(person => <li key={person.id}>
+          <Button variant="ghost" fullWidth disabled={opening} onClick={() => void choose(person.id)}>
+            <Avatar displayName={person.displayName} avatarUrl={person.avatarUrl} />
+            <span><strong>{person.displayName}</strong> <span className="nx-muted">@{person.username}</span></span>
+          </Button>
+        </li>)}
+      </ul>
+    ) : <p className="nx-muted" role="status">{organizationId ? 'No matching workspace members.' : 'No matching contacts.'}</p>}
+    {!organizationId && <Button onClick={onOpenContacts}>Add a contact</Button>}
+  </Modal>;
+}
+
 function App() {
   const [apiVersion, setApiVersion] = useState<string | null>(null);
   const [versionStale, setVersionStale] = useState(false);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
-  const [trialDismissed, setTrialDismissed] = useState(false);
-  const [trialExpanded, setTrialExpanded] = useState(false);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const loginTabRef = useRef<HTMLButtonElement | null>(null);
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
-  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>('chat');
+  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>(() => {
+    if (personalContactLink) return 'directory';
+    return new URLSearchParams(window.location.search).get('view') === 'security' ? 'security' : 'chat';
+  });
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const communityFeedListenerRef = useRef<((conversationId?: string) => void) | null>(null);
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
@@ -124,8 +203,7 @@ function App() {
   const [dirDeptId, setDirDeptId] = useState('');
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [directory, setDirectory] = useState<DirectoryProfile[]>([]);
-  const dirSearchInputRef = useRef<HTMLInputElement | null>(null);
-  const focusDirSearchRef = useRef(false);
+  const contactUsernameRef = useRef<HTMLInputElement | null>(null);
 
   // HR CSV Import state
   const [hrCsv, setHrCsv] = useState('employee_code,full_name,email,department_code,department_name,branch_code,branch_name,is_active\n');
@@ -160,18 +238,11 @@ function App() {
   }, []);
 
   const loadDirectory = useCallback(async (q: string, deptId: string) => {
-    const params = new URLSearchParams();
-    if (q.trim()) params.set('q', q.trim());
-    if (deptId) params.set('departmentId', deptId);
-    params.set('limit', '50');
-    const res = await fetch(`/api/people/directory?${params.toString()}`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setDirectory(data.items ?? []);
-    }
+    try { setDirectory(await searchDirectory(q, deptId)); } catch { setDirectory([]); }
   }, []);
 
   const loadDepartments = useCallback(async () => {
+    if (!organizationId) return;
     const res = await fetch('/api/org/departments?limit=50', { credentials: 'same-origin' });
     if (res.ok) {
       const data = await res.json();
@@ -182,10 +253,21 @@ function App() {
   const refreshMe = useCallback(async () => {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
     if (res.ok) {
-      const me: UserSummary = await res.json();
+      const account: UserSummary = await res.json();
+      let me = account;
+      if (organizationId) {
+        const profile = await fetch(`${scopeApi}/me`);
+        if (profile.status === 403 || profile.status === 404) {
+          window.location.replace('/');
+          return;
+        }
+        if (!profile.ok) return;
+        me = { ...account, ...await profile.json() };
+        rememberWorkspace(me.id, organizationId);
+      }
       setUser(me);
       setCustomStatusInput(me.customStatus ?? '');
-      await Promise.all([loadSessions(), loadDepartments(), loadDirectory('', '')]);
+      if (!isWorkspaceHome) await Promise.all([loadSessions(), loadDepartments(), loadDirectory('', '')]);
     } else {
       setUser(null);
       setSessions([]);
@@ -270,36 +352,35 @@ function App() {
       return;
     }
     setRegPassword('');
-    setNotice('Welcome to Nexus! Your account starts as Unverified.');
     await refreshMe();
   }
 
   async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-    setUser(null);
-    setSessions([]);
-    setDirectory([]);
-    setActiveConvId(null);
-    setUnreadTotal(0);
-    setNotice('Signed out.');
+    const res = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    if (res.ok || res.status === 401) window.location.replace('/');
+    else setError('Unable to sign out. Try again.');
   }
 
-  async function handleOpenDm(targetUserId: string) {
-    setError('');
+  async function openDm(targetUserId: string) {
     const res = await fetch('/api/conversations/dm', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetUserId })
     });
-    if (res.ok) {
-      const dm = await res.json();
-      setActiveConvId(dm.id);
-      setWorkspaceTab('chat');
-    } else {
+    if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setError(data.message || 'Unable to open direct message.');
+      if (res.status === 404) throw new Error(organizationId ? 'This person is no longer available in this workspace.' : 'This contact is no longer available.');
+      throw new Error(data.message || 'Unable to open chat.');
     }
+    const dm = await res.json();
+    setActiveConvId(dm.id);
+    setWorkspaceTab('chat');
+  }
+
+  async function handleOpenDm(targetUserId: string) {
+    setError('');
+    try { await openDm(targetUserId); } catch (failure) { setError((failure as Error).message); }
   }
 
   async function handleUpdateCustomStatus(e: FormEvent) {
@@ -420,18 +501,12 @@ function App() {
     if (!dryRun) await loadDepartments();
   }
 
-  const handleOpenDirectoryFromChat = useCallback(() => {
-    focusDirSearchRef.current = true;
+  function openContactsFromChat() {
+    setNewChatOpen(false);
     setWorkspaceTab('directory');
     void loadDirectory(dirQuery, dirDeptId);
-  }, [dirDeptId, dirQuery, loadDirectory]);
-
-  useEffect(() => {
-    if (workspaceTab === 'directory' && focusDirSearchRef.current) {
-      focusDirSearchRef.current = false;
-      requestAnimationFrame(() => dirSearchInputRef.current?.focus());
-    }
-  }, [workspaceTab]);
+    requestAnimationFrame(() => contactUsernameRef.current?.focus());
+  }
 
   const handleVersionStale = useCallback(() => {
     setVersionStale(true);
@@ -479,7 +554,7 @@ function App() {
           <div>
             <h1>Workplace communication, simplified.</h1>
             <p>
-              Real-time direct messages, team group chats, and a fast organization directory built for everyday work.
+              Message people, start group chats, and stay connected in your team’s workspace.
             </p>
             <ul className="nx-auth-features">
               <li>● Instant messaging with offline queue &amp; reliable sync</li>
@@ -488,14 +563,11 @@ function App() {
             </ul>
           </div>
 
-          <div className="nx-auth-footer">
-            {policy?.confidentialityNotice ?? 'Nexus Workplace'}
-            {apiVersion ? ` · v${apiVersion}` : ''}
-          </div>
         </section>
 
         <section className="nx-auth-panel">
           <div className="nx-auth-card">
+            {workspaceInvitation && <p className="nx-muted">Sign in or create an account to accept your workspace invitation.</p>}
             <div
               className="nx-auth-switcher"
               role="tablist"
@@ -578,7 +650,7 @@ function App() {
                 <div className="nx-field">
                   <label className="nx-terms-label">
                     <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} required />
-                    <span>I accept the trial terms ({policy?.termsVersion ?? 'trial-v1'}). New accounts start as Unverified.</span>
+                    <span>I accept the terms of use.</span>
                   </label>
                 </div>
                 <Button type="submit" variant="primary" fullWidth>
@@ -593,10 +665,18 @@ function App() {
     );
   }
 
+  if (isWorkspaceHome) {
+    return <>
+      <OrganizationControls home userId={user.id} mfaEnabled={user.mfaEnabled} onSignOut={() => void handleLogout()}
+        onSecurity={() => window.location.assign('/personal?view=security')} />
+      {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
+    </>;
+  }
+
   const pageTitle =
     workspaceTab === 'chat' ? 'Chat' :
     workspaceTab === 'communities' ? 'Communities' :
-    workspaceTab === 'directory' ? 'Directory' :
+    workspaceTab === 'directory' ? (organizationId ? 'Directory' : 'Contacts') :
     workspaceTab === 'security' ? 'Profile & security' :
     'HR import';
 
@@ -624,7 +704,7 @@ function App() {
             )}
           </button>
 
-          <button
+          {organizationId && <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'communities' ? 'active' : ''}`}
             aria-current={workspaceTab === 'communities' ? 'page' : undefined}
@@ -632,7 +712,7 @@ function App() {
           >
             <LayoutGrid size={20} aria-hidden="true" />
             <span>Communities</span>
-          </button>
+          </button>}
 
           <button
             type="button"
@@ -644,7 +724,7 @@ function App() {
             }}
           >
             <Users size={20} aria-hidden="true" />
-            <span>Directory</span>
+            <span>{organizationId ? "Directory" : "Contacts"}</span>
           </button>
 
           <button
@@ -713,35 +793,8 @@ function App() {
       <div className="nx-workspace">
         <header className="nx-topbar">
           <div className="nx-topbar-left">
+            <OrganizationControls userId={user.id} mfaEnabled={user.mfaEnabled} onSignOut={() => void handleLogout()} onSecurity={() => setWorkspaceTab('security')} />
             <h1 className="nx-topbar-title">{pageTitle}</h1>
-            {policy?.confidentialityNotice && !trialDismissed && (
-              <div className="nx-trial-pill" role="region" aria-label="Environment notice">
-                <button
-                  type="button"
-                  className="nx-trial-trigger"
-                  aria-expanded={trialExpanded}
-                  aria-controls="trial-notice-banner"
-                  title={policy.confidentialityNotice}
-                  onClick={() => setTrialExpanded(v => !v)}
-                >
-                  <Info size={13} aria-hidden="true" />
-                  <span className="nx-trial-label-full">{policy.confidentialityNotice}</span>
-                  <span className="nx-trial-label-short">Trial notice</span>
-                </button>
-                <button
-                  type="button"
-                  className="nx-trial-dismiss"
-                  onClick={() => {
-                    setTrialExpanded(false);
-                    setTrialDismissed(true);
-                  }}
-                  aria-label="Dismiss environment notice"
-                  title="Dismiss notice"
-                >
-                  <X size={13} aria-hidden="true" />
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="nx-topbar-right">
@@ -754,30 +807,9 @@ function App() {
               <span className={`nx-dot ${connState}`} />
               <span>{connState === 'connected' ? 'Connected' : connState === 'reconnecting' ? 'Reconnecting…' : 'Offline'}</span>
             </span>
-            <UserNameWithBadge user={user} />
+            <strong className="nx-user-name-wrap">{user.displayName}</strong>
           </div>
         </header>
-
-        {policy?.confidentialityNotice && !trialDismissed && trialExpanded && (
-          <div id="trial-notice-banner" className="nx-trial-banner" role="note">
-            <span>{policy.confidentialityNotice}</span>
-            <div className="nx-inline-actions">
-              <Button size="sm" variant="ghost" onClick={() => setTrialExpanded(false)}>
-                Hide
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setTrialExpanded(false);
-                  setTrialDismissed(true);
-                }}
-              >
-                Dismiss
-              </Button>
-            </div>
-          </div>
-        )}
 
         {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
@@ -787,20 +819,25 @@ function App() {
             <ChatWorkspace
               currentUserId={user.id}
               currentDisplayName={user.displayName}
-              currentIsUnverified={user.isUnverified}
               initialVersion={apiVersion}
               selectedConversationId={activeConvId}
               directoryUsers={directory}
               onSelectConversation={setActiveConvId}
-              onOpenDirectory={handleOpenDirectoryFromChat}
+              onNewChat={() => setNewChatOpen(true)}
               onConnectionStateChange={setConnState}
               onUnreadTotalChange={setUnreadTotal}
               onCommunityFeedChanged={conversationId => communityFeedListenerRef.current?.(conversationId)}
               onVersionStale={handleVersionStale}
             />
           </div>
+          {newChatOpen && <NewChatDialog
+            currentUserId={user.id}
+            onClose={() => setNewChatOpen(false)}
+            onOpenChat={openDm}
+            onOpenContacts={openContactsFromChat}
+          />}
 
-          {workspaceTab === 'communities' && (
+          {organizationId && workspaceTab === 'communities' && (
             <CommunitiesWorkspace
               currentUserId={user.id}
               currentOrgRole={user.orgRole}
@@ -816,8 +853,9 @@ function App() {
               <div className="nx-page-container">
                 <div className="nx-page-head">
                   <div>
-                    <h2>Directory</h2>
-                    <p>Search by name or username.</p>
+                    <h2>{organizationId ? "Directory" : "Contacts"}</h2>
+                    <p>{organizationId ? "Search by name or username." : "Search the people you have connected with."}</p>
+                  {!organizationId && <ContactControls usernameRef={contactUsernameRef} onChange={() => void loadDirectory(dirQuery, '')} />}
                   </div>
                 </div>
 
@@ -831,16 +869,15 @@ function App() {
                   <div className="nx-search-input-wrap" style={{ flex: 2, minWidth: 220 }}>
                     <Search size={15} aria-hidden="true" />
                     <input
-                      ref={dirSearchInputRef}
                       id="dir-search"
                       type="text"
-                      aria-label="Search directory"
+                      aria-label={organizationId ? 'Search directory' : 'Search contacts'}
                       placeholder="Search by name or @username…"
                       value={dirQuery}
                       onChange={e => setDirQuery(e.target.value)}
                     />
                   </div>
-                  <select
+                  {organizationId && <select
                     id="dir-dept"
                     className="nx-select"
                     aria-label="Filter by department"
@@ -853,7 +890,7 @@ function App() {
                   >
                     <option value="">All departments</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
+                  </select>}
                   <Button type="submit" variant="primary">Search</Button>
                 </form>
 
@@ -868,7 +905,7 @@ function App() {
                         <div className="nx-person-top">
                           <Avatar displayName={p.displayName} avatarUrl={p.avatarUrl} cacheKey={avatarBust} size="lg" />
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <UserNameWithBadge user={p} />
+                            <strong className="nx-user-name-wrap">{p.displayName}</strong>
                             <div className="nx-muted" style={{ marginTop: 2 }}>
                               @{p.username}
                               {p.departmentName ? ` · ${p.departmentName}` : ''}
@@ -917,11 +954,11 @@ function App() {
                 )}
 
                 <div className="nx-settings-grid">
-                  <Card title="Profile & Status">
+                  {organizationId && <Card title="Profile & Status">
                     <div className="nx-profile-hero">
                       <Avatar displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} size="lg" />
                       <div>
-                        <UserNameWithBadge user={user} />
+                        <strong className="nx-user-name-wrap">{user.displayName}</strong>
                         <div className="nx-muted" style={{ marginTop: 3 }}>
                           @{user.username} · <Badge variant="role">{user.orgRole}</Badge>
                         </div>
@@ -947,7 +984,7 @@ function App() {
                     <Field label="Avatar image (re-encoded to 256×256 PNG, max 2 MB)" htmlFor="avatar-upload" compact>
                       <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarChange} />
                     </Field>
-                  </Card>
+                  </Card>}
 
                   <Card title="Change password">
                     <form onSubmit={handleChangePassword}>
@@ -1016,7 +1053,7 @@ function App() {
                 <div className="nx-page-head">
                   <div>
                     <h2>HR CSV Import</h2>
-                    <p>Preview diffs with dry run, upsert employee records, and review Unverified account match suggestions.</p>
+                    <p>Preview changes, update employee records, and review suggested account matches.</p>
                   </div>
                 </div>
                 <Card>
@@ -1034,7 +1071,7 @@ function App() {
                       </p>
                       {hrReport.matchSuggestions.length > 0 && (
                         <div>
-                          <strong>Suggested Unverified matches ({hrReport.matchSuggestions.length})</strong>
+                          <strong>Suggested account matches ({hrReport.matchSuggestions.length})</strong>
                           {hrReport.matchSuggestions.map(m => (
                             <div className="nx-row" key={`${m.userId}-${m.employeeCode}`}>
                               <span>{m.displayName} (@{m.username}) → <strong>{m.employeeCode}</strong> ({m.employeeFullName})</span>

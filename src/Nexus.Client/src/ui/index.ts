@@ -1,5 +1,5 @@
 export { Avatar, getInitials } from './Avatar';
-export { Badge, TrustBadge, UserNameWithBadge } from './Badge';
+export { Badge } from './Badge';
 export { Button } from './Button';
 export type { ButtonProps } from './Button';
 export { Card, EmptyState, Field } from './Card';

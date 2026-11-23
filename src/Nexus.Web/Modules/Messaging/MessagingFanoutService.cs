@@ -1,3 +1,4 @@
+using Nexus.Web.Modules.Org;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -21,7 +22,7 @@ public sealed class MessagingFanoutService(
         foreach (var recipientId in recipientIds)
         {
             await hubContext.Clients
-                .Group(MessagingHub.UserGroupName(recipientId))
+                .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, recipientId))
                 .SendAsync("ConversationChanged", payload, cancellationToken);
         }
     }
@@ -37,7 +38,7 @@ public sealed class MessagingFanoutService(
         foreach (var recipientId in recipientIds)
         {
             await hubContext.Clients
-                .Group(MessagingHub.UserGroupName(recipientId))
+                .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, recipientId))
                 .SendAsync("CommunityFeedChanged", payload, cancellationToken);
         }
     }
@@ -50,14 +51,14 @@ public sealed class MessagingFanoutService(
     {
         var payload = new { conversationId, lastReadSeq };
         await hubContext.Clients
-            .Group(MessagingHub.UserGroupName(userId))
+            .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, userId))
             .SendAsync("ReadStateUpdated", payload, cancellationToken);
     }
 
     private async Task<List<Guid>> ResolveAuthorizedRecipientsAsync(Guid conversationId, CancellationToken ct)
     {
         var conv = await db.Conversations.AsNoTracking()
-            .Where(c => c.Id == conversationId)
+            .Where(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId)
             .Select(c => new { c.Kind, c.CommunityId })
             .SingleOrDefaultAsync(ct);
 
@@ -74,21 +75,21 @@ public sealed class MessagingFanoutService(
         return await db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.LeftAt == null)
-            .Select(m => m.UserId)
+            .Join(db.ActiveScopePeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => u.Id)
             .ToListAsync(ct);
     }
 
     private async Task<List<Guid>> ResolveCommunityRecipientsAsync(Guid communityId, CancellationToken ct)
     {
         var isOfficial = await db.Communities.AsNoTracking()
-            .Where(c => c.Id == communityId)
+            .Where(c => c.Id == communityId && c.OrganizationId == db.OrganizationScopeId)
             .Select(c => c.IsOfficial)
             .SingleOrDefaultAsync(ct);
 
         var query = db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == communityId && m.LeftAt == null)
             .Join(
-                db.Users.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
+                db.ActiveScopePeople.AsNoTracking(),
                 m => m.UserId,
                 u => u.Id,
                 (m, u) => new { m.UserId, u.TrustLevel });

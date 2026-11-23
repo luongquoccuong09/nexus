@@ -6,6 +6,8 @@
 
 PostgreSQL stores the authoritative state. SignalR is a **notification channel** that tells clients when to fetch changes — never the sole source of message delivery.
 
+Conversation paths use `/api/personal` or `/api/organizations/{organizationId}` as the API prefix. Tabs derive the scope from their URL. IndexedDB queue items and cursors are keyed by account and scope. The cutover starts a new client storage namespace, so drafts already queued in the old unscoped namespace require manual recovery before upgrading.
+
 ## 1. Message Send & Ordering (`client_msg_id`, `seq`, `change_seq`)
 
 1. **Client-generated idempotency key (`client_msg_id`):**
@@ -29,8 +31,8 @@ PostgreSQL stores the authoritative state. SignalR is a **notification channel**
 
 ## 2. SignalR Fanout & Crash Recovery
 
-1. **User-scoped SignalR groups (`user:{id}`):**
-   - Clients never join arbitrary conversation groups. On connect, the server authenticates the session (`ActiveUserHubFilter`) and binds the connection to `user:{currentUserId}`.
+1. **SignalR groups per account and scope.**
+   - On connect, the server authenticates the session and checks Organization membership for Organization hubs. It binds the connection to `scope:{scopeId}:user:{currentUserId}`.
    - After PostgreSQL commit, the server reads current authorized recipients from PostgreSQL and broadcasts a lightweight nudge: `{ conversationId, changeSeq }`.
 2. **Crash between DB commit and SignalR broadcast:**
    - Because SignalR is best-effort, a server crash or network drop after commit means clients may miss the nudge.
@@ -61,7 +63,7 @@ Used on mutating creation endpoints that lack a natural unique key (e.g., `POST 
 | Property | Specification |
 |---|---|
 | **Header** | `Idempotency-Key: <string>` (1–128 ASCII chars, recommended UUIDv7). |
-| **Uniqueness scope** | `UNIQUE(user_id, http_method, route_template, idempotency_key)` in `idempotency_keys`. |
+| **Uniqueness scope** | `UNIQUE(user_id, http_method, route_template, idempotency_key)` in `idempotency_keys`. Scoped routes include the scope identifier in the stored route template. |
 | **TTL** | **24 hours** from creation (`expires_at`). Expired rows are pruned periodically and treated as non-existent on lookup. |
 | **Request fingerprint** | `request_hash = SHA-256(canonical JSON request body)`. |
 | **Replay behavior** | - **Exact match (`request_hash` equals stored hash) & completed:** Re-check authorization; return the stored `status_code` and `response_json` with header `Idempotency-Replayed: true`.<br>- **Hash mismatch:** Return **HTTP `409 Conflict`** (`{ "code": "idempotency_key_conflict" }`) (`SEC-19`).<br>- **Concurrent in-flight request (stored row has `completed_at IS NULL`):** Return **HTTP `409 Conflict`** (`{ "code": "idempotency_in_progress" }`) with `Retry-After: 1`. |

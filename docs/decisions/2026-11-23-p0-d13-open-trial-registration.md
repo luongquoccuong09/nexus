@@ -4,8 +4,10 @@ title: "Open registration during trial with Unverified accounts"
 summary: "Registration is open during the trial period; newly registered accounts enter the Organization as Unverified until matched by an admin."
 date: 2026-11-23
 decided-by: owner
-status: accepted
+status: superseded
 ---
+
+Superseded by [P0-D14](2026-11-23-p0-d14-personal-chat-and-organizations.md). Trial registration safeguards still apply to account creation.
 
 # Open registration during trial with Unverified accounts
 

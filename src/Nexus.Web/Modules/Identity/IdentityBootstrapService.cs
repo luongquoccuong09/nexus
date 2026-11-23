@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Identity;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Org;
 
 namespace Nexus.Web.Modules.Identity;
@@ -81,6 +84,39 @@ public static class IdentityBootstrapService
             throw new InvalidOperationException($"Failed to bootstrap SystemAdmin: {reason}");
         }
 
+        if (!org.LegacyReviewPending && !await db.OrganizationMemberships.AnyAsync(m => m.OrganizationId == org.Id && m.IsOwner, cancellationToken))
+        {
+            var member = OrganizationMembership.Create(org.Id, admin, admin.CreatedAt);
+            member.IsOwner = true;
+            member.TrustLevel = TrustLevel.Verified;
+            member.OrgRole = OrgRole.SystemAdmin;
+            db.OrganizationMemberships.Add(member);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
         return admin;
+    }
+
+    public static async Task<string> IssueAccountRecoveryAsync(IServiceProvider services, string username, CancellationToken ct = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<NexusUser>>();
+        var account = await users.FindByNameAsync(username) ?? throw new InvalidOperationException("Account was not found.");
+        if (account.Status != AccountStatus.Active) throw new InvalidOperationException("Account is not active.");
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var now = DateTimeOffset.UtcNow;
+        db.AdminPasswordResetLinks.Add(new AdminPasswordResetLinkEntity
+        {
+            Id = Guid.CreateVersion7(), TargetUserId = account.Id, IssuedByUserId = account.Id, CreatedAt = now,
+            ExpiresAt = now.AddMinutes(30), TokenHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)))
+        });
+        db.AuditLogs.Add(new AuditLogEntity
+        {
+            Id = Guid.CreateVersion7(), OrganizationId = Guid.Empty, Action = "OPERATOR_ACCOUNT_RESET_ISSUED",
+            ResourceType = "Account", ResourceId = account.Id.ToString(), Result = "Allowed", CreatedAt = now
+        });
+        await db.SaveChangesAsync(ct);
+        return token;
     }
 }

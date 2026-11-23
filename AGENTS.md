@@ -38,5 +38,5 @@ Use English for product copy, accessibility labels, sample instructions, code id
 
 ## Domain terminology quick reminder
 
-- `Organization` is the single deployment account boundary; department and branch are optional metadata ([P0-D02](docs/decisions/2026-11-23-p0-d02-single-organization.md)).
+- [P0-D14](docs/decisions/2026-11-23-p0-d14-personal-chat-and-organizations.md) defines Personal Chat with optional Organization membership and the boundaries for multiple Organizations on one server.
 - Community navigation starts with a **Community → Channel**, and each MVP channel inherits its community's membership and roles ([P0-D04](docs/decisions/2026-11-23-p0-d04-community-channel-hierarchy.md)).

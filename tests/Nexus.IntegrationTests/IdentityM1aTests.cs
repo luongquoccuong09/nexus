@@ -307,7 +307,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
             db.Employees.Add(new EmployeeEntity
             {
                 Id = Guid.CreateVersion7(),
-                OrganizationId = bootstrappedAdmin.OrganizationId,
+                OrganizationId = bootstrappedAdmin.OrganizationId!.Value,
                 EmployeeCode = empCode,
                 FullName = "Nguyen Van A",
                 IsActive = true,
@@ -330,6 +330,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
         });
         Assert.Equal(HttpStatusCode.Created, trialReg.StatusCode);
         var trialId = JsonDocument.Parse(await trialReg.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetGuid();
+        await OrganizationFixtureHandler.AdmitAsync(app.Services, trialId);
 
         // SEC-20b: Unverified member denied admin account endpoints
         using var unverifiedAdminCall = await trialClient.GetAsync("/api/admin/accounts");
@@ -380,8 +381,8 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
 
         // M1.5: Admin issues audited one-time reset link & user redeems it once
         using var resetLinkResp = await adminClient.PostAsJsonAsync($"/api/admin/accounts/{trialId}/reset-link", new { });
-        Assert.Equal(HttpStatusCode.OK, resetLinkResp.StatusCode);
-        var resetToken = JsonDocument.Parse(await resetLinkResp.Content.ReadAsStringAsync()).RootElement.GetProperty("resetToken").GetString()!;
+        Assert.Equal(HttpStatusCode.NotFound, resetLinkResp.StatusCode);
+        var resetToken = await IdentityBootstrapService.IssueAccountRecoveryAsync(app.Services, trialUser);
 
         const string resetPw = "Reset-By-Admin-Link-2026!";
         using var redeem1 = await trialClient.PostAsJsonAsync("/api/auth/reset-password", new { token = resetToken, newPassword = resetPw });
@@ -410,8 +411,10 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
         Assert.Equal(HttpStatusCode.OK, disableResp.StatusCode);
 
         using var disabledMe = await trialClient.GetAsync("/api/auth/me");
-        Assert.True(disabledMe.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
-        await Assert.ThrowsAnyAsync<Exception>(() => trialHub.InvokeAsync<string>("Ping"));
+        Assert.Equal(HttpStatusCode.OK, disabledMe.StatusCode);
+        using var disabledOrg = await trialClient.GetAsync("/api/people/directory");
+        Assert.Equal(HttpStatusCode.Forbidden, disabledOrg.StatusCode);
+        Assert.Equal("pong", await trialHub.InvokeAsync<string>("Ping"));
 
         // Verify audit trail persisted in PostgreSQL
         await using (var scope = app.Services.CreateAsyncScope())
@@ -424,7 +427,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
 
             Assert.Contains("ACCOUNT_RENAME", actions);
             Assert.Contains("ACCOUNT_VERIFY", actions);
-            Assert.Contains("ADMIN_RESET_LINK_ISSUED", actions);
+            Assert.Contains("OPERATOR_ACCOUNT_RESET_ISSUED", actions);
             Assert.Contains("PASSWORD_RESET_REDEEMED", actions);
             Assert.Contains("ACCOUNT_STATUS_CHANGE", actions);
         }
@@ -453,7 +456,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
             CookieContainer = cookies,
             CheckCertificateRevocationList = true
         };
-        var client = new HttpClient(handler) { BaseAddress = new Uri(GetBaseAddress(app)) };
+        var client = new HttpClient(new OrganizationFixtureHandler(app.Services, handler)) { BaseAddress = new Uri(GetBaseAddress(app)) };
         return (cookies, client);
     }
 
@@ -464,7 +467,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
         return address.EndsWith('/') ? address : address + "/";
     }
 
-    private static string GenerateTotpCode(string base32Key)
+    internal static string GenerateTotpCode(string base32Key)
     {
         var keyBytes = Base32Decode(base32Key);
         var timestep = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30;

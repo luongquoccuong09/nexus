@@ -1,5 +1,5 @@
+using Nexus.Web.Modules.Org;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -17,9 +17,9 @@ public static class SafetyEndpoints
         string Reason,
         string? Details);
 
-    public static IEndpointRouteBuilder MapPeopleSafetyEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapPeopleSafetyEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
-        var people = app.MapGroup("/api/people");
+        var people = app.MapGroup(prefix + "/people");
         people.MapGet("/blocks", HandleListBlocksAsync);
         people.MapPut("/blocks/{targetUserId:guid}", HandleBlockUserAsync);
         people.MapDelete("/blocks/{targetUserId:guid}", HandleUnblockUserAsync);
@@ -45,7 +45,7 @@ public static class SafetyEndpoints
 
         var items = await db.UserBlocks
             .AsNoTracking()
-            .Where(b => b.BlockerUserId == actorId)
+            .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId)
             .OrderByDescending(b => b.CreatedAt)
             .Take(pageSize)
             .Select(b => new { blockedUserId = b.BlockedUserId, createdAt = b.CreatedAt })
@@ -58,7 +58,6 @@ public static class SafetyEndpoints
         HttpContext ctx,
         Guid targetUserId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
@@ -67,15 +66,15 @@ public static class SafetyEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
         }
 
-        var target = await db.Users
+        var target = await db.OrganizationPeople
             .AsNoTracking()
-            .Where(u => u.Id == targetUserId && u.OrganizationId == actor.OrganizationId)
+            .Where(u => u.Id == targetUserId)
             .Select(u => new { u.Id, u.Status })
             .SingleOrDefaultAsync(ct);
 
@@ -88,13 +87,13 @@ public static class SafetyEndpoints
                 TargetIsActive: target.Status == AccountStatus.Active,
                 TargetIsSelf: targetUserId == actorId));
 
-        if (!allowed)
+        if (!allowed || (db.IsPersonalScope && !await MayActOnPersonalUserAsync(db, actorId, targetUserId, ct)))
         {
             return Results.Forbid();
         }
 
         var exists = await db.UserBlocks.AnyAsync(
-            b => b.BlockerUserId == actorId && b.BlockedUserId == targetUserId, ct);
+            b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && b.BlockedUserId == targetUserId, ct);
 
         if (!exists)
         {
@@ -123,7 +122,7 @@ public static class SafetyEndpoints
         }
 
         await db.UserBlocks
-            .Where(b => b.BlockerUserId == actorId && b.BlockedUserId == targetUserId)
+            .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && b.BlockedUserId == targetUserId)
             .ExecuteDeleteAsync(ct);
 
         return Results.NoContent();
@@ -133,7 +132,6 @@ public static class SafetyEndpoints
         HttpContext ctx,
         CreateReportRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
@@ -142,7 +140,7 @@ public static class SafetyEndpoints
             return Results.Unauthorized();
         }
 
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null)
         {
             return Results.Unauthorized();
@@ -154,9 +152,9 @@ public static class SafetyEndpoints
             return Results.BadRequest(new { code = "invalid_reason", message = "Report reason is required (max 64 characters)." });
         }
 
-        var target = await db.Users
+        var target = await db.OrganizationPeople
             .AsNoTracking()
-            .Where(u => u.Id == request.ReportedUserId && u.OrganizationId == actor.OrganizationId)
+            .Where(u => u.Id == request.ReportedUserId)
             .Select(u => new { u.Id, u.Status })
             .SingleOrDefaultAsync(ct);
 
@@ -169,7 +167,7 @@ public static class SafetyEndpoints
                 TargetIsActive: target.Status == AccountStatus.Active,
                 TargetIsSelf: request.ReportedUserId == actorId));
 
-        if (!allowed)
+        if (!allowed || (db.IsPersonalScope && !await MayActOnPersonalUserAsync(db, actorId, request.ReportedUserId, ct)))
         {
             return Results.Forbid();
         }
@@ -177,7 +175,7 @@ public static class SafetyEndpoints
         var report = new UserReportEntity
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = actor.OrganizationId,
+            OrganizationId = db.ConversationOrganizationId,
             ReporterUserId = actorId,
             ReportedUserId = request.ReportedUserId,
             ConversationId = request.ConversationId,
@@ -202,6 +200,10 @@ public static class SafetyEndpoints
         });
         await db.SaveChangesAsync(ct);
 
-        return Results.Created($"/api/people/reports/{report.Id}", new { id = report.Id, reason = report.Reason, createdAt = report.CreatedAt });
+        return Results.Created($"{OrganizationScope.ApiPath(db.ConversationOrganizationId)}/people/reports/{report.Id}", new { id = report.Id, reason = report.Reason, createdAt = report.CreatedAt });
     }
+    private static Task<bool> MayActOnPersonalUserAsync(NexusDbContext db, Guid actorId, Guid targetId, CancellationToken ct) =>
+        db.ConversationMembers.AnyAsync(m => m.UserId == actorId && m.LeftAt == null &&
+            db.Conversations.Any(c => c.Id == m.ConversationId && c.OrganizationId == null) &&
+            db.ConversationMembers.Any(peer => peer.ConversationId == m.ConversationId && peer.UserId == targetId), ct);
 }

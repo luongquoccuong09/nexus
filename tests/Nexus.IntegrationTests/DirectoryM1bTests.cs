@@ -49,6 +49,7 @@ public sealed class DirectoryM1bTests(PostgresContainerFixture pg)
             termsAccepted = true
         });
         Assert.Equal(HttpStatusCode.Created, trialReg.StatusCode);
+        await OrganizationFixtureHandler.AdmitAsync(app.Services, (await trialReg.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
 
         // Login HRAdmin and enroll MFA (required for admin actions)
         var hrClient = await LoginAndEnableMfaAsync(app, hrUsername, pw);
@@ -227,7 +228,7 @@ public sealed class DirectoryM1bTests(PostgresContainerFixture pg)
             using var statusResp = await client.PutAsJsonAsync("/api/people/me/status", new { customStatus = "At construction site" });
             Assert.Equal(HttpStatusCode.OK, statusResp.StatusCode);
 
-            using var meResp = await client.GetAsync("/api/auth/me");
+            using var meResp = await client.GetAsync($"/api/organizations/{await OrganizationFixtureHandler.GetIdAsync(app.Services)}/me");
             Assert.Equal("At construction site", JsonDocument.Parse(await meResp.Content.ReadAsStringAsync()).RootElement.GetProperty("customStatus").GetString());
 
             using var tooLongStatus = await client.PutAsJsonAsync("/api/people/me/status", new { customStatus = new string('x', 101) });
@@ -359,6 +360,8 @@ public sealed class DirectoryM1bTests(PostgresContainerFixture pg)
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
+        OrganizationFixtureHandler.Add(db, org.Id, user);
+        await db.SaveChangesAsync();
         return user;
     }
 
@@ -385,7 +388,7 @@ public sealed class DirectoryM1bTests(PostgresContainerFixture pg)
             CookieContainer = cookies,
             CheckCertificateRevocationList = true
         };
-        var client = new HttpClient(handler) { BaseAddress = new Uri(GetBaseAddress(app)) };
+        var client = new HttpClient(new OrganizationFixtureHandler(app.Services, handler)) { BaseAddress = new Uri(GetBaseAddress(app)) };
         return (cookies, client);
     }
 

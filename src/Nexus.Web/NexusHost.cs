@@ -53,9 +53,12 @@ public static class NexusHost
         app.UseNexusRequestLogging();
         app.UseStaticFiles();
         app.UseNexusSecurityDefaults();
+        app.UseMiddleware<OrganizationScope>();
 
         app.MapNexusOperationalEndpoints();
         app.MapIdentityEndpoints();
+        app.MapOrganizations();
+        app.MapPersonalConnections();
         app.MapOrgEndpoints();
         app.MapPeopleEndpoints();
         app.MapPeopleSafetyEndpoints();
@@ -64,7 +67,12 @@ public static class NexusHost
         app.MapMessagingEndpoints();
         app.MapCommunityFeedEndpoints();
         app.MapFilesEndpoints();
-        app.MapHub<MessagingHub>("/hubs/messaging");
+        app.MapPeopleSafetyEndpoints(OrganizationScope.PersonalApi);
+        app.MapConversationEndpoints(OrganizationScope.PersonalApi);
+        app.MapMessagingEndpoints(OrganizationScope.PersonalApi);
+        app.MapFilesEndpoints(OrganizationScope.PersonalApi);
+        app.MapHub<MessagingHub>(OrganizationScope.Hub);
+        app.MapHub<MessagingHub>(OrganizationScope.PersonalHub);
 
         configureApp?.Invoke(app);
 

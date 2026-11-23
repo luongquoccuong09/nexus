@@ -1,3 +1,4 @@
+using Nexus.Web.Modules.Org;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
@@ -19,7 +20,7 @@ public static class CommunityAccessHelper
 {
     public static async Task<ResolvedConversationAccess?> ResolveAsync(
         NexusDbContext db,
-        NexusUser actor,
+        OrganizationMembership actor,
         Guid conversationId,
         CancellationToken ct)
     {

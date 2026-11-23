@@ -12,7 +12,7 @@ Enforces six automated design system & UI security rules:
   3. UI-BRAND-NAME       - User-facing UI & Desktop strings must use "Nexus", never "Project Nexus".
   4. UI-SAFE-HTML        - dangerouslySetInnerHTML may only invoke renderSafeMarkdown(...) (SEC-10).
   5. UI-ICON-BUTTON-A11Y - Every iconOnly <Button> must include an aria-label attribute.
-  6. UI-TRUST-BADGE      - TrustBadge / UserNameWithBadge is exported from src/ui/Badge.tsx and used in main.tsx & chat.tsx (M1.4b).
+  6. UI-COPY-NO-COLLEAGUE - Avoid the informal "colleague(s)" term in product copy (UXA-05).
 #>
 [CmdletBinding()]
 param(
@@ -113,22 +113,6 @@ foreach ($bf in $brandCheckFiles) {
         $text = Get-Content -LiteralPath $bf -Raw
         if ($text -match '\bProject Nexus\b') {
             Add-Finding 'UI-BRAND-NAME' $rel 'User-facing UI string contains "Project Nexus". Use "Nexus" instead.'
-        }
-    }
-}
-
-# Rule 6: Trust badge primitive usage (M1.4b)
-$badgeFile = Join-Path $clientSrc 'ui\Badge.tsx'
-if (-not (Test-Path -LiteralPath $badgeFile -PathType Leaf)) {
-    Add-Finding 'UI-TRUST-BADGE' 'src/Nexus.Client/src/ui/Badge.tsx' 'TrustBadge / UserNameWithBadge primitive is missing.'
-} else {
-    foreach ($consumer in @('main.tsx', 'chat.tsx')) {
-        $p = Join-Path $clientSrc $consumer
-        if (Test-Path -LiteralPath $p -PathType Leaf) {
-            $t = Get-Content -LiteralPath $p -Raw
-            if ($t -notmatch 'TrustBadge|UserNameWithBadge') {
-                Add-Finding 'UI-TRUST-BADGE' "src/Nexus.Client/src/$consumer" 'Must render TrustBadge or UserNameWithBadge for M1.4b Unverified visibility.'
-            }
         }
     }
 }

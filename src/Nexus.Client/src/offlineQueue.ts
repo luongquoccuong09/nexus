@@ -5,7 +5,7 @@ export interface QueuedMessage {
   createdAt: string;
 }
 
-const DB_NAME = 'nexus-chat-v1';
+const DB_NAME = 'nexus-chat-v2';
 const DB_VERSION = 1;
 const OUTBOX_STORE = 'outbox';
 const CURSOR_STORE = 'cursors';
@@ -23,9 +23,9 @@ export function reconnectDelayWithJitter(retryCount: number): number {
   return baseMs + jitter;
 }
 
-function openDb(): Promise<IDBDatabase> {
+function openDb(scope: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(`${DB_NAME}:${scope}`, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
@@ -40,9 +40,9 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-export async function enqueueOfflineMessage(item: QueuedMessage): Promise<void> {
+export async function enqueueOfflineMessage(scope: string, item: QueuedMessage): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  const db = await openDb();
+  const db = await openDb(scope);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(OUTBOX_STORE, 'readwrite');
     tx.objectStore(OUTBOX_STORE).put(item);
@@ -51,9 +51,9 @@ export async function enqueueOfflineMessage(item: QueuedMessage): Promise<void> 
   });
 }
 
-export async function dequeueOfflineMessage(clientMsgId: string): Promise<void> {
+export async function dequeueOfflineMessage(scope: string, clientMsgId: string): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  const db = await openDb();
+  const db = await openDb(scope);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(OUTBOX_STORE, 'readwrite');
     tx.objectStore(OUTBOX_STORE).delete(clientMsgId);
@@ -62,9 +62,9 @@ export async function dequeueOfflineMessage(clientMsgId: string): Promise<void> 
   });
 }
 
-export async function listQueuedMessages(): Promise<QueuedMessage[]> {
+export async function listQueuedMessages(scope: string): Promise<QueuedMessage[]> {
   if (typeof indexedDB === 'undefined') return [];
-  const db = await openDb();
+  const db = await openDb(scope);
   return new Promise<QueuedMessage[]>((resolve, reject) => {
     const tx = db.transaction(OUTBOX_STORE, 'readonly');
     const req = tx.objectStore(OUTBOX_STORE).getAll();
@@ -73,9 +73,9 @@ export async function listQueuedMessages(): Promise<QueuedMessage[]> {
   });
 }
 
-export async function getConversationCursor(conversationId: string): Promise<number> {
+export async function getConversationCursor(scope: string, conversationId: string): Promise<number> {
   if (typeof indexedDB === 'undefined') return 0;
-  const db = await openDb();
+  const db = await openDb(scope);
   return new Promise<number>((resolve, reject) => {
     const tx = db.transaction(CURSOR_STORE, 'readonly');
     const req = tx.objectStore(CURSOR_STORE).get(conversationId);
@@ -84,9 +84,9 @@ export async function getConversationCursor(conversationId: string): Promise<num
   });
 }
 
-export async function setConversationCursor(conversationId: string, changeSeq: number): Promise<void> {
+export async function setConversationCursor(scope: string, conversationId: string, changeSeq: number): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  const db = await openDb();
+  const db = await openDb(scope);
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(CURSOR_STORE, 'readwrite');
     tx.objectStore(CURSOR_STORE).put({ conversationId, changeSeq });

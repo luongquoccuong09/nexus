@@ -19,6 +19,7 @@ using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Org;
 using SkiaSharp;
 
 namespace Nexus.IntegrationTests;
@@ -143,6 +144,26 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             Assert.Equal(HttpStatusCode.Created, sendResp.StatusCode);
             var sentMsg = JsonDocument.Parse(await sendResp.Content.ReadAsStringAsync()).RootElement;
             Assert.Equal(2, sentMsg.GetProperty("attachments").GetArrayLength());
+
+            // Simulate a retained event written before attachment URLs contained the Organization.
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+                var legacyEvent = await db.ConversationEvents.SingleAsync(e => e.ConversationId == dmAB && e.EventType == "message.created");
+                legacyEvent.PayloadJson = legacyEvent.PayloadJson.Replace(
+                    OrganizationScope.ApiPath(userA.OrganizationId) + "/files/", "/api/files/", StringComparison.Ordinal);
+                await db.SaveChangesAsync();
+            }
+
+            using var delta = await clientB.GetAsync($"/api/conversations/{dmAB}/changes");
+            delta.EnsureSuccessStatusCode();
+            using var deltaDoc = JsonDocument.Parse(await delta.Content.ReadAsStringAsync());
+            var restoredAttachment = Assert.Single(deltaDoc.RootElement.GetProperty("items").EnumerateArray(),
+                    e => e.GetProperty("eventType").GetString() == "message.created")
+                .GetProperty("payload").GetProperty("attachments").EnumerateArray().First(a => a.GetProperty("id").GetGuid() == imgId);
+            Assert.Equal(thumbUrl, restoredAttachment.GetProperty("thumbnailUrl").GetString());
+            using var restoredDownload = await clientB.GetAsync(restoredAttachment.GetProperty("downloadUrl").GetString());
+            Assert.Equal(HttpStatusCode.OK, restoredDownload.StatusCode);
 
             // B sees attachments hydrated in GET /messages and GET /files
             using var msgsB = await clientB.GetAsync($"/api/conversations/{dmAB}/messages");
@@ -527,6 +548,8 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
+        OrganizationFixtureHandler.Add(db, org.Id, user);
+        await db.SaveChangesAsync();
         return user;
     }
 
@@ -556,7 +579,7 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             CookieContainer = new CookieContainer(),
             CheckCertificateRevocationList = true
         };
-        return new HttpClient(handler) { BaseAddress = new Uri(GetBaseAddress(app)) };
+        return new HttpClient(new OrganizationFixtureHandler(app.Services, handler)) { BaseAddress = new Uri(GetBaseAddress(app)) };
     }
 
     private static string GetBaseAddress(WebApplication app)

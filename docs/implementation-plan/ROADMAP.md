@@ -13,17 +13,17 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 
 ## Product decisions · November 23, 2026
 
-**Community → Channel.** People create and name communities and invite members. Each community starts with a **General** channel. Expand a community in the Communities tab and select a channel to read and discuss posts. DMs and group chats live in Chat.
+**Personal Chat and Organizations.** [P0-D14](../decisions/2026-11-23-p0-d14-personal-chat-and-organizations.md) establishes one account, consent-based Personal Chat without an Organization, and separate memberships in multiple Organizations. An Organization can host its own Chat, Directory and Communities.
 
-D02 establishes one Organization for accounts. Under D04, communities manage membership and channels hold content. MVP channels inherit community members and roles. Posts, comments and announcements belong to a channel.
+**Community → Channel.** Under D04, each Community has a main feed and can add optional Channels. Channels inherit Community membership and roles.
 
 ## P0 — Decisions and documentation
 
-- [ ] **P0.1** Resolve P0-D05 through D12 with IT/HR (audit §7) and record outcomes in [`docs/decisions/`](../decisions/INDEX.md). Accepted on November 23, 2026: D01 direct DMs, D02 one Organization, D04 Community → Channel, D03 password first and Google linking later, and D13 open trial registration with Unverified accounts.
+- [ ] **P0.1** Resolve P0-D05 through D12 with IT/HR (audit §7) and record outcomes in the [decisions index](../decisions/INDEX.md). D14 replaces the single Organization boundary and automatic Organization enrollment. D01 governs Organization DMs, D03 governs sign-in, and D04 governs Community → Channel.
 - [x] **P0.2** Complete the [authorization matrix](../SECURITY_AND_AUTHZ.md) by role, action and scope (audit §3.3). Cover administrative access and content access, community creation and joining, Owner/Admin channel creation, member reads and posts, and Unverified restrictions. Derive tests from the matrix.
 - [x] **P0.3** Complete the [sync protocol](../SYNC_PROTOCOL.md) for `client_msg_id`, `seq`, `change_seq`, `conversation_events`, reconnects, gaps, reconciliation and idempotency keys (audit §4).
 - [x] **P0.4** [Glossary](../GLOSSARY.md) covering Organization, Community, Channel, Conversation (dm/group/channel), official designation, Owner/Admin/Member and Former/Disabled.
-- [ ] **P0.5** Update the proposal to v0.4 with 1,000 accounts, revised D02 and D04, consistent terminology, SEC-17 through SEC-24 and a pilot budget.
+- [ ] **P0.5** Update the proposal with 1,000 accounts, D04 and D14, consistent terminology, SEC-17 through SEC-24 and a pilot budget.
 - [x] **P0.6** Prototypes in [`docs/mockups/`](../mockups/README.md) cover open DMs (D01), password registration and sign-in (D03/D13), the Unverified badge and simulated Google linking. The end-user prototype has a community/channel tree, General channel creation, additional channels and per-channel posts. Backend work belongs to M5.
 - [x] **P0.7** [Agent instructions](../../AGENTS.md) link to the decision log, authorization matrix, sync protocol and constraints from proposal §9.1.
 - [ ] **P0.8** Ask IT about permitted data regions, the security reviewer, internal SMTP for self-service recovery and future M365/Google Workspace identity linking.
@@ -72,14 +72,25 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 **M1d — Conversion to official use when approved**
 
 - [ ] **M1.15** Bulk-match trial accounts against employees. Report outstanding verifications and set a cutoff date.
-- [ ] **M1.16** Enable Approval/InviteOnly with hashed single-use invitation tokens expiring in seven days. Restrict or disable remaining Unverified accounts after the cutoff and retain chat history.
+- [x] **M1.16** Implement Organization invitations under D14. Store hashed single-use tokens that expire after seven days. Require authenticated confirmation, handle concurrent redemption, and allow Owner or Admin to revoke pending invitations. → M1.17
+
+**M1e — Account and Organization membership (D14)**
+
+- [x] **M1.17** Split global identity from Organization membership and directory profiles. Add Organization creation, role administration with TOTP, and membership revocation. Account registration grants zero memberships. → P0-D14
+- [x] **M1.18** Scope Directory, Community, and administrative entry points to the selected Organization. Add the context picker and invitation and membership settings. → M1.16, M1.17
 
 ## M2 — Core messaging and synchronization
+
+**D14 follow-up.** Add a separate Personal scope for chat. Existing Organization conversations keep their data and remain in their Organization.
+
+- [x] **M2.13** Add consent-based contacts via exact username or contact link, Personal DMs and group chats using accepted contacts. Keep Personal Chat usable with zero Organization memberships. → M1.17
+- [x] **M2.14** Scope chat, downloads, SignalR and reconciliation across Personal and Organization contexts. Partition offline queues and cursors by account and scope. Verify data isolation across two browser tabs and Organization revocation. → M1.18, M2.13
+- [ ] **M2.15** Rehearse cutover on a copy. Preserve identities, histories and attachments, review ownership of existing resources, and grant legacy Organization access only to the Owner-approved list. Enable production Organization creation after isolation and migration checks pass. → M2.14
 
 - [x] **M2.1** Create conversations (kind, dm_key, next_seq, change_seq), conversation_members (role, last_read_seq, muted, left_at), messages and conversation_events.
 - [x] **M2.2** Open a DM with an active employee (D01). Upsert by dm_key so concurrent tabs open one conversation.
 - [x] **M2.3** In one transaction check membership, allocate seq, enforce unique(sender_id, client_msg_id) and write the event. Return the existing message on retry or 409 for different payloads.
-- [x] **M2.4** Fan out to SignalR groups named `user:{id}`. Read recipients from the database and send (conversation_id, change_seq).
+- [x] **M2.4** Fan out to SignalR groups named `scope:{scopeId}:user:{userId}`. Read authorized recipients from the database and send (conversation_id, change_seq).
 - [x] **M2.5** Cursor-page history by seq, capped at 50. Expose `GET /changes?after=N`.
 - [x] **M2.6** Use IndexedDB for queued offline sends, optimistic UI, deduplication, gap detection and sync. Reconnect with jitter, show connection status and reload when /api/version changes.
 - [x] **M2.7** Advance reads with GREATEST(last_read_seq), update unread counts across devices and show a New messages divider (UX-09).

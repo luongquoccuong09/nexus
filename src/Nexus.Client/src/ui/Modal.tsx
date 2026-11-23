@@ -1,4 +1,4 @@
-import { ReactNode, useRef } from 'react';
+import { ReactNode, RefObject, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { Button } from './Button';
@@ -14,7 +14,8 @@ export function Modal({
   description,
   size = 'md',
   children,
-  footer
+  footer,
+  initialFocusRef
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,6 +24,7 @@ export function Modal({
   size?: 'md' | 'xl';
   children: ReactNode;
   footer?: ReactNode;
+  initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const wasOpenRef = useRef(false);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -40,6 +42,12 @@ export function Modal({
         <Dialog.Overlay className="nx-modal-overlay" />
         <Dialog.Content
           className={`nx-modal-content ${size === 'xl' ? 'xl' : ''}`.trim()}
+          onOpenAutoFocus={event => {
+            if (initialFocusRef?.current) {
+              event.preventDefault();
+              initialFocusRef.current.focus();
+            }
+          }}
           onCloseAutoFocus={event => {
             const target = previousFocusRef.current;
             previousFocusRef.current = null;

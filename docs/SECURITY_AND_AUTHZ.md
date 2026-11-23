@@ -11,11 +11,13 @@ Every protected HTTP endpoint, SignalR hub method, file download, search query, 
 `IAuthorizationService.Can(actor, action, resource)` evaluates rules in strict order:
 
 1. **Authentication & Account Status:** Reject immediately if `actor` is null or `actor.Status != AccountStatus.Active` (`Disabled` or `Former` accounts are denied across HTTP, SignalR, downloads, and sync).
-2. **Organization Scope:** Reject if `resource.OrganizationId` is set and does not match `actor.OrganizationId` ([`P0-D02`](decisions/2026-11-23-p0-d02-single-organization.md)).
+2. **Chat and Organization scope.** Validate the route scope and active Organization membership before evaluating the resource policy. Personal Chat uses its own scope and contact policy. Reject resources outside the route scope. [P0-D14](decisions/2026-11-23-p0-d14-personal-chat-and-organizations.md)
 3. **Explicit Action & Resource Policy:** Evaluate the matrix rules below according to `ResourceKind`, `actor.OrgRole`, `actor.TrustLevel`, `resource.MembershipRole`, `resource.IsOfficial`, `resource.Visibility`, `resource.PostingPolicy`, and relationship flags (`IsBlocked`, `DailyNewDmQuotaExceeded`).
 4. **Default Deny:** Return `false` if no explicit rule allows the action.
 
 > **Management vs Content Separation:** Organizational admin roles (`SystemAdmin`, `HRAdmin`, `CommsAdmin`) **never** grant implicit read or post access to DMs, group chats, or private communities where the admin is not a current member. Break-glass emergency export is governed separately by [`P0-D07`](decisions/2026-11-23-p0-d06-d07-offboarding-and-break-glass.md) (`M7.5`).
+
+Personal Chat directory results include accepted contacts. Opening a Personal DM or adding a member to a Personal group requires an accepted contact. Organization membership revocation closes that Organization's connections for the account and blocks further reads, downloads and sync in its scope. The account remains available in other scopes. Global account recovery is an audited operator action.
 
 ## 2. Capability Matrix (`P0.2`)
 

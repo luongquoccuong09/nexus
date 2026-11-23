@@ -3,11 +3,12 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Org;
 
 namespace Nexus.Web.Modules.Messaging;
 
 /// <summary>
-/// Realtime messaging hub using strictly user-scoped groups (`user:{id}`) (M2.4 / M2.10 / SEC-07).
+/// Realtime messaging hub using groups scoped to a chat context and user (M2.4 / M2.10 / SEC-07).
 /// Clients never join conversation groups directly; the server resolves authorized recipients from PostgreSQL.
 /// </summary>
 public sealed class MessagingHub(
@@ -15,18 +16,20 @@ public sealed class MessagingHub(
     IAuthorizationService authz,
     IPresenceTracker presence) : Hub
 {
-    public static string UserGroupName(Guid userId) => $"user:{userId:D}";
+    public static string UserGroupName(Guid organizationId, Guid userId) => $"scope:{organizationId:D}:user:{userId:D}";
+
+    private Guid ScopeId => OrganizationScope.GetId(Context.GetHttpContext());
 
     public override async Task OnConnectedAsync()
     {
-        if (!Context.User.TryGetUserId(out var userId))
+        if (!Context.User.TryGetUserId(out var userId) || !await SetScopeAsync(userId))
         {
             Context.Abort();
             return;
         }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(userId), Context.ConnectionAborted);
-        presence.OnConnected(userId, Context.ConnectionId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(ScopeId, userId), Context.ConnectionAborted);
+        presence.OnConnected(ScopeId, userId, Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
@@ -34,7 +37,7 @@ public sealed class MessagingHub(
     {
         if (Context.User.TryGetUserId(out var userId))
         {
-            presence.OnDisconnected(userId, Context.ConnectionId);
+            presence.OnDisconnected(ScopeId, userId, Context.ConnectionId);
         }
 
         await base.OnDisconnectedAsync(exception);
@@ -47,10 +50,8 @@ public sealed class MessagingHub(
             throw new HubException("Unauthorized.");
         }
 
-        var actor = await db.Users
-            .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .SingleOrDefaultAsync(Context.ConnectionAborted);
+        if (!await SetScopeAsync(userId)) throw new HubException("Forbidden.");
+        var actor = db.OrganizationActor;
 
         if (actor is null)
         {
@@ -59,7 +60,7 @@ public sealed class MessagingHub(
 
         var conv = await db.Conversations
             .AsNoTracking()
-            .Where(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId)
+            .Where(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId)
             .SingleOrDefaultAsync(Context.ConnectionAborted);
 
         var member = await db.ConversationMembers
@@ -86,7 +87,11 @@ public sealed class MessagingHub(
         var recipientIds = await db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.LeftAt == null && m.UserId != userId)
-            .Select(m => m.UserId)
+            .Join(db.ActiveScopePeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => u.Id)
+            .Where(recipientId => kind != ResourceKind.Dm || !db.UserBlocks.Any(block =>
+                block.OrganizationId == ScopeId &&
+                ((block.BlockerUserId == userId && block.BlockedUserId == recipientId) ||
+                 (block.BlockerUserId == recipientId && block.BlockedUserId == userId))))
             .ToListAsync(Context.ConnectionAborted);
 
         var payload = new
@@ -99,8 +104,20 @@ public sealed class MessagingHub(
 
         foreach (var recipientId in recipientIds)
         {
-            await Clients.Group(UserGroupName(recipientId))
+            await Clients.Group(UserGroupName(ScopeId, recipientId))
                 .SendAsync("TypingIndicator", payload, Context.ConnectionAborted);
         }
+    }
+    private async Task<bool> SetScopeAsync(Guid userId)
+    {
+        var http = Context.GetHttpContext();
+        db.IsPersonalScope = OrganizationScope.IsPersonal(http);
+        db.OrganizationScopeId = ScopeId;
+        db.OrganizationActor = null;
+        if (!db.IsPersonalScope && ScopeId == Guid.Empty) return false;
+        db.OrganizationActor = db.IsPersonalScope
+            ? await db.FindPersonalActorAsync(userId, Context.ConnectionAborted)
+            : await db.FindOrganizationActorAsync(userId, Context.ConnectionAborted);
+        return db.OrganizationActor is not null;
     }
 }

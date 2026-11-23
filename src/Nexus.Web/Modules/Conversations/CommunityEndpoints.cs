@@ -1,5 +1,5 @@
+using Nexus.Web.Modules.Org;
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
@@ -25,7 +25,7 @@ public static class CommunityEndpoints
 
     public static IEndpointRouteBuilder MapCommunityEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/communities");
+        var group = app.MapGroup(OrganizationScope.Api + "/communities");
 
         group.MapGet("/", HandleListCommunitiesAsync);
         group.MapPost("/", HandleCreateCommunityAsync)
@@ -50,13 +50,12 @@ public static class CommunityEndpoints
     private static async Task<IResult> HandleListCommunitiesAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         bool discover = false,
         int? limit = null,
         CancellationToken ct = default)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -156,12 +155,11 @@ public static class CommunityEndpoints
         HttpContext ctx,
         CreateCommunityRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         // Single standard Create Community flow (M5.2): new communities always start non-official.
@@ -234,7 +232,7 @@ public static class CommunityEndpoints
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return Results.Created($"/api/communities/{community.Id}", new
+        return Results.Created($"/api/organizations/{actor.OrganizationId}/communities/{community.Id}", new
         {
             id = community.Id,
             name = community.Name,
@@ -250,12 +248,11 @@ public static class CommunityEndpoints
         HttpContext ctx,
         Guid communityId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -303,13 +300,12 @@ public static class CommunityEndpoints
         HttpContext ctx,
         Guid communityId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         int? limit,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
@@ -332,7 +328,7 @@ public static class CommunityEndpoints
 
         var items = await db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == communityId && m.LeftAt == null)
-            .Join(db.Users.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
+            .Join(db.OrganizationPeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
             {
                 userId = u.Id,
                 username = u.UserName ?? string.Empty,
@@ -353,19 +349,18 @@ public static class CommunityEndpoints
         Guid communityId,
         AddCommunityMemberRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
             .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
-        var target = await db.Users.AsNoTracking()
+        var target = await db.OrganizationPeople.AsNoTracking()
             .SingleOrDefaultAsync(u => u.Id == request.UserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
 
         if (community is null || target is null)
@@ -423,12 +418,11 @@ public static class CommunityEndpoints
         Guid communityId,
         Guid targetUserId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -437,7 +431,7 @@ public static class CommunityEndpoints
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == targetUserId && m.LeftAt == null, ct);
-        var targetUser = await db.Users.AsNoTracking()
+        var targetUser = await db.OrganizationPeople.AsNoTracking()
             .SingleOrDefaultAsync(u => u.Id == targetUserId && u.OrganizationId == actor.OrganizationId, ct);
 
         if (community is null || targetMember is null || targetUser is null)
@@ -472,12 +466,11 @@ public static class CommunityEndpoints
         Guid targetUserId,
         SetCommunityAdminRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -486,7 +479,7 @@ public static class CommunityEndpoints
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == targetUserId && m.LeftAt == null, ct);
-        var targetUser = await db.Users.AsNoTracking()
+        var targetUser = await db.OrganizationPeople.AsNoTracking()
             .SingleOrDefaultAsync(u => u.Id == targetUserId && u.OrganizationId == actor.OrganizationId, ct);
 
         if (community is null || targetMember is null || targetUser is null || targetMember.Role == ResourceRole.Owner)
@@ -521,11 +514,10 @@ public static class CommunityEndpoints
         HttpContext ctx,
         Guid communityId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var myMember = await db.CommunityMembers
@@ -551,12 +543,11 @@ public static class CommunityEndpoints
         Guid communityId,
         TransferCommunityOwnerRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -565,7 +556,7 @@ public static class CommunityEndpoints
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == request.NewOwnerUserId && m.LeftAt == null, ct);
-        var targetUser = await db.Users.AsNoTracking()
+        var targetUser = await db.OrganizationPeople.AsNoTracking()
             .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId, ct);
 
         if (community is null || myMember is null || targetMember is null || targetUser is null)
@@ -621,16 +612,15 @@ public static class CommunityEndpoints
         Guid communityId,
         DesignateOfficialRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         // Admin actions require MFA enrolled (M1.8)
-        if (!actor.TwoFactorEnabled)
+        if (ctx.User.FindFirst(ClaimsPrincipalExtensions.MfaVerifiedClaimType)?.Value != "true")
         {
             return Results.Forbid();
         }
@@ -670,17 +660,16 @@ public static class CommunityEndpoints
         Guid communityId,
         TransferCommunityOwnerRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
-        if (actor is null || !actor.TwoFactorEnabled) return Results.Forbid();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Forbid();
 
         var community = await db.Communities.AsNoTracking()
             .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
-        var targetUser = await db.Users.AsNoTracking()
+        var targetUser = await db.OrganizationPeople.AsNoTracking()
             .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
 
         if (community is null || targetUser is null) return Results.NotFound();
@@ -746,13 +735,12 @@ public static class CommunityEndpoints
         Guid communityId,
         CreateChannelRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -800,7 +788,7 @@ public static class CommunityEndpoints
         await db.SaveChangesAsync(ct);
         await fanout.NotifyCommunityFeedChangedAsync(communityId, channel.Id, ct);
 
-        return Results.Created($"/api/channels/{channel.Id}/posts", new
+        return Results.Created($"/api/organizations/{actor.OrganizationId}/channels/{channel.Id}/posts", new
         {
             id = channel.Id,
             communityId,
@@ -815,12 +803,11 @@ public static class CommunityEndpoints
         Guid communityId,
         MapDepartmentRequest request,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities
@@ -857,12 +844,11 @@ public static class CommunityEndpoints
         HttpContext ctx,
         Guid communityId,
         [FromServices] NexusDbContext db,
-        UserManager<NexusUser> userManager,
         IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await userManager.FindByIdAsync(actorId.ToString());
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
         var community = await db.Communities.AsNoTracking()
@@ -884,7 +870,7 @@ public static class CommunityEndpoints
         }
 
         var deptId = community.MappedDepartmentId.Value;
-        var eligibleQuery = db.Users.AsNoTracking()
+        var eligibleQuery = db.OrganizationPeople.AsNoTracking()
             .Where(u => u.OrganizationId == actor.OrganizationId &&
                         u.Status == AccountStatus.Active &&
                         u.DepartmentId == deptId);

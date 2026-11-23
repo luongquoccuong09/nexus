@@ -85,8 +85,7 @@
   white-space: nowrap;
 }
 
-.nx-badge.unverified, .nx-badge.warning { background: var(--warning-bg); color: var(--warning); }
-.nx-badge.verified, .nx-badge.success { background: var(--success-bg); color: var(--success); }
+.nx-badge.success { background: var(--success-bg); color: var(--success); }
 .nx-badge.role { background: var(--brand-100); color: var(--badge-role-text); }
 
 .nx-user-name-wrap {

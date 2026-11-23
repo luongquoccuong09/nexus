@@ -44,6 +44,7 @@ public sealed class IdempotencyEndpointFilter : IEndpointFilter
         var db = httpContext.RequestServices.GetRequiredService<NexusDbContext>();
         var httpMethod = httpContext.Request.Method.ToUpperInvariant();
         var routeTemplate = ResolveRouteTemplate(httpContext);
+        if (db.OrganizationScopeId != Guid.Empty) routeTemplate = $"{db.OrganizationScopeId:N}:{routeTemplate}";
         var requestHash = await ComputeRequestBodyHashAsync(httpContext.Request, ct);
         var now = DateTimeOffset.UtcNow;
 
