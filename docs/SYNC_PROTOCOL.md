@@ -1,12 +1,12 @@
 # Message Synchronization & Idempotency Protocol
 
 - Status: active (canonical — completes `P0.3`)
-- Last updated: 2026-11-23
+- Last updated: 2026-11-24
 - Scope: `M0.5` idempotency keys & conditional state transitions, and `M2` messaging ordering, delta sync, offline queue, and reconnect reconciliation.
 
-PostgreSQL stores the authoritative state. SignalR is a **notification channel** that tells clients when to fetch changes — never the sole source of message delivery.
+PostgreSQL stores the authoritative state. SignalR delivers realtime updates and nudges — never the sole source of message persistence.
 
-Conversation paths use `/api/personal` or `/api/organizations/{organizationId}` as the API prefix. Tabs derive the scope from their URL. IndexedDB queue items and cursors are keyed by account and scope. The cutover starts a new client storage namespace, so drafts already queued in the old unscoped namespace require manual recovery before upgrading.
+The single-window SPA routes unified account-level Chat (`dm` and `group`) through `/api/personal` (with IndexedDB queue/cursors keyed by `${userId}:personal`), while Organization-scoped Communities, Channels, Directory, HR, and administration use `/api/organizations/{organizationId}` without page reloads. Scoped `/api/organizations/{organizationId}` conversation and sync routes remain enforced on the backend for explicit multi-scope isolation.
 
 ## 1. Message Send & Ordering (`client_msg_id`, `seq`, `change_seq`)
 
@@ -32,8 +32,8 @@ Conversation paths use `/api/personal` or `/api/organizations/{organizationId}` 
 ## 2. SignalR Fanout & Crash Recovery
 
 1. **SignalR groups per account and scope.**
-   - On connect, the server authenticates the session and checks Organization membership for Organization hubs. It binds the connection to `scope:{scopeId}:user:{currentUserId}`.
-   - After PostgreSQL commit, the server reads current authorized recipients from PostgreSQL and broadcasts a lightweight nudge: `{ conversationId, changeSeq }`.
+   - On connect to `/hubs/personal/messaging` (single-window default), the server authenticates the session and binds the connection to `scope:{Guid.Empty}:user:{currentUserId}` plus `scope:{orgId}:user:{currentUserId}` for each active Organization membership (refreshable via `RefreshOrganizationSubscriptions()`). Scoped `/hubs/organizations/{orgId}/messaging` hubs remain supported and verify membership on connect.
+   - After PostgreSQL commit, the server reads current authorized recipients from PostgreSQL and broadcasts via batched `Clients.Groups(...)`: `{ conversationId, changeSeq, message? }` for chat messages and `{ conversationId, delta? }` for community feed updates. Clients apply sequential `change_seq == localChangeSeq + 1` payloads directly into in-memory caches and fall back to `GET /changes?after=N` on any gap or reconnect. Revoking an Organization membership immediately removes live connections from `scope:{orgId}:user:{memberId}`, aborts scoped org hub connections, and pushes `OrganizationAccessRevoked`.
 2. **Crash between DB commit and SignalR broadcast:**
    - Because SignalR is best-effort, a server crash or network drop after commit means clients may miss the nudge.
    - Recovery relies on two mechanisms:

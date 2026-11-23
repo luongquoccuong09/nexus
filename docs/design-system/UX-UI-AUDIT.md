@@ -149,7 +149,7 @@ P1 affects a common task, accessibility, or a consequential product choice. P2 c
 
 **Observed.** Create community defaults to `Public — Discoverable by colleagues` and offers `Private — Invite only`. In an internal app, `Public` needs an explicit organization boundary. The current copy also leaves the distinction between discovery and joining unclear.
 
-**Fix.** The P0-D14 build uses **Open to organization members** and **Invite only** with helper text for discovery, joining and Official Community eligibility. The Community header shows the member's role. **Add channel** is available to a Community Owner or Admin.
+**Fix.** The single-window P0-D14 build uses contrasting **`Shared Community`** and **`Private Community`** radio options with helper text for discovery, joining, and Official Community eligibility. The Community header shows the workspace name, visibility (`Shared Community` / `Private Community`), and the member's role. **Add channel** is available to a Community Owner or Admin.
 
 **Retest.** Ready for a browser review with populated Communities. Compare the visibility choices as a member and as an account in another Organization. Verify **Your role** and **Add channel** as Owner, Admin and Member, and verify the Official Community eligibility rule. [Community and Channel decision](../decisions/2026-11-23-p0-d04-community-channel-hierarchy.md)
 
@@ -182,7 +182,7 @@ These are proposed additions to the [Nexus Design System & UX Conventions](READM
 | `Add colleagues (optional)` | `Add people (optional)` |
 | `Select colleague…` | `Select a person` |
 | `Discover public` | `Browse communities` |
-| `Public — Discoverable by colleagues` | `Open to organization members` with policy-specific helper text |
+| `Public — Discoverable by colleagues` / `Private — Invite only` | `Shared Community` / `Private Community` with policy-specific helper text |
 | `Add sub-channel` | `Add channel` |
 
 References for proposed rules include [Microsoft sentence case](https://learn.microsoft.com/en-us/style-guide/text-formatting/using-type/use-sentence-style-capitalization), [Microsoft acronym guidance](https://learn.microsoft.com/en-us/style-guide/checklists/acronyms-checklist), [WAI dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/), [WAI tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), [WCAG target size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum), and [WCAG reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html).

@@ -1,7 +1,7 @@
 # Code Map — Read Before Grepping
 
 - Status: active
-- Last updated: 2026-11-23 (M2 Core Messaging & Sync)
+- Last updated: 2026-11-24 (Single-Window Unified Chat & Multi-Workspace Communities)
 - Audience: a new AI session or engineer picking up a feature, bug fix, or review.
 
 Use this map before running broad searches across the repository. Recommended lookup order:
@@ -48,10 +48,10 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | Module | Directory | Responsibility | Milestone |
 |---|---|---|---|
 | **Identity** | `src/Nexus.Web/Modules/Identity/` | Accounts, password auth, BFF sessions, TOTP MFA, Google OIDC linking, Active/Disabled & Verified/Unverified states | M1 |
-| **Org** | `src/Nexus.Web/Modules/Org/` | Single Organization boundary, departments, branches, HR CSV import & employee matching | M1 |
-| **People** | `src/Nexus.Web/Modules/People/` | Directory search (`unaccent`, `pg_trgm`), minimal profiles, custom status, avatars, blocking/reporting | M1 / M2 |
-| **Conversations** | `src/Nexus.Web/Modules/Conversations/` | DMs (`dm_key`), group chats, communities, channels, membership, roles, official designation | M2 / M5 |
-| **Messaging** | `src/Nexus.Web/Modules/Messaging/` | Messages, `seq`/`change_seq`, `conversation_events`, SignalR fanout (`user:{id}`), read state, reactions, polls, announcements | M2 / M5 / M6 |
+| **Org** | `src/Nexus.Web/Modules/Org/` | Multi-Organization lifecycle, invitations, membership/role admin, departments, branches, HR CSV import & employee matching | M1 / P0-D14 |
+| **People** | `src/Nexus.Web/Modules/People/` | Directory search (`unaccent`, `pg_trgm`), personal contacts & unified chat candidates (`/api/personal/people/chat-candidates`), minimal profiles, custom status, avatars, blocking/reporting | M1 / M2 / P0-D14 |
+| **Conversations** | `src/Nexus.Web/Modules/Conversations/` | Unified Personal DMs (`dm_key`) & group chats, isolated Organization communities (`Shared Community` / `Private Community`), channels, membership, roles, official designation | M2 / M5 / P0-D14 |
+| **Messaging** | `src/Nexus.Web/Modules/Messaging/` | Messages, `seq`/`change_seq`, `conversation_events`, batched SignalR fanout (`scope:{scopeId}:user:{id}`) with direct `message`/`delta` payloads, read state, reactions, polls, announcements | M2 / M5 / M6 |
 | **Files** | `src/Nexus.Web/Modules/Files/` | Two-stage uploads, magic-byte checks, signed/streamed downloads, quotas, ClamAV quarantine/scan | M3 |
 | **Notifications** | `src/Nexus.Web/Modules/Notifications/` | Transactional outbox worker, mentions, notification center, mute/quiet hours, Web Push (VAPID), email digest | M4 |
 | **Admin** | `src/Nexus.Web/Modules/Admin/` | Account/role management, audit log, emergency ownership transfer, retention/break-glass, aggregate metrics | M7 |
@@ -75,15 +75,15 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Data/DatabaseOptions.cs` | Separate `Runtime` vs `Migration` connection strings, TLS enforcement, rejects Supabase `:6543` |
 | `src/Nexus.Web/Infrastructure/Data/DatabaseMigrator.cs` | Applies EF Core migrations strictly under `Migration` role (`dotnet run -- --migrate`) |
 | `src/Nexus.Web/Infrastructure/Data/PostgreSqlSessionTicketStore.cs` | Server-side `ITicketStore` persisting BFF session tickets in PostgreSQL `app_sessions` |
-| `src/Nexus.Web/Modules/Org/OrgEntities.cs` | Single `Organization`, `Department`, `Branch`, and `Employee` entities (`M1.1`) |
-| `src/Nexus.Web/Modules/Org/HrCsvImportService.cs` & `OrgEndpoints.cs` | RFC-4180 HR CSV upsert with dry-run diff, `Unverified` match suggestions, and department list (`M1.9`) |
-| `src/Nexus.Web/Modules/People/AvatarProcessor.cs` & `PeopleEndpoints.cs` | Vietnamese `unaccent` + `pg_trgm` directory search (`M1.10`), custom status (`UX-06`), and SkiaSharp 256×256 PNG avatar re-encoding (`M1.11`) |
+| `src/Nexus.Web/Infrastructure/Security/IUserConnectionRegistry.cs` | In-memory registry of active SignalR connections per user & scope (`GetUserConnectionIds`, `AbortUserConnections`, `AbortOrganizationConnections`) |
+| `src/Nexus.Web/Modules/Org/OrgEntities.cs`, `OrganizationManagementEndpoints.cs` & `HrCsvImportService.cs` | Multi-Organization entities (`Organization`, `OrganizationMembership`, `OrganizationInvitation`, `Department`, `Branch`, `Employee`), workspace creation/invitations/revocation (with live SignalR `OrganizationAccessRevoked` + group removal), and RFC-4180 HR CSV upsert (`M1.9`, `P0-D14`) |
+| `src/Nexus.Web/Modules/People/AvatarProcessor.cs`, `PeopleEndpoints.cs` & `PersonalConnections.cs` | Vietnamese `unaccent` + `pg_trgm` directory search (`M1.10`), custom status (`UX-06`), SkiaSharp 256×256 PNG avatar re-encoding (`M1.11`), 2-way personal contacts (`personal_connections`, `personal_contact_links`), and unified `GET /api/personal/people/chat-candidates` (accepted contacts ∪ shared-workspace members) |
 | `src/Nexus.Web/Modules/People/SafetyEntities.cs` & `SafetyEndpoints.cs` | DM user blocking (`user_blocks`) and audited user reporting (`user_reports`) (`M2.11`) |
-| `src/Nexus.Web/Modules/Conversations/ConversationEntities.cs` & `ConversationEndpoints.cs` | `conversations`, `conversation_members`, atomic `dm_key` upsert (`M2.2`), idempotent group creation, membership/admin/rejoin (`visible_from_seq`), and `ConditionalTransition` ownership transfer (`M2.8`) |
+| `src/Nexus.Web/Modules/Conversations/ConversationEntities.cs` & `ConversationEndpoints.cs` | `conversations`, `conversation_members`, atomic `dm_key` upsert (`M2.2`, authorizing Personal DMs/groups against `AllowedChatPeerIds`), idempotent group creation, membership/admin/rejoin (`visible_from_seq`), and `ConditionalTransition` ownership transfer (`M2.8`) |
 | `src/Nexus.Web/Modules/Conversations/CommunityEntities.cs`, `CommunityAccessHelper.cs` & `CommunityEndpoints.cs` | `communities`, `community_members`, Teams-style atomic Community + main feed creation (`P0-D04`), optional sub-channels (`Members`/`AdminsOnly`), Official designation (`CommsAdmin`+MFA), audited emergency ownership transfer, idempotent HR department sync (`M5.0`–`M5.4`), and unified channel/file authorization |
 | `src/Nexus.Web/Modules/Messaging/MessagingEntities.cs` & `MessagingEndpoints.cs` | `messages`, `conversation_events`, single-transaction `seq`/`change_seq` allocation, `client_msg_id` idempotency/`409` (`M2.3`), cursor history + `/changes` (`410 Gone` trigger) + `/api/sync/reconcile` (`M2.5`), monotonic `GREATEST(last_read_seq)` (`M2.7`) |
 | `src/Nexus.Web/Modules/Messaging/CommunityFeedEntities.cs` & `CommunityFeedEndpoints.cs` | `channel_posts`, `post_comments`, `post_reactions`, `announcement_acknowledgments`, `polls`, `poll_votes`; pinned-first feed, announcements + CSV ack export + audited reminders (`M5.3`), comments/reactions/pinning (`M5.5`), and transactional poll voting (`M5.6`) |
-| `src/Nexus.Web/Modules/Messaging/MessagingHub.cs`, `MessagingFanoutService.cs` & `PresenceAndTypingTracker.cs` | SignalR `/hubs/messaging` strictly scoped to `user:{id}` groups (`M2.4`, `SEC-07`), DB-resolved fanout (`ConversationChanged`, `ReadStateUpdated`), and in-memory presence + 2s throttled `TypingIndicator` (`M2.10`) |
+| `src/Nexus.Web/Modules/Messaging/MessagingHub.cs`, `MessagingFanoutService.cs` & `PresenceAndTypingTracker.cs` | SignalR `/hubs/personal/messaging` (single-window default, subscribes to `scope:{Guid.Empty}:user:{id}` + every active `scope:{orgId}:user:{id}`, supports `RefreshOrganizationSubscriptions()`) and `/hubs/organizations/{orgId}/messaging`, batched `Clients.Groups(...)` fanout with direct `message`/`delta` payloads (`ConversationChanged`, `ReadStateUpdated`, `CommunityFeedChanged`, `OrganizationAccessRevoked`), and in-memory presence + 2s throttled `TypingIndicator` (`M2.10`) |
 | `src/Nexus.Web/Modules/Files/AttachmentEntity.cs`, `FilePolicyOptions.cs`, `FileContentInspector.cs`, `ClamAvFileScanner.cs`, `OrphanAttachmentCleanupService.cs` & `FilesEndpoints.cs` | Two-stage attachments (`client_upload_id`), magic-byte allowlist & SkiaSharp EXIF strip + thumbnail (`UX-08`), ClamAV `zINSTREAM` fail-closed scanner, authorized downloads (`SEC-04`/`SEC-11`), `<= 60s` signed URLs, Files tab, quotas & orphan cleanup (`M3.1`–`M3.6`) |
 | `src/Nexus.Web/Modules/Admin/AuditLogEntity.cs` | Append-only `audit_logs` entity (`M1.6` / `M7.1`) |
 | `src/Nexus.Web/Modules/Identity/NexusUser.cs` | `NexusUser : IdentityUser<Guid>` + `AdminPasswordResetLinkEntity` (`M1.2` / `M1.5`) |
@@ -105,10 +105,11 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `scripts/audit/Test-SecurityGuardrails.ps1` | Static security guardrails rejecting `AllowAnyOrigin`, disabled TLS validation, client storage secrets, and Supabase port `6543` |
 | `.github/workflows/ci.yml` | CI workflow running build/test, Roslyn analyzers, `dotnet list package --vulnerable`, `npm audit`, Gitleaks, Trivy, and audit scripts |
 | `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` and `/hubs` (`ws: true`) to `http://127.0.0.1:5080` |
-| `src/Nexus.Client/src/ui/` | Nexus Design System: `tokens.css` (Ocean Blue Light/Dark), `components.css`, `Button`, `Badge`/`TrustBadge`, `Avatar`, `Modal` (Radix Dialog), `ToastBar`, `Card`/`Field`/`EmptyState` |
-| `src/Nexus.Client/src/main.tsx`, `chat.tsx`, `communities.tsx`, `offlineQueue.ts` & `markdown.ts` | React SPA (Auth, People Directory, Security, Realtime Chat with IndexedDB offline queue & Image Lightbox, Teams-style Communities/Channels/Announcements/Polls, SignalR reconnect with jitter, `/api/version` reload, `New messages` divider, XSS-safe Markdown) |
-| `scripts/audit/Test-UiDesignCompliance.ps1` | Automated UI design system audit enforcing token-only CSS, `Nexus` branding, `SEC-10` HTML safety, icon button a11y, and `TrustBadge` usage |
+| `src/Nexus.Client/src/ui/` | Nexus Design System: `tokens.css` (Ocean Blue Light/Dark), `components.css`, `Button`, `Badge`, `Avatar`, `Modal` (Radix Dialog), `ToastBar`, `Card`/`Field`/`EmptyState` |
+| `src/Nexus.Client/src/main.tsx`, `scope.ts`, `organizationControls.tsx`, `chat.tsx`, `communities.tsx`, `offlineQueue.ts` & `markdown.ts` | Single-window React SPA (Auth, keepalive Unified Personal Chat with `All`/`Direct`/`Groups` filters + IndexedDB offline queue + Image Lightbox, multi-workspace Communities grouped by collapsible Workspace headers with `Shared Community`/`Private Community` visibility + inline Workspace modals, instant `Contacts`/Workspace People filters, Profile & Security, SignalR reconnect with jitter, `/api/version` reload, optimistic dimmed `pending` UI, XSS-safe Markdown) |
+| `scripts/audit/Test-UiDesignCompliance.ps1` | Automated UI design system audit enforcing token-only CSS, `Nexus` branding, `SEC-10` HTML safety, icon button a11y, and plain-English copy (`UI-COPY-NO-COLLEAGUE`) |
 | `src/Nexus.Client/tests/markdown.test.mjs` | Node built-in unit tests verifying `SEC-10` XSS/URL sanitization and safe Markdown subset (`M2.9`) |
+| `tests/Nexus.IntegrationTests/ChatScopeTests.cs` | Testcontainers PostgreSQL 17 tests verifying Personal consent, unified Personal DM for shared-workspace members, DM history persistence after Workspace revocation, multi-Organization isolation, and `OrganizationAccessRevoked` SignalR notifications (`P0-D14`) |
 | `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
 | `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
