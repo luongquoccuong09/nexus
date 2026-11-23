@@ -35,6 +35,16 @@ export interface ConversationListItem {
   } | null;
 }
 
+function applyReadState(conversation: ConversationListItem, lastReadSeq: number): ConversationListItem {
+  if (lastReadSeq <= conversation.lastReadSeq) return conversation;
+
+  return {
+    ...conversation,
+    lastReadSeq,
+    unreadCount: Math.max(0, Math.min(conversation.unreadCount, conversation.nextSeq - lastReadSeq))
+  };
+}
+
 export interface AttachmentItem {
   id: string;
   conversationId: string;
@@ -106,6 +116,7 @@ interface ChatWorkspaceProps {
   onOpenDirectory: () => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
+  onCommunityFeedChanged: (conversationId?: string) => void;
   onVersionStale: () => void;
 }
 
@@ -143,6 +154,7 @@ export function ChatWorkspace({
   onOpenDirectory,
   onConnectionStateChange,
   onUnreadTotalChange,
+  onCommunityFeedChanged,
   onVersionStale
 }: ChatWorkspaceProps) {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
@@ -196,7 +208,32 @@ export function ChatWorkspace({
   const syncDeltaRef = useRef<(convId: string) => Promise<void>>(async () => {});
   const reconcileRef = useRef<() => Promise<void>>(async () => {});
   const connStateCbRef = useRef(onConnectionStateChange);
+  const communityFeedCbRef = useRef(onCommunityFeedChanged);
+  const conversationRefreshRef = useRef({ timer: null as number | null, queued: false });
+  const conversationListRequest = useRef(0);
+  const deltaRequests = useRef(new Map<string, { queued: boolean; full: boolean; promise: Promise<void> }>());
   connStateCbRef.current = onConnectionStateChange;
+  communityFeedCbRef.current = onCommunityFeedChanged;
+
+  const scheduleConversationRefresh = useCallback(function scheduleConversationRefresh() {
+    const refresh = conversationRefreshRef.current;
+    if (refresh.timer !== null) {
+      refresh.queued = true;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      refresh.queued = false;
+      void loadConversationsRef.current().catch(() => {
+        // The reconnect or visibility check will retry a failed background refresh.
+      }).finally(() => {
+        if (refresh.timer !== timer) return;
+        refresh.timer = null;
+        if (refresh.queued) scheduleConversationRefresh();
+      });
+    }, 120);
+    refresh.timer = timer;
+  }, []);
 
   const checkApiVersion = useCallback(async () => {
     if (!initialVersion) return;
@@ -214,17 +251,26 @@ export function ChatWorkspace({
   }, [initialVersion, onVersionStale]);
 
   const loadConversations = useCallback(async () => {
+    const requestId = ++conversationListRequest.current;
     const res = await fetch('/api/conversations?limit=50', { credentials: 'same-origin' });
     if (res.ok) {
       const data = await res.json();
+      if (requestId !== conversationListRequest.current) return;
+
       const items: ConversationListItem[] = data.items ?? [];
-      setConversations(items);
-      onUnreadTotalChange(items.reduce((sum, c) => sum + (c.unreadCount || 0), 0));
+      setConversations(previous => {
+        const readByConversation = new Map(previous.map(item => [item.id, item.lastReadSeq]));
+        return items.map(item => applyReadState(item, readByConversation.get(item.id) ?? 0));
+      });
       if (!activeConvRef.current && items.length > 0 && window.innerWidth > 860) {
         onSelectConversation(items[0].id);
       }
     }
-  }, [onSelectConversation, onUnreadTotalChange]);
+  }, [onSelectConversation]);
+
+  useEffect(() => {
+    onUnreadTotalChange(conversations.reduce((sum, item) => sum + item.unreadCount, 0));
+  }, [conversations, onUnreadTotalChange]);
 
   const markRead = useCallback(async (convId: string, seq: number) => {
     if (seq <= 0) return;
@@ -242,6 +288,8 @@ export function ChatWorkspace({
     const data = await res.json();
     const serverItems: ChatMessageItem[] = data.items ?? [];
     const queued = (await listQueuedMessages()).filter(q => q.conversationId === convId);
+    if (activeConvRef.current !== convId) return;
+
     const seen = new Set(serverItems.map(m => m.clientMsgId));
     const optimistic: ChatMessageItem[] = queued
       .filter(q => !seen.has(q.clientMsgId))
@@ -278,8 +326,9 @@ export function ChatWorkspace({
       `/api/conversations/${selectedConversationId}/messages?beforeSeq=${nextBeforeSeq}&limit=50`,
       { credentials: 'same-origin' }
     );
-    if (!res.ok) return;
+    if (!res.ok || activeConvRef.current !== selectedConversationId) return;
     const data = await res.json();
+    if (activeConvRef.current !== selectedConversationId) return;
     const older: ChatMessageItem[] = data.items ?? [];
     setHasMoreOlder(Boolean(data.hasMore));
     setNextBeforeSeq(typeof data.nextBeforeSeq === 'number' ? data.nextBeforeSeq : null);
@@ -360,53 +409,81 @@ export function ChatWorkspace({
   }, [selectedConversationId]);
 
   const syncConversationDelta = useCallback(async (convId: string) => {
-    const cursor = await getConversationCursor(convId);
+    let cursor = await getConversationCursor(convId);
+    if (activeConvRef.current !== convId) return;
     if (cursor <= 0) {
       await loadMessagesFull(convId);
       return;
     }
 
-    const res = await fetch(`/api/conversations/${convId}/changes?after=${cursor}&limit=50`, { credentials: 'same-origin' });
-    if (res.status === 410) {
-      await loadMessagesFull(convId);
-      return;
-    }
-    if (!res.ok) return;
+    let readThrough = 0;
+    try {
+      while (activeConvRef.current === convId) {
+        const res = await fetch(`/api/conversations/${convId}/changes?after=${cursor}&limit=50`, { credentials: 'same-origin' });
+        if (activeConvRef.current !== convId) return;
+        if (res.status === 410) {
+          await loadMessagesFull(convId);
+          return;
+        }
+        if (!res.ok) return;
 
-    const data = await res.json();
-    const events: Array<{ changeSeq: number; eventType: string; payload: ChatMessageItem }> = data.items ?? [];
-    if (events.length === 0) return;
+        const data = await res.json();
+        if (activeConvRef.current !== convId) return;
+        const events: Array<{ changeSeq: number; eventType: string; payload: ChatMessageItem }> = data.items ?? [];
+        if (events[0] && events[0].changeSeq > cursor + 1) {
+          await loadMessagesFull(convId);
+          return;
+        }
 
-    if (events[0].changeSeq > cursor + 1) {
-      await loadMessagesFull(convId);
-      return;
-    }
+        const added = events
+          .filter(event => event.changeSeq > cursor && event.eventType === 'message.created' && event.payload)
+          .map(event => event.payload);
+        if (added.length > 0) {
+          setMessages(prev => {
+            const byClientId = new Map(prev.map(message => [message.clientMsgId, message]));
+            for (const message of added) byClientId.set(message.clientMsgId, message);
+            return [...byClientId.values()].sort((a, b) => a.seq - b.seq);
+          });
+          readThrough = Math.max(readThrough, ...added.map(message => message.seq));
+          requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+        }
 
-    const added: ChatMessageItem[] = [];
-    let maxChangeSeq = cursor;
-    for (const ev of events) {
-      if (ev.changeSeq <= maxChangeSeq) continue;
-      maxChangeSeq = ev.changeSeq;
-      if (ev.eventType === 'message.created' && ev.payload) {
-        added.push(ev.payload);
+        const lastEventSeq = events.at(-1)?.changeSeq ?? cursor;
+        const nextCursor = Math.max(lastEventSeq, typeof data.nextAfter === 'number' ? data.nextAfter : cursor);
+        if (nextCursor <= cursor) return;
+        await setConversationCursor(convId, nextCursor);
+        cursor = nextCursor;
+        if (!data.hasMore) return;
+      }
+    } finally {
+      if (readThrough > 0 && activeConvRef.current === convId) {
+        void markRead(convId, readThrough).catch(() => {
+          // Reading the conversation again will reconcile the read cursor.
+        });
       }
     }
+  }, [loadMessagesFull, markRead]);
 
-    if (added.length > 0) {
-      setMessages(prev => {
-        const byClientId = new Map<string, ChatMessageItem>();
-        for (const m of prev) byClientId.set(m.clientMsgId, m);
-        for (const m of added) byClientId.set(m.clientMsgId, m);
-        return [...byClientId.values()].sort((a, b) => a.seq - b.seq);
-      });
-      const maxSeq = added[added.length - 1].seq;
-      await markRead(convId, maxSeq);
-      requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+  const requestConversationDelta = useCallback((convId: string, full = false) => {
+    const existing = deltaRequests.current.get(convId);
+    if (existing) {
+      existing.queued = true;
+      existing.full ||= full;
+      return existing.promise;
     }
 
-    const nextCursor = typeof data.nextAfter === 'number' ? Math.max(maxChangeSeq, data.nextAfter) : maxChangeSeq;
-    await setConversationCursor(convId, nextCursor);
-  }, [loadMessagesFull, markRead]);
+    const request = { queued: false, full, promise: Promise.resolve() };
+    deltaRequests.current.set(convId, request);
+    request.promise = (async () => {
+      do {
+        const load = request.full ? loadMessagesFull : syncConversationDelta;
+        request.queued = false;
+        request.full = false;
+        await load(convId);
+      } while (request.queued && activeConvRef.current === convId);
+    })().finally(() => deltaRequests.current.delete(convId));
+    return request.promise;
+  }, [loadMessagesFull, syncConversationDelta]);
 
   const flushOfflineQueue = useCallback(async () => {
     const queued = await listQueuedMessages();
@@ -432,12 +509,12 @@ export function ChatWorkspace({
     await flushOfflineQueue();
     await loadConversations();
     if (activeConvRef.current) {
-      await syncConversationDelta(activeConvRef.current);
+      await requestConversationDelta(activeConvRef.current);
     }
-  }, [checkApiVersion, flushOfflineQueue, loadConversations, syncConversationDelta]);
+  }, [checkApiVersion, flushOfflineQueue, loadConversations, requestConversationDelta]);
 
   loadConversationsRef.current = loadConversations;
-  syncDeltaRef.current = syncConversationDelta;
+  syncDeltaRef.current = requestConversationDelta;
   reconcileRef.current = reconcileAll;
 
   useEffect(() => {
@@ -455,12 +532,16 @@ export function ChatWorkspace({
     setQuota(null);
     setTypingText('');
     setError('');
+    setMessages([]);
+    setHasMoreOlder(false);
+    setNextBeforeSeq(null);
+    setLastReadSnapshot(0);
     if (selectedConversationId) {
-      void loadMessagesFull(selectedConversationId);
-    } else {
-      setMessages([]);
+      void requestConversationDelta(selectedConversationId, true).catch(() => {
+        if (activeConvRef.current === selectedConversationId) setError('Unable to load messages.');
+      });
     }
-  }, [selectedConversationId, loadMessagesFull]);
+  }, [selectedConversationId, requestConversationDelta]);
 
   useEffect(() => {
     let disposed = false;
@@ -472,14 +553,23 @@ export function ChatWorkspace({
       .build();
 
     connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number }) => {
-      void loadConversationsRef.current();
       if (evt.conversationId === activeConvRef.current) {
-        void syncDeltaRef.current(evt.conversationId);
+        void syncDeltaRef.current(evt.conversationId)
+          .catch(() => {})
+          .finally(() => { if (!disposed) scheduleConversationRefresh(); });
+      } else {
+        scheduleConversationRefresh();
       }
     });
 
-    connection.on('ReadStateUpdated', () => {
-      void loadConversationsRef.current();
+    connection.on('ReadStateUpdated', (evt: { conversationId: string; lastReadSeq: number }) => {
+      setConversations(previous => previous.map(item =>
+        item.id === evt.conversationId ? applyReadState(item, evt.lastReadSeq) : item
+      ));
+    });
+
+    connection.on('CommunityFeedChanged', (evt: { conversationId: string }) => {
+      communityFeedCbRef.current(evt.conversationId);
     });
 
     connection.on('TypingIndicator', (evt: { conversationId: string; displayName: string }) => {
@@ -496,6 +586,7 @@ export function ChatWorkspace({
     connection.onreconnected(() => {
       if (!disposed) {
         connStateCbRef.current('connected');
+        communityFeedCbRef.current();
         void reconcileRef.current();
       }
     });
@@ -515,6 +606,7 @@ export function ChatWorkspace({
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
+        communityFeedCbRef.current();
         void reconcileRef.current();
       }
     };
@@ -524,9 +616,13 @@ export function ChatWorkspace({
       disposed = true;
       document.removeEventListener('visibilitychange', onVisible);
       if (typingTimerRef.current) window.clearTimeout(typingTimerRef.current);
+      const refresh = conversationRefreshRef.current;
+      if (refresh.timer !== null) window.clearTimeout(refresh.timer);
+      refresh.timer = null;
+      refresh.queued = false;
       void connection.stop();
     };
-  }, []);
+  }, [scheduleConversationRefresh]);
 
   async function sendCurrentMessage() {
     if (!selectedConversationId) return;
@@ -583,7 +679,7 @@ export function ChatWorkspace({
         const saved: ChatMessageItem = await res.json();
         await dequeueOfflineMessage(clientMsgId);
         setMessages(prev => prev.map(m => (m.clientMsgId === clientMsgId ? saved : m)));
-        await loadConversations();
+        scheduleConversationRefresh();
         if (rightDrawer === 'files' && attached.length > 0) {
           void loadConversationFiles(selectedConversationId);
         }

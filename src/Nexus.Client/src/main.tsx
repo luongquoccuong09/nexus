@@ -88,6 +88,7 @@ function App() {
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>('chat');
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const communityFeedListenerRef = useRef<((conversationId?: string) => void) | null>(null);
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nexus-theme') === 'dark');
@@ -794,6 +795,7 @@ function App() {
               onOpenDirectory={handleOpenDirectoryFromChat}
               onConnectionStateChange={setConnState}
               onUnreadTotalChange={setUnreadTotal}
+              onCommunityFeedChanged={conversationId => communityFeedListenerRef.current?.(conversationId)}
               onVersionStale={handleVersionStale}
             />
           </div>
@@ -805,6 +807,7 @@ function App() {
               currentIsUnverified={user.isUnverified}
               directoryUsers={directory}
               departments={departments}
+              feedListenerRef={communityFeedListenerRef}
             />
           )}
 

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BarChart2,
@@ -59,6 +59,12 @@ interface PostCommentDto {
 interface PostReactionDto {
   emoji: string;
   count: number;
+  reactedByMe: boolean;
+}
+
+interface ReactionChange {
+  postId: string;
+  emoji: string;
   reactedByMe: boolean;
 }
 
@@ -130,9 +136,22 @@ interface CommunitiesWorkspaceProps {
   currentIsUnverified: boolean;
   directoryUsers: DirectoryUserLite[];
   departments: DepartmentLite[];
+  feedListenerRef: RefObject<((conversationId?: string) => void) | null>;
 }
 
 const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
+
+function applyReaction(post: ChannelPostDto, change: ReactionChange): ChannelPostDto {
+  const existing = post.reactions.find(reaction => reaction.emoji === change.emoji);
+  if (Boolean(existing?.reactedByMe) === change.reactedByMe) return post;
+
+  const reactions = post.reactions.filter(reaction => reaction.emoji !== change.emoji);
+  const count = Math.max(0, (existing?.count ?? 0) + (change.reactedByMe ? 1 : -1));
+  if (count > 0) {
+    reactions.push({ emoji: change.emoji, count, reactedByMe: change.reactedByMe });
+  }
+  return { ...post, reactions };
+}
 
 function formatPostTime(iso: string): string {
   try {
@@ -152,7 +171,8 @@ export function CommunitiesWorkspace({
   currentOrgRole,
   currentIsUnverified,
   directoryUsers,
-  departments
+  departments,
+  feedListenerRef
 }: CommunitiesWorkspaceProps) {
   const [communities, setCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverCommunities, setDiscoverCommunities] = useState<CommunityItemDto[]>([]);
@@ -161,8 +181,18 @@ export function CommunitiesWorkspace({
 
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const activeFeedRef = useRef(selectedConversationId);
+  activeFeedRef.current = selectedConversationId;
 
   const [posts, setPosts] = useState<ChannelPostDto[]>([]);
+  const [pendingReactions, setPendingReactions] = useState<Record<string, ReactionChange>>({});
+  const reactionRequests = useRef(new Set<string>());
+  const feedRequestRef = useRef<{
+    conversationId: string;
+    controller: AbortController;
+    refreshQueued: boolean;
+    confirmedReactions: ReactionChange[];
+  } | null>(null);
   const [canPost, setCanPost] = useState(false);
   const [canManage, setCanManage] = useState(false);
   const [loadingPosts, setLoadingPosts] = useState(false);
@@ -236,21 +266,55 @@ export function CommunitiesWorkspace({
     }
   }, []);
 
-  const loadPosts = useCallback(async (conversationId: string) => {
-    setLoadingPosts(true);
+  const loadPosts = useCallback(async function loadPosts(conversationId: string, background = false) {
+    if (activeFeedRef.current !== conversationId) return;
+
+    const previous = feedRequestRef.current;
+    if (background && previous?.conversationId === conversationId) {
+      previous.refreshQueued = true;
+      return;
+    }
+
+    previous?.controller.abort();
+    const request = { conversationId, controller: new AbortController(), refreshQueued: false, confirmedReactions: [] as ReactionChange[] };
+    feedRequestRef.current = request;
+    if (!background) setLoadingPosts(true);
+
     try {
-      const res = await fetch(`/api/channels/${conversationId}/posts?limit=50`, { credentials: 'same-origin' });
+      const res = await fetch(`/api/channels/${conversationId}/posts?limit=50`, {
+        credentials: 'same-origin',
+        signal: request.controller.signal
+      });
+      const data = await res.json().catch(() => ({}));
+      if (request.controller.signal.aborted || activeFeedRef.current !== conversationId) return;
+
       if (res.ok) {
-        const data = await res.json();
-        setPosts(data.items ?? []);
+        const items: ChannelPostDto[] = data.items ?? [];
+        // A fetch started before the reaction was saved can contain an older reaction count.
+        setPosts(items.map(post => request.confirmedReactions.reduce(
+          (current, change) => change.postId === current.id ? applyReaction(current, change) : current,
+          post
+        )));
         setCanPost(Boolean(data.canPost));
         setCanManage(Boolean(data.canManage));
       } else {
-        const err = await res.json().catch(() => ({}));
-        setError(err.message || 'Unable to load posts.');
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          setPosts([]);
+          setCanPost(false);
+          setCanManage(false);
+        }
+        setError(data.message || 'Unable to load posts.');
+      }
+    } catch {
+      if (!request.controller.signal.aborted && activeFeedRef.current === conversationId) {
+        setError('Unable to load posts.');
       }
     } finally {
-      setLoadingPosts(false);
+      if (feedRequestRef.current === request) {
+        feedRequestRef.current = null;
+        setLoadingPosts(false);
+        if (request.refreshQueued) void loadPosts(conversationId, true);
+      }
     }
   }, []);
 
@@ -285,14 +349,28 @@ export function CommunitiesWorkspace({
   }, [discoverMode, loadDiscover]);
 
   useEffect(() => {
+    setPosts([]);
+    setCanPost(false);
+    setCanManage(false);
     if (selectedConversationId) {
       void loadPosts(selectedConversationId);
-    } else {
-      setPosts([]);
-      setCanPost(false);
-      setCanManage(false);
     }
+
+    return () => {
+      feedRequestRef.current?.controller.abort();
+      feedRequestRef.current = null;
+    };
   }, [selectedConversationId, loadPosts]);
+
+  useEffect(() => {
+    feedListenerRef.current = (changedConversationId) => {
+      const activeConversationId = activeFeedRef.current;
+      if (activeConversationId && (!changedConversationId || changedConversationId === activeConversationId)) {
+        void loadPosts(activeConversationId, true);
+      }
+    };
+    return () => { feedListenerRef.current = null; };
+  }, [feedListenerRef, loadPosts]);
 
   useEffect(() => {
     if (selectedCommunity) {
@@ -493,14 +571,34 @@ export function CommunitiesWorkspace({
   }
 
   async function handleToggleReaction(post: ChannelPostDto, emoji: string) {
-    const existing = post.reactions.find(r => r.emoji === emoji);
-    const method = existing?.reactedByMe ? 'DELETE' : 'PUT';
-    const res = await fetch(`/api/posts/${post.id}/reactions/${encodeURIComponent(emoji)}`, {
-      method,
-      credentials: 'same-origin'
-    });
-    if (res.ok && selectedConversationId) {
-      await loadPosts(selectedConversationId);
+    const key = `${post.id}:${emoji}`;
+    if (reactionRequests.current.has(key)) return;
+
+    const reactedByMe = !post.reactions.find(reaction => reaction.emoji === emoji)?.reactedByMe;
+    const change = { postId: post.id, emoji, reactedByMe };
+    reactionRequests.current.add(key);
+    setPendingReactions(previous => ({ ...previous, [key]: change }));
+    setError('');
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/reactions/${encodeURIComponent(emoji)}`, {
+        method: reactedByMe ? 'PUT' : 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (!res.ok) throw new Error('Reaction request failed');
+
+      const request = feedRequestRef.current;
+      if (request?.conversationId === post.conversationId) request.confirmedReactions.push(change);
+      setPosts(previous => previous.map(item => item.id === post.id ? applyReaction(item, change) : item));
+    } catch {
+      if (activeFeedRef.current === post.conversationId) setError('Unable to update reaction. Try again.');
+    } finally {
+      reactionRequests.current.delete(key);
+      setPendingReactions(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
     }
   }
 
@@ -1226,7 +1324,10 @@ export function CommunitiesWorkspace({
                         <div className="nx-post-actions">
                           <div className="nx-reactions-row">
                             {QUICK_REACTIONS.map(emoji => {
-                              const r = reactionMap.get(emoji);
+                              const pending = pendingReactions[`${post.id}:${emoji}`];
+                              const r = pending
+                                ? applyReaction(post, pending).reactions.find(reaction => reaction.emoji === emoji)
+                                : reactionMap.get(emoji);
                               return (
                                 <button
                                   type="button"
@@ -1234,6 +1335,8 @@ export function CommunitiesWorkspace({
                                   className={`nx-react-pill ${r?.reactedByMe ? 'active' : ''}`}
                                   onClick={() => void handleToggleReaction(post, emoji)}
                                   aria-label={`React with ${emoji}`}
+                                  aria-pressed={Boolean(r?.reactedByMe)}
+                                  aria-disabled={Boolean(pending)}
                                 >
                                   <span>{emoji}</span>
                                   {r && r.count > 0 && <span>{r.count}</span>}

@@ -44,3 +44,24 @@ Before deploying M5 to Render (`main`), apply the new `M5CommunitiesAndAnnouncem
 ```powershell
 pwsh -File .\scripts\deploy\Invoke-SupabaseMigrate.ps1 -MigrateOnly
 ```
+
+## Realtime responsiveness follow-up (2026-11-23)
+
+- Community reactions display the requested state immediately, keep one request in flight per post and emoji, and restore the prior state on failure. Successful reactions update the post locally without reloading the feed. A refresh already in flight preserves confirmed reaction changes.
+- The existing authenticated messaging connection now forwards `CommunityFeedChanged` to the open Community feed. The active feed refreshes in the background on matching events and after reconnect. Switching feeds cancels the previous feed request.
+- Chat prioritizes active-conversation deltas and serializes them by conversation. A burst shares sidebar requests, and `ReadStateUpdated` updates local unread counts from the newer read cursor. `Server-Timing` on newly created messages reports `message_commit` from handler entry through commit and `message_fanout` from commit through the SignalR send.
+
+Verification commands from the repository root:
+
+```powershell
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The full verification script passed, including 120 PostgreSQL integration tests, 3 client tests, the production client build, and the Desktop build. The realtime integration test verifies both timing fields on a successful message write.
+
+Two browser sessions used disposable PostgreSQL 17, the normal ASP.NET Core API, and Vite on loopback. Five final DM sends appeared once on the other account without a page reload. Browser-runner click-to-visible time was 308–945 ms with a median of 312 ms. Three additional sends in quick succession all appeared. Three local HTTP timing samples reported 17.6–20.2 ms through commit and 2.2–4.7 ms for fanout. Community posts appeared in the other member’s open feed without manual refresh.
+
+The reaction test held a lock on the fixture reaction table. The reaction showed as pressed while its API request was pending, remained pressed after success, and could be removed. A fixture-only check constraint then caused a reaction write to fail. The interface restored the unpressed state, displayed an error, and allowed retry.
+
+These measurements cover the local fixture. Repeat them on the deployed build with two test accounts and confirm the Render and Supabase runtime regions for the production latency baseline. The `M8.2` load test remains open.

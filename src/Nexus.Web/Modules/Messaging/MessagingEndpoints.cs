@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -61,6 +62,7 @@ public static class MessagingEndpoints
         IOptions<FilePolicyOptions> filePolicy,
         CancellationToken ct)
     {
+        var requestStarted = Stopwatch.GetTimestamp();
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
         var actor = await userManager.FindByIdAsync(actorId.ToString());
         if (actor is null) return Results.Unauthorized();
@@ -252,7 +254,11 @@ public static class MessagingEndpoints
         }
 
         // Fan out lightweight (conversationId, changeSeq) signal to user:{id} groups after commit (M2.4).
+        var committedAt = Stopwatch.GetTimestamp();
         await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, ct);
+        var commitMs = Stopwatch.GetElapsedTime(requestStarted, committedAt).TotalMilliseconds;
+        var fanoutMs = Stopwatch.GetElapsedTime(committedAt).TotalMilliseconds;
+        ctx.Response.Headers.Append("Server-Timing", FormattableString.Invariant($"message_commit;dur={commitMs:F1}, message_fanout;dur={fanoutMs:F1}"));
 
         return Results.Created($"/api/conversations/{conversationId}/messages/{message.Id}", dto);
     }

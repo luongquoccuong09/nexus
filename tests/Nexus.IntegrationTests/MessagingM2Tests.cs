@@ -145,6 +145,9 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
             body = "Hello Bob from Alice!"
         });
         Assert.Equal(HttpStatusCode.Created, sendResp.StatusCode);
+        var timings = Assert.Single(sendResp.Headers.GetValues("Server-Timing"));
+        Assert.Contains("message_commit;dur=", timings, StringComparison.Ordinal);
+        Assert.Contains("message_fanout;dur=", timings, StringComparison.Ordinal);
         var sentDoc = JsonDocument.Parse(await sendResp.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal(1L, sentDoc.GetProperty("seq").GetInt64());
 
