@@ -1,0 +1,323 @@
+/* ==========================================================================
+   NEXUS DESIGN SYSTEM — PRIMITIVE COMPONENT STYLES
+   All colors, spacing, radii, and typography come strictly from tokens.css.
+   ========================================================================== */
+
+/* Brand Emblem */
+.nx-brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--logo-start) 0%, var(--logo-end) 100%);
+  color: var(--text-on-brand);
+  font-weight: 800;
+  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  flex-shrink: 0;
+}
+
+.nx-brand-mark.sm {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 16px;
+}
+
+/* Buttons */
+.nx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 7px 13px;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+}
+
+.nx-btn:hover { background: var(--bg-hover); }
+.nx-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.nx-btn.sm { padding: 5px 10px; font-size: 12px; }
+.nx-btn.icon-only { padding: 7px; width: 34px; height: 34px; }
+.nx-btn.full { width: 100%; }
+
+.nx-btn.primary {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+  color: var(--text-on-brand);
+}
+.nx-btn.primary:hover { background: var(--brand-700); border-color: var(--brand-700); }
+
+.nx-btn.ghost {
+  border-color: transparent;
+  background: transparent;
+}
+.nx-btn.ghost:hover { background: var(--bg-hover); }
+
+.nx-btn.danger {
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: transparent;
+}
+.nx-btn.danger:hover { background: var(--danger-bg); }
+
+/* Badges */
+.nx-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.nx-badge.unverified { background: var(--warning-bg); color: var(--warning); }
+.nx-badge.verified { background: var(--success-bg); color: var(--success); }
+.nx-badge.role { background: var(--brand-100); color: var(--badge-role-text); }
+
+.nx-user-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Avatars & Presence Dots */
+.nx-avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.nx-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: linear-gradient(135deg, var(--brand-600), var(--brand-500));
+  color: var(--text-on-brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.nx-avatar.sm { width: 32px; height: 32px; font-size: 12px; }
+.nx-avatar.lg { width: 52px; height: 52px; font-size: 18px; }
+.nx-avatar.group {
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--group-start), var(--group-end));
+}
+
+.nx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.nx-dot.online, .nx-dot.connected { background: var(--dot-online); }
+.nx-dot.reconnecting { background: var(--dot-reconnecting); }
+.nx-dot.offline { background: var(--dot-offline); }
+
+.nx-avatar-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-sidebar);
+}
+.nx-avatar-dot.on-rail { border-color: var(--brand-950); }
+
+/* Form fields */
+.nx-field {
+  margin-bottom: 14px;
+}
+.nx-field.compact { margin-bottom: 0; }
+
+.nx-field label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+}
+
+.nx-field input[type="text"],
+.nx-field input[type="password"],
+.nx-field select,
+.nx-field textarea,
+.nx-select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+.nx-field input:focus,
+.nx-field select:focus,
+.nx-field textarea:focus,
+.nx-select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Search input with leading icon */
+.nx-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.nx-search-input-wrap svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.nx-search-input-wrap input {
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.nx-search-input-wrap input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Cards & Rows */
+.nx-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5) 22px;
+  box-shadow: var(--shadow-sm);
+}
+
+.nx-card h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.nx-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.nx-row:last-child { border-bottom: 0; }
+
+/* Toasts / Inline Status Bars */
+.nx-toast-bar {
+  padding: 8px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.nx-toast-bar.rounded { border-radius: 10px; margin-bottom: 16px; }
+.nx-toast-bar.error { background: var(--danger-bg); color: var(--danger); border-bottom: 1px solid var(--danger-border); }
+.nx-toast-bar.ok { background: var(--success-bg); color: var(--success); border-bottom: 1px solid var(--success-border); }
+.nx-toast-bar.info { background: var(--brand-50); color: var(--brand-700); border-bottom: 1px solid var(--border); }
+
+.nx-toast-bar button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 2px 6px;
+}
+
+/* Radix Dialog Modal */
+.nx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  z-index: 100;
+}
+
+.nx-modal-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100vw - 32px);
+  max-width: 460px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 101;
+}
+
+.nx-modal-content:focus { outline: none; }
+
+.nx-modal-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nx-modal-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.nx-modal-body {
+  padding: 18px 20px;
+  max-height: 70dvh;
+  overflow-y: auto;
+}
+
+.nx-modal-foot {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Text helpers */
+.nx-muted { color: var(--text-muted); font-size: 12.5px; }
+.nx-error { color: var(--danger); font-size: 13px; margin: 8px 0; font-weight: 600; }
+.nx-ok { color: var(--success); font-size: 13px; margin: 8px 0; font-weight: 600; }
+.nx-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }

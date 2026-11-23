@@ -23,13 +23,24 @@ $ErrorActionPreference = 'Stop'
 $ws = Get-NexusWorkspaceLayout -StartPath $PSScriptRoot
 Add-DockerDesktopToPath
 
-Write-NexusStepStatus 'RUN' 'Security guardrails audit'
-& (Join-Path $ws.ScriptRoot 'audit\Test-SecurityGuardrails.ps1')
-Write-NexusStepStatus 'PASS' 'Security guardrails audit'
+function Invoke-AuditScript {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$ScriptArgs = @()
+    )
+    Write-NexusStepStatus 'RUN' $Label
+    $global:LASTEXITCODE = 0
+    & $ScriptPath @ScriptArgs
+    if ($global:LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $global:LASTEXITCODE."
+    }
+    Write-NexusStepStatus 'PASS' $Label
+}
 
-Write-NexusStepStatus 'RUN' 'Knowledge index check'
-& (Join-Path $ws.ScriptRoot 'audit\Build-KnowledgeIndex.ps1') -Check
-Write-NexusStepStatus 'PASS' 'Knowledge index check'
+Invoke-AuditScript 'Security guardrails audit' (Join-Path $ws.ScriptRoot 'audit\Test-SecurityGuardrails.ps1')
+Invoke-AuditScript 'UI design system compliance audit' (Join-Path $ws.ScriptRoot 'audit\Test-UiDesignCompliance.ps1')
+Invoke-AuditScript 'Knowledge index check' (Join-Path $ws.ScriptRoot 'audit\Build-KnowledgeIndex.ps1') @('-Check')
 
 Write-NexusStepStatus 'RUN' 'Build Nexus.slnx (Release)'
 & dotnet build $ws.SolutionPath -c Release

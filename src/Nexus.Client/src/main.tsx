@@ -1,16 +1,8 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Briefcase, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
 import { ChatWorkspace } from './chat';
-import {
-  IconBriefcase,
-  IconChat,
-  IconLogOut,
-  IconMoon,
-  IconSearch,
-  IconShield,
-  IconSun,
-  IconUsers
-} from './icons';
+import { Avatar, Badge, Button, Card, Field, ToastBar, UserNameWithBadge } from './ui';
 import './style.css';
 
 interface UserSummary {
@@ -80,45 +72,6 @@ interface HrImportReport {
     confidence: string;
     reason: string;
   }>;
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function UserNameWithBadge({ user }: { user: { displayName: string; isUnverified: boolean } }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-      <strong>{user.displayName}</strong>
-      {user.isUnverified ? (
-        <span className="nx-badge unverified" aria-label="Unverified account">Unverified</span>
-      ) : (
-        <span className="nx-badge verified" aria-label="Verified account">Verified</span>
-      )}
-    </span>
-  );
-}
-
-function AvatarThumb({
-  displayName,
-  avatarUrl,
-  cacheKey,
-  size = 'md'
-}: {
-  displayName: string;
-  avatarUrl?: string | null;
-  cacheKey?: number;
-  size?: 'sm' | 'md' | 'lg';
-}) {
-  const cls = size === 'sm' ? 'nx-avatar sm' : size === 'lg' ? 'nx-avatar lg' : 'nx-avatar';
-  if (avatarUrl) {
-    const src = cacheKey ? `${avatarUrl}?v=${cacheKey}` : avatarUrl;
-    return <img className={cls} src={src} alt={`${displayName} avatar`} />;
-  }
-  return <span className={cls} aria-hidden="true">{getInitials(displayName)}</span>;
 }
 
 function App() {
@@ -460,7 +413,7 @@ function App() {
         <section className="nx-auth-hero">
           <div className="nx-auth-brand">
             <span className="nx-brand-mark">N</span>
-            <strong style={{ fontSize: 20, letterSpacing: '-0.01em' }}>Nexus</strong>
+            <strong className="nx-auth-brand-name">Nexus</strong>
           </div>
 
           <div>
@@ -475,7 +428,7 @@ function App() {
             </ul>
           </div>
 
-          <div style={{ fontSize: 12.5, opacity: 0.72 }}>
+          <div className="nx-auth-footer">
             {policy?.confidentialityNotice ?? 'Nexus Workplace'}
             {apiVersion ? ` · v${apiVersion}` : ''}
           </div>
@@ -509,23 +462,20 @@ function App() {
 
             {authTab === 'login' ? (
               <form onSubmit={handleLogin}>
-                <div className="nx-field">
-                  <label htmlFor="login-username">Username</label>
+                <Field label="Username" htmlFor="login-username">
                   <input id="login-username" type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
-                </div>
-                <div className="nx-field">
-                  <label htmlFor="login-password">Password</label>
+                </Field>
+                <Field label="Password" htmlFor="login-password">
                   <input id="login-password" type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-                </div>
+                </Field>
                 {mfaChallenge && (
-                  <div className="nx-field">
-                    <label htmlFor="login-totp">Authenticator code</label>
+                  <Field label="Authenticator code" htmlFor="login-totp">
                     <input id="login-totp" type="text" inputMode="numeric" required value={loginTotp} onChange={e => setLoginTotp(e.target.value)} />
-                  </div>
+                  </Field>
                 )}
-                <button className="nx-btn primary" type="submit" style={{ width: '100%', padding: '10px 14px', marginTop: 4 }}>
+                <Button type="submit" variant="primary" fullWidth>
                   Sign in to Nexus
-                </button>
+                </Button>
               </form>
             ) : (
               <form onSubmit={handleRegister}>
@@ -533,33 +483,29 @@ function App() {
                   <label htmlFor="reg-website">Website</label>
                   <input id="reg-website" tabIndex={-1} autoComplete="off" value={regHoneypot} onChange={e => setRegHoneypot(e.target.value)} />
                 </div>
-                <div className="nx-field">
-                  <label htmlFor="reg-username">Username (3–32 characters)</label>
+                <Field label="Username (3–32 characters)" htmlFor="reg-username">
                   <input id="reg-username" type="text" autoComplete="username" required minLength={3} maxLength={32} value={regUsername} onChange={e => setRegUsername(e.target.value)} />
-                </div>
-                <div className="nx-field">
-                  <label htmlFor="reg-display-name">Display name</label>
+                </Field>
+                <Field label="Display name" htmlFor="reg-display-name">
                   <input id="reg-display-name" type="text" autoComplete="name" required maxLength={80} value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} />
-                </div>
-                <div className="nx-field">
-                  <label htmlFor="reg-password">Password (at least 12 characters)</label>
+                </Field>
+                <Field label="Password (at least 12 characters)" htmlFor="reg-password">
                   <input id="reg-password" type="password" autoComplete="new-password" required minLength={12} value={regPassword} onChange={e => setRegPassword(e.target.value)} />
-                </div>
+                </Field>
                 {policy?.mode === 'OpenWithJoinCode' && (
-                  <div className="nx-field">
-                    <label htmlFor="reg-join-code">Join code</label>
+                  <Field label="Join code" htmlFor="reg-join-code">
                     <input id="reg-join-code" type="text" required value={regJoinCode} onChange={e => setRegJoinCode(e.target.value)} />
-                  </div>
+                  </Field>
                 )}
                 <div className="nx-field">
-                  <label style={{ display: 'flex', gap: 8, fontWeight: 400, alignItems: 'flex-start', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} required style={{ marginTop: 3 }} />
+                  <label className="nx-terms-label">
+                    <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} required />
                     <span>I accept the trial terms ({policy?.termsVersion ?? 'trial-v1'}). New accounts start as Unverified.</span>
                   </label>
                 </div>
-                <button className="nx-btn primary" type="submit" style={{ width: '100%', padding: '10px 14px' }}>
+                <Button type="submit" variant="primary" fullWidth>
                   Create Nexus account
-                </button>
+                </Button>
               </form>
             )}
           </div>
@@ -589,7 +535,7 @@ function App() {
             onClick={() => setWorkspaceTab('chat')}
             aria-label="Chat"
           >
-            <IconChat />
+            <MessageSquare size={20} aria-hidden="true" />
             <span>Chat</span>
             {unreadTotal > 0 && (
               <span className="nx-rail-badge" aria-label={`${unreadTotal} unread messages`}>
@@ -607,7 +553,7 @@ function App() {
             }}
             aria-label="Directory"
           >
-            <IconUsers />
+            <Users size={20} aria-hidden="true" />
             <span>People</span>
           </button>
 
@@ -617,7 +563,7 @@ function App() {
             onClick={() => setWorkspaceTab('security')}
             aria-label="Profile and Security"
           >
-            <IconShield />
+            <Shield size={20} aria-hidden="true" />
             <span>Security</span>
           </button>
 
@@ -628,7 +574,7 @@ function App() {
               onClick={() => setWorkspaceTab('hr')}
               aria-label="HR Import"
             >
-              <IconBriefcase />
+              <Briefcase size={20} aria-hidden="true" />
               <span>HR</span>
             </button>
           )}
@@ -637,13 +583,12 @@ function App() {
         <div className="nx-rail-footer">
           <button
             type="button"
-            className="nx-rail-btn"
-            style={{ minHeight: 38 }}
+            className="nx-rail-btn compact"
             title={darkMode ? 'Switch to light theme' : 'Switch to dark theme'}
             aria-label={darkMode ? 'Switch to light theme' : 'Switch to dark theme'}
             onClick={() => setDarkMode(v => !v)}
           >
-            {darkMode ? <IconSun /> : <IconMoon />}
+            {darkMode ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
           </button>
 
           <button
@@ -653,19 +598,23 @@ function App() {
             aria-label="Open profile"
             onClick={() => setWorkspaceTab('security')}
           >
-            <AvatarThumb displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} />
-            <span className="nx-avatar-dot nx-dot online" style={{ borderColor: 'var(--brand-950)' }} />
+            <Avatar
+              displayName={user.displayName}
+              avatarUrl={user.avatarUrl}
+              cacheKey={avatarBust}
+              presence="online"
+              onRail
+            />
           </button>
 
           <button
             type="button"
-            className="nx-rail-btn"
-            style={{ minHeight: 38 }}
+            className="nx-rail-btn compact"
             title="Sign out"
             aria-label="Sign out"
             onClick={handleLogout}
           >
-            <IconLogOut />
+            <LogOut size={18} aria-hidden="true" />
           </button>
         </div>
       </nav>
@@ -685,9 +634,9 @@ function App() {
 
           <div className="nx-topbar-right">
             {versionStale && (
-              <button type="button" className="nx-btn primary sm" onClick={() => window.location.reload()}>
+              <Button variant="primary" size="sm" onClick={() => window.location.reload()}>
                 Update available · Reload
-              </button>
+              </Button>
             )}
             <span className="nx-conn-pill" role="status" title={apiVersion ? `API v${apiVersion}` : undefined}>
               <span className={`nx-dot ${connState}`} />
@@ -697,22 +646,11 @@ function App() {
           </div>
         </header>
 
-        {error && (
-          <div className="nx-toast-bar error" role="alert">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError('')} aria-label="Dismiss error">×</button>
-          </div>
-        )}
-        {notice && (
-          <div className="nx-toast-bar ok" role="status">
-            <span>{notice}</span>
-            <button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice">×</button>
-          </div>
-        )}
+        {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
+        {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         <main className="nx-main-area">
-          {/* Keep ChatWorkspace mounted so SignalR stays connected while browsing People/Security */}
-          <div style={{ display: workspaceTab === 'chat' ? 'flex' : 'none', flex: 1, minWidth: 0, minHeight: 0 }}>
+          <div className={`nx-tab-keepalive ${workspaceTab === 'chat' ? '' : 'hidden'}`}>
             <ChatWorkspace
               currentUserId={user.id}
               currentDisplayName={user.displayName}
@@ -749,7 +687,7 @@ function App() {
                   }}
                 >
                   <div className="nx-search-input-wrap" style={{ flex: 2, minWidth: 220 }}>
-                    <IconSearch />
+                    <Search size={15} aria-hidden="true" />
                     <input
                       id="dir-search"
                       type="text"
@@ -761,38 +699,31 @@ function App() {
                   </div>
                   <select
                     id="dir-dept"
+                    className="nx-select"
                     aria-label="Filter by department"
                     value={dirDeptId}
                     onChange={e => {
                       setDirDeptId(e.target.value);
                       void loadDirectory(dirQuery, e.target.value);
                     }}
-                    style={{
-                      flex: 1,
-                      minWidth: 180,
-                      padding: '7px 10px',
-                      borderRadius: 8,
-                      border: '1px solid var(--border)',
-                      background: 'var(--bg-surface)',
-                      color: 'var(--text-primary)'
-                    }}
+                    style={{ flex: 1, minWidth: 180 }}
                   >
                     <option value="">All departments</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
-                  <button className="nx-btn primary" type="submit">Search</button>
+                  <Button type="submit" variant="primary">Search</Button>
                 </form>
 
                 {directory.length === 0 ? (
-                  <div className="nx-card" style={{ textAlign: 'center', padding: 36 }}>
-                    <p className="nx-muted" style={{ margin: 0 }}>No matching active accounts.</p>
-                  </div>
+                  <Card>
+                    <p className="nx-muted" style={{ margin: 0, textAlign: 'center' }}>No matching active accounts.</p>
+                  </Card>
                 ) : (
                   <div className="nx-dir-grid">
                     {directory.map(p => (
                       <article className="nx-person-card" key={p.id}>
                         <div className="nx-person-top">
-                          <AvatarThumb displayName={p.displayName} avatarUrl={p.avatarUrl} cacheKey={avatarBust} size="lg" />
+                          <Avatar displayName={p.displayName} avatarUrl={p.avatarUrl} cacheKey={avatarBust} size="lg" />
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <UserNameWithBadge user={p} />
                             <div className="nx-muted" style={{ marginTop: 2 }}>
@@ -800,25 +731,17 @@ function App() {
                               {p.departmentName ? ` · ${p.departmentName}` : ''}
                               {p.branchName ? ` · ${p.branchName}` : ''}
                             </div>
-                            {p.customStatus && (
-                              <div className="nx-muted" style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
-                                “{p.customStatus}”
-                              </div>
-                            )}
+                            {p.customStatus && <div className="nx-person-quote">“{p.customStatus}”</div>}
                           </div>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                           {p.id === user.id ? (
-                            <span className="nx-badge role">You</span>
+                            <Badge variant="role">You</Badge>
                           ) : (
-                            <button
-                              type="button"
-                              className="nx-btn primary sm"
-                              onClick={() => void handleOpenDm(p.id)}
-                            >
-                              <IconChat size={14} /> Message
-                            </button>
+                            <Button variant="primary" size="sm" onClick={() => void handleOpenDm(p.id)}>
+                              <MessageSquare size={14} aria-hidden="true" /> Message
+                            </Button>
                           )}
                         </div>
                       </article>
@@ -837,84 +760,80 @@ function App() {
                     <h2>Profile &amp; Security</h2>
                     <p>Manage your avatar, custom status, password, authenticator MFA, and signed-in devices.</p>
                   </div>
-                  <button className="nx-btn danger" type="button" onClick={handleLogout}>
-                    <IconLogOut size={15} /> Sign out
-                  </button>
+                  <Button variant="danger" onClick={handleLogout}>
+                    <LogOut size={15} aria-hidden="true" /> Sign out
+                  </Button>
                 </div>
 
                 {user.mfaSetupRequired && (
-                  <div className="nx-toast-bar error" style={{ borderRadius: 10, marginBottom: 16 }}>
-                    <span>Administrative roles require TOTP multi-factor authentication. Set up MFA below.</span>
-                  </div>
+                  <ToastBar
+                    variant="error"
+                    rounded
+                    message="Administrative roles require TOTP multi-factor authentication. Set up MFA below."
+                  />
                 )}
 
                 <div className="nx-settings-grid">
-                  <section className="nx-card">
-                    <h3>Profile &amp; Status</h3>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
-                      <AvatarThumb displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} size="lg" />
+                  <Card title="Profile & Status">
+                    <div className="nx-profile-hero">
+                      <Avatar displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} size="lg" />
                       <div>
-                        <div><UserNameWithBadge user={user} /></div>
+                        <UserNameWithBadge user={user} />
                         <div className="nx-muted" style={{ marginTop: 3 }}>
-                          @{user.username} · <span className="nx-badge role">{user.orgRole}</span>
+                          @{user.username} · <Badge variant="role">{user.orgRole}</Badge>
                         </div>
                       </div>
                     </div>
 
-                    <form onSubmit={handleUpdateCustomStatus} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                      <div className="nx-field" style={{ flex: 1, marginBottom: 0 }}>
-                        <label htmlFor="custom-status">Custom status</label>
-                        <input
-                          id="custom-status"
-                          type="text"
-                          maxLength={100}
-                          placeholder="e.g. On site until 15:00"
-                          value={customStatusInput}
-                          onChange={e => setCustomStatusInput(e.target.value)}
-                        />
+                    <form onSubmit={handleUpdateCustomStatus} className="nx-status-form">
+                      <div style={{ flex: 1 }}>
+                        <Field label="Custom status" htmlFor="custom-status" compact>
+                          <input
+                            id="custom-status"
+                            type="text"
+                            maxLength={100}
+                            placeholder="e.g. On site until 15:00"
+                            value={customStatusInput}
+                            onChange={e => setCustomStatusInput(e.target.value)}
+                          />
+                        </Field>
                       </div>
-                      <button className="nx-btn primary" type="submit" style={{ alignSelf: 'flex-end' }}>Save</button>
+                      <Button type="submit" variant="primary">Save</Button>
                     </form>
 
-                    <div className="nx-field" style={{ marginBottom: 0 }}>
-                      <label htmlFor="avatar-upload">Avatar image (re-encoded to 256×256 PNG, max 2 MB)</label>
+                    <Field label="Avatar image (re-encoded to 256×256 PNG, max 2 MB)" htmlFor="avatar-upload" compact>
                       <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarChange} />
-                    </div>
-                  </section>
+                    </Field>
+                  </Card>
 
-                  <section className="nx-card">
-                    <h3>Change password</h3>
+                  <Card title="Change password">
                     <form onSubmit={handleChangePassword}>
-                      <div className="nx-field">
-                        <label htmlFor="cur-pw">Current password</label>
+                      <Field label="Current password" htmlFor="cur-pw">
                         <input id="cur-pw" type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />
-                      </div>
-                      <div className="nx-field">
-                        <label htmlFor="new-pw">New password (at least 12 characters)</label>
+                      </Field>
+                      <Field label="New password (at least 12 characters)" htmlFor="new-pw">
                         <input id="new-pw" type="password" autoComplete="new-password" required minLength={12} value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-                      </div>
-                      <button className="nx-btn primary" type="submit">Update password</button>
+                      </Field>
+                      <Button type="submit" variant="primary">Update password</Button>
                     </form>
-                  </section>
+                  </Card>
 
-                  <section className="nx-card">
-                    <h3>Authenticator MFA (TOTP)</h3>
+                  <Card title="Authenticator MFA (TOTP)">
                     {user.mfaEnabled ? (
                       <p className="nx-ok">TOTP multi-factor authentication is active on your account.</p>
                     ) : mfaSecret ? (
                       <form onSubmit={handleEnableMfa}>
                         <p className="nx-muted">Add this shared key to your authenticator app:</p>
-                        <p><code style={{ fontSize: 13 }}>{mfaSecret}</code></p>
-                        <div className="nx-field">
-                          <label htmlFor="mfa-code">6-digit code</label>
+                        <p><code>{mfaSecret}</code></p>
+                        <Field label="6-digit code" htmlFor="mfa-code">
                           <input id="mfa-code" type="text" inputMode="numeric" required value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
-                        </div>
-                        <button className="nx-btn primary" type="submit">Verify &amp; enable MFA</button>
+                        </Field>
+                        <Button type="submit" variant="primary">Verify &amp; enable MFA</Button>
                       </form>
                     ) : (
                       <>
                         <p className="nx-muted" style={{ marginBottom: 14 }}>Protect your Nexus account with a 6-digit authenticator code.</p>
-                        <button className="nx-btn" type="button" onClick={handleStartMfa}>Set up authenticator app</button>
+                        <Button onClick={handleStartMfa}>Set up authenticator app</Button>
                       </>
                     )}
                     {recoveryCodes.length > 0 && (
@@ -923,10 +842,9 @@ function App() {
                         <code>{recoveryCodes.join('  ')}</code>
                       </div>
                     )}
-                  </section>
+                  </Card>
 
-                  <section className="nx-card">
-                    <h3>Signed-in devices ({sessions.length})</h3>
+                  <Card title={`Signed-in devices (${sessions.length})`}>
                     {sessions.map(s => (
                       <div className="nx-row" key={s.id}>
                         <div style={{ minWidth: 0 }}>
@@ -937,13 +855,13 @@ function App() {
                           <div className="nx-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.userAgent}</div>
                         </div>
                         {!s.isCurrent && (
-                          <button className="nx-btn danger sm" type="button" onClick={() => void handleRevokeSession(s.id)}>
+                          <Button variant="danger" size="sm" onClick={() => void handleRevokeSession(s.id)}>
                             Sign out
-                          </button>
+                          </Button>
                         )}
                       </div>
                     ))}
-                  </section>
+                  </Card>
                 </div>
               </div>
             </div>
@@ -958,14 +876,13 @@ function App() {
                     <p>Preview diffs with dry run, upsert employee records, and review Unverified account match suggestions.</p>
                   </div>
                 </div>
-                <section className="nx-card">
-                  <div className="nx-field">
-                    <label htmlFor="hr-csv">CSV records</label>
+                <Card>
+                  <Field label="CSV records" htmlFor="hr-csv">
                     <textarea id="hr-csv" rows={7} value={hrCsv} onChange={e => setHrCsv(e.target.value)} />
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                    <button className="nx-btn" type="button" onClick={() => void handleHrImport(true)}>Dry run (diff)</button>
-                    <button className="nx-btn primary" type="button" onClick={() => void handleHrImport(false)}>Apply import</button>
+                  </Field>
+                  <div className="nx-inline-actions" style={{ marginBottom: 14 }}>
+                    <Button onClick={() => void handleHrImport(true)}>Dry run (diff)</Button>
+                    <Button variant="primary" onClick={() => void handleHrImport(false)}>Apply import</Button>
                   </div>
                   {hrReport && (
                     <div>
@@ -978,14 +895,14 @@ function App() {
                           {hrReport.matchSuggestions.map(m => (
                             <div className="nx-row" key={`${m.userId}-${m.employeeCode}`}>
                               <span>{m.displayName} (@{m.username}) → <strong>{m.employeeCode}</strong> ({m.employeeFullName})</span>
-                              <span className="nx-badge role">{m.confidence}</span>
+                              <Badge variant="role">{m.confidence}</Badge>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                   )}
-                </section>
+                </Card>
               </div>
             </div>
           )}

@@ -102,7 +102,9 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `scripts/audit/Test-SecurityGuardrails.ps1` | Static security guardrails rejecting `AllowAnyOrigin`, disabled TLS validation, client storage secrets, and Supabase port `6543` |
 | `.github/workflows/ci.yml` | CI workflow running build/test, Roslyn analyzers, `dotnet list package --vulnerable`, `npm audit`, Gitleaks, Trivy, and audit scripts |
 | `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` and `/hubs` (`ws: true`) to `http://127.0.0.1:5080` |
-| `src/Nexus.Client/src/main.tsx`, `chat.tsx`, `offlineQueue.ts` & `markdown.ts` | React SPA (Auth, Directory, Security, Realtime Chat with IndexedDB offline queue, SignalR reconnect with jitter, `/api/version` banner, `New messages` divider, XSS-safe Markdown renderer) |
+| `src/Nexus.Client/src/ui/` | Nexus Design System: `tokens.css` (Ocean Blue Light/Dark), `components.css`, `Button`, `Badge`/`TrustBadge`, `Avatar`, `Modal` (Radix Dialog), `ToastBar`, `Card`/`Field`/`EmptyState` |
+| `src/Nexus.Client/src/main.tsx`, `chat.tsx`, `offlineQueue.ts` & `markdown.ts` | React SPA (Auth, People Directory, Security, Realtime Chat with IndexedDB offline queue, SignalR reconnect with jitter, `/api/version` reload, `New messages` divider, XSS-safe Markdown) |
+| `scripts/audit/Test-UiDesignCompliance.ps1` | Automated UI design system audit enforcing token-only CSS, `Nexus` branding, `SEC-10` HTML safety, icon button a11y, and `TrustBadge` usage |
 | `src/Nexus.Client/tests/markdown.test.mjs` | Node built-in unit tests verifying `SEC-10` XSS/URL sanitization and safe Markdown subset (`M2.9`) |
 | `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |

@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { IconArrowLeft, IconChat, IconPlus, IconSearch, IconSend, IconUsers } from './icons';
+import { ArrowLeft, MessageSquare, Plus, Search, Send, Users } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
 import {
   dequeueOfflineMessage,
@@ -12,6 +12,7 @@ import {
   reconnectDelayWithJitter,
   setConversationCursor
 } from './offlineQueue';
+import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar, TrustBadge } from './ui';
 
 export interface ConversationListItem {
   id: string;
@@ -76,13 +77,6 @@ interface ChatWorkspaceProps {
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
   onVersionStale: () => void;
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function formatTime(iso: string): string {
@@ -598,19 +592,17 @@ export function ChatWorkspace({
         className={`nx-conv-item ${isActive ? 'active' : ''}`}
         onClick={() => onSelectConversation(c.id)}
       >
-        <span className="nx-avatar-wrap">
-          {isDm && c.peer?.avatarUrl ? (
-            <img className="nx-avatar" src={c.peer.avatarUrl} alt="" />
-          ) : (
-            <span className={`nx-avatar ${isDm ? '' : 'group'}`}>{getInitials(c.title)}</span>
-          )}
-          {isDm && <span className={`nx-avatar-dot nx-dot ${c.peer?.isOnline ? 'online' : 'offline'}`} />}
-        </span>
+        <Avatar
+          displayName={c.title}
+          avatarUrl={isDm ? c.peer?.avatarUrl : null}
+          variant={isDm ? 'user' : 'group'}
+          presence={isDm ? (c.peer?.isOnline ? 'online' : 'offline') : undefined}
+        />
         <div className="nx-conv-meta">
           <div className="nx-conv-top">
             <span className="nx-conv-name">
               <span>{c.title}</span>
-              {c.peer?.isUnverified && <span className="nx-badge unverified">Unverified</span>}
+              {c.peer && <TrustBadge isUnverified={c.peer.isUnverified} showVerified={false} />}
             </span>
             {c.unreadCount > 0 && <span className="nx-unread-pill">{c.unreadCount > 99 ? '99+' : c.unreadCount}</span>}
           </div>
@@ -631,27 +623,17 @@ export function ChatWorkspace({
         <div className="nx-side-header">
           <div className="nx-side-header-row">
             <h2>Chats</h2>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                type="button"
-                className="nx-btn sm"
-                title="Start a direct message"
-                onClick={onOpenDirectory}
-              >
+            <div className="nx-inline-actions">
+              <Button size="sm" title="Start a direct message" onClick={onOpenDirectory}>
                 New DM
-              </button>
-              <button
-                type="button"
-                className="nx-btn primary sm"
-                title="Create a new group chat"
-                onClick={() => setShowNewGroupModal(true)}
-              >
-                <IconPlus size={14} /> Group
-              </button>
+              </Button>
+              <Button variant="primary" size="sm" title="Create a new group chat" onClick={() => setShowNewGroupModal(true)}>
+                <Plus size={14} aria-hidden="true" /> Group
+              </Button>
             </div>
           </div>
           <div className="nx-search-input-wrap">
-            <IconSearch />
+            <Search size={15} aria-hidden="true" />
             <input
               type="text"
               aria-label="Filter conversations"
@@ -666,9 +648,9 @@ export function ChatWorkspace({
           {filteredConvs.length === 0 ? (
             <div className="nx-empty-side">
               <p style={{ margin: '0 0 12px' }}>No conversations yet.</p>
-              <button type="button" className="nx-btn primary sm" onClick={onOpenDirectory}>
+              <Button variant="primary" size="sm" onClick={onOpenDirectory}>
                 Find colleagues in Directory
-              </button>
+              </Button>
             </div>
           ) : (
             <>
@@ -691,63 +673,48 @@ export function ChatWorkspace({
 
       {/* Active Conversation Stage */}
       <section className="nx-chat-stage" aria-label="Message thread">
-        {error && (
-          <div className="nx-toast-bar error" role="alert">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError('')} aria-label="Dismiss error">×</button>
-          </div>
-        )}
-        {notice && (
-          <div className="nx-toast-bar ok" role="status">
-            <span>{notice}</span>
-            <button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice">×</button>
-          </div>
-        )}
+        {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
+        {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         {!activeConv ? (
-          <div className="nx-empty-stage">
-            <div className="nx-empty-stage-card">
-              <div className="nx-brand-mark" style={{ margin: '0 auto' }}>N</div>
-              <h3>Welcome to Nexus</h3>
-              <p>Select a conversation on the left, message a colleague from the Directory, or create a group chat.</p>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
-                <button type="button" className="nx-btn primary" onClick={onOpenDirectory}>
-                  <IconUsers size={16} /> Open Directory
-                </button>
-                <button type="button" className="nx-btn" onClick={() => setShowNewGroupModal(true)}>
-                  <IconPlus size={15} /> New Group
-                </button>
-              </div>
-            </div>
-          </div>
+          <EmptyState
+            icon={<div className="nx-brand-mark" style={{ margin: '0 auto' }}>N</div>}
+            title="Welcome to Nexus"
+            description="Select a conversation on the left, message a colleague from the Directory, or create a group chat."
+            actions={
+              <>
+                <Button variant="primary" onClick={onOpenDirectory}>
+                  <Users size={16} aria-hidden="true" /> Open Directory
+                </Button>
+                <Button onClick={() => setShowNewGroupModal(true)}>
+                  <Plus size={15} aria-hidden="true" /> New Group
+                </Button>
+              </>
+            }
+          />
         ) : (
           <>
             <header className="nx-stage-header">
               <div className="nx-stage-title">
-                <button
-                  type="button"
-                  className="nx-btn ghost icon-only nx-mobile-back"
+                <Button
+                  variant="ghost"
+                  iconOnly
+                  className="nx-mobile-back"
                   onClick={() => onSelectConversation(null)}
                   aria-label="Back to conversations"
                 >
-                  <IconArrowLeft />
-                </button>
-                <span className="nx-avatar-wrap">
-                  {activeConv.kind === 'dm' && activeConv.peer?.avatarUrl ? (
-                    <img className="nx-avatar" src={activeConv.peer.avatarUrl} alt="" />
-                  ) : (
-                    <span className={`nx-avatar ${activeConv.kind === 'dm' ? '' : 'group'}`}>
-                      {getInitials(activeConv.title)}
-                    </span>
-                  )}
-                  {activeConv.kind === 'dm' && (
-                    <span className={`nx-avatar-dot nx-dot ${activeConv.peer?.isOnline ? 'online' : 'offline'}`} />
-                  )}
-                </span>
+                  <ArrowLeft size={16} aria-hidden="true" />
+                </Button>
+                <Avatar
+                  displayName={activeConv.title}
+                  avatarUrl={activeConv.kind === 'dm' ? activeConv.peer?.avatarUrl : null}
+                  variant={activeConv.kind === 'dm' ? 'user' : 'group'}
+                  presence={activeConv.kind === 'dm' ? (activeConv.peer?.isOnline ? 'online' : 'offline') : undefined}
+                />
                 <div>
                   <h3>
                     <span>{activeConv.title}</span>
-                    {activeConv.peer?.isUnverified && <span className="nx-badge unverified">Unverified</span>}
+                    {activeConv.peer && <TrustBadge isUnverified={activeConv.peer.isUnverified} showVerified={false} />}
                   </h3>
                   <div className="nx-stage-subtitle">
                     {activeConv.kind === 'dm' ? (
@@ -763,50 +730,46 @@ export function ChatWorkspace({
                 </div>
               </div>
 
-              <div className="nx-stage-actions">
+              <div className="nx-inline-actions">
                 {activeConv.kind === 'dm' && activeConv.peer ? (
                   <>
-                    <button
-                      type="button"
-                      className="nx-btn sm"
-                      onClick={() => setShowReportModal(true)}
-                    >
+                    <Button size="sm" onClick={() => setShowReportModal(true)}>
                       Report
-                    </button>
-                    <button
-                      type="button"
-                      className="nx-btn danger sm"
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
                       onClick={() => void handleBlockPeer(activeConv.peer!.id, activeConv.peer!.displayName)}
                     >
                       Block
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    className={`nx-btn sm ${showMembersDrawer ? 'primary' : ''}`}
+                  <Button
+                    variant={showMembersDrawer ? 'primary' : 'default'}
+                    size="sm"
                     onClick={() => {
                       const next = !showMembersDrawer;
                       setShowMembersDrawer(next);
                       if (next) void loadGroupMembers(activeConv.id);
                     }}
                   >
-                    <IconUsers size={15} /> Members ({activeConv.memberCount})
-                  </button>
+                    <Users size={15} aria-hidden="true" /> Members ({activeConv.memberCount})
+                  </Button>
                 )}
               </div>
             </header>
 
             <div className="nx-msg-feed">
               {hasMoreOlder && (
-                <button type="button" className="nx-btn sm nx-load-older" onClick={() => void loadOlderMessages()}>
+                <Button size="sm" className="nx-load-older" onClick={() => void loadOlderMessages()}>
                   Load older messages
-                </button>
+                </Button>
               )}
 
               {messages.length === 0 && (
                 <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', padding: '32px 16px' }}>
-                  <IconChat size={30} />
+                  <MessageSquare size={28} aria-hidden="true" />
                   <p style={{ margin: '8px 0 0' }}>No messages yet. Say hello!</p>
                 </div>
               )}
@@ -822,20 +785,20 @@ export function ChatWorkspace({
                 const compact = Boolean(prev && !showDate && !showDivider && prev.senderId === m.senderId);
 
                 return (
-                  <div key={m.clientMsgId} style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div key={m.clientMsgId} className="nx-msg-group-wrap">
                     {showDate && <div className="nx-date-sep">{curDate}</div>}
                     {showDivider && <div className="nx-new-divider" role="separator">New messages</div>}
                     <div className={`nx-msg-row ${isOwn ? 'own' : ''} ${compact ? 'compact' : ''} ${m.pending ? 'pending' : ''}`}>
                       {!isOwn && (
                         compact
                           ? <div className="nx-msg-avatar-spacer" />
-                          : <span className="nx-avatar sm">{getInitials(m.senderDisplayName)}</span>
+                          : <Avatar displayName={m.senderDisplayName} size="sm" />
                       )}
                       <div className="nx-msg-bubble">
                         {!compact && (
                           <div className="nx-msg-head">
                             <strong>{isOwn ? 'You' : m.senderDisplayName}</strong>
-                            {m.senderIsUnverified && !isOwn && <span className="nx-badge unverified">Unverified</span>}
+                            {!isOwn && <TrustBadge isUnverified={m.senderIsUnverified} showVerified={false} />}
                             <span className="nx-msg-time">
                               {m.pending ? 'Sending…' : formatTime(m.createdAt)}
                             </span>
@@ -873,9 +836,9 @@ export function ChatWorkspace({
                     }
                   }}
                 />
-                <button type="submit" className="nx-btn primary sm" disabled={!composer.trim()}>
-                  <IconSend size={14} /> Send
-                </button>
+                <Button type="submit" variant="primary" size="sm" disabled={!composer.trim()}>
+                  <Send size={14} aria-hidden="true" /> Send
+                </Button>
               </div>
               <div className="nx-composer-hint">
                 <span>Supports **bold**, *italic*, `code`, and https:// links</span>
@@ -891,13 +854,12 @@ export function ChatWorkspace({
         <aside className="nx-drawer" aria-label="Group members">
           <div className="nx-drawer-head">
             <strong>Members ({groupMembers.length})</strong>
-            <button type="button" className="nx-btn ghost sm" onClick={() => setShowMembersDrawer(false)}>Close</button>
+            <Button variant="ghost" size="sm" onClick={() => setShowMembersDrawer(false)}>Close</Button>
           </div>
           <div className="nx-drawer-body">
             {(activeConv.role === 'Owner' || activeConv.role === 'Admin') && (
-              <div className="nx-field" style={{ marginBottom: 4 }}>
-                <label htmlFor="add-group-member">Add colleague</label>
-                <div style={{ display: 'flex', gap: 6 }}>
+              <Field label="Add colleague" htmlFor="add-group-member" compact>
+                <div className="nx-inline-actions">
                   <select
                     id="add-group-member"
                     value={addMemberId}
@@ -912,148 +874,136 @@ export function ChatWorkspace({
                         </option>
                       ))}
                   </select>
-                  <button type="button" className="nx-btn primary sm" disabled={!addMemberId} onClick={() => void handleAddMember()}>
+                  <Button variant="primary" size="sm" disabled={!addMemberId} onClick={() => void handleAddMember()}>
                     Add
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </Field>
             )}
 
             <div>
               {groupMembers.map(gm => (
                 <div className="nx-row" key={gm.userId}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                    <div className="nx-user-name-wrap">
                       <strong style={{ fontSize: 13 }}>{gm.displayName}</strong>
-                      <span className="nx-badge role">{gm.role}</span>
-                      {gm.isUnverified && <span className="nx-badge unverified">Unverified</span>}
+                      <Badge variant="role">{gm.role}</Badge>
+                      <TrustBadge isUnverified={gm.isUnverified} showVerified={false} />
                     </div>
                     <div className="nx-muted">@{gm.username}</div>
                   </div>
                   {(activeConv.role === 'Owner' || activeConv.role === 'Admin') &&
                     gm.userId !== currentUserId &&
                     gm.role !== 'Owner' && (
-                      <button
-                        type="button"
-                        className="nx-btn danger sm"
-                        onClick={() => void handleRemoveMember(gm.userId)}
-                      >
+                      <Button variant="danger" size="sm" onClick={() => void handleRemoveMember(gm.userId)}>
                         Remove
-                      </button>
+                      </Button>
                     )}
                 </div>
               ))}
             </div>
 
-            <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
-              <button type="button" className="nx-btn danger" style={{ width: '100%' }} onClick={() => void handleLeaveGroup()}>
+            <div className="nx-drawer-footer">
+              <Button variant="danger" fullWidth onClick={() => void handleLeaveGroup()}>
                 Leave group
-              </button>
+              </Button>
             </div>
           </div>
         </aside>
       )}
 
-      {/* New Group Modal */}
-      {showNewGroupModal && (
-        <div className="nx-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-group-title">
-          <form className="nx-modal" onSubmit={handleCreateGroup}>
-            <div className="nx-modal-head">
-              <h3 id="new-group-title">Create group chat</h3>
-              <button type="button" className="nx-btn ghost sm" onClick={() => setShowNewGroupModal(false)}>×</button>
-            </div>
-            <div className="nx-modal-body">
-              <div className="nx-field">
-                <label htmlFor="modal-group-name">Group name</label>
-                <input
-                  id="modal-group-name"
-                  type="text"
-                  required
-                  maxLength={120}
-                  placeholder="e.g. Project Alpha, Engineering…"
-                  value={newGroupTitle}
-                  onChange={e => setNewGroupTitle(e.target.value)}
-                />
-              </div>
+      {/* New Group Modal (Radix Dialog) */}
+      <Modal
+        open={showNewGroupModal}
+        onOpenChange={setShowNewGroupModal}
+        title="Create group chat"
+        footer={
+          <>
+            <Button onClick={() => setShowNewGroupModal(false)}>Cancel</Button>
+            <Button type="submit" form="create-group-form" variant="primary">Create group</Button>
+          </>
+        }
+      >
+        <form id="create-group-form" onSubmit={handleCreateGroup}>
+          <Field label="Group name" htmlFor="modal-group-name">
+            <input
+              id="modal-group-name"
+              type="text"
+              required
+              maxLength={120}
+              placeholder="e.g. Engineering, Ops Team…"
+              value={newGroupTitle}
+              onChange={e => setNewGroupTitle(e.target.value)}
+            />
+          </Field>
 
-              <div className="nx-field" style={{ marginBottom: 0 }}>
-                <label>Add colleagues (optional)</label>
-                {otherDirectoryUsers.length === 0 ? (
-                  <p className="nx-muted">No other active accounts in Directory yet.</p>
-                ) : (
-                  <div className="nx-member-picker">
-                    {otherDirectoryUsers.map(u => {
-                      const checked = selectedGroupMemberIds.includes(u.id);
-                      return (
-                        <label className="nx-member-option" key={u.id}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={e => {
-                              setSelectedGroupMemberIds(prev =>
-                                e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id)
-                              );
-                            }}
-                          />
-                          <span className="nx-avatar sm">{getInitials(u.displayName)}</span>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: 13 }}>
-                              {u.displayName}{' '}
-                              {u.isUnverified && <span className="nx-badge unverified">Unverified</span>}
-                            </div>
-                            <div className="nx-muted">@{u.username}{u.departmentName ? ` · ${u.departmentName}` : ''}</div>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
+          <Field label="Add colleagues (optional)" compact>
+            {otherDirectoryUsers.length === 0 ? (
+              <p className="nx-muted">No other active accounts in Directory yet.</p>
+            ) : (
+              <div className="nx-member-picker">
+                {otherDirectoryUsers.map(u => {
+                  const checked = selectedGroupMemberIds.includes(u.id);
+                  return (
+                    <label className="nx-member-option" key={u.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          setSelectedGroupMemberIds(prev =>
+                            e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id)
+                          );
+                        }}
+                      />
+                      <Avatar displayName={u.displayName} avatarUrl={u.avatarUrl} size="sm" />
+                      <div>
+                        <div className="nx-user-name-wrap">
+                          <strong style={{ fontSize: 13 }}>{u.displayName}</strong>
+                          <TrustBadge isUnverified={u.isUnverified} showVerified={false} />
+                        </div>
+                        <div className="nx-muted">@{u.username}{u.departmentName ? ` · ${u.departmentName}` : ''}</div>
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
-            </div>
-            <div className="nx-modal-foot">
-              <button type="button" className="nx-btn" onClick={() => setShowNewGroupModal(false)}>Cancel</button>
-              <button type="submit" className="nx-btn primary">Create group</button>
-            </div>
-          </form>
-        </div>
-      )}
+            )}
+          </Field>
+        </form>
+      </Modal>
 
-      {/* Report User Modal */}
-      {showReportModal && activeConv?.peer && (
-        <div className="nx-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="report-user-title">
-          <form className="nx-modal" onSubmit={handleSubmitReport}>
-            <div className="nx-modal-head">
-              <h3 id="report-user-title">Report {activeConv.peer.displayName}</h3>
-              <button type="button" className="nx-btn ghost sm" onClick={() => setShowReportModal(false)}>×</button>
-            </div>
-            <div className="nx-modal-body">
-              <div className="nx-field">
-                <label htmlFor="report-reason">Reason</label>
-                <select id="report-reason" value={reportReason} onChange={e => setReportReason(e.target.value)}>
-                  <option value="spam">Spam or unsolicited messages</option>
-                  <option value="impersonation">Impersonation</option>
-                  <option value="harassment">Harassment or abuse</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-              <div className="nx-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="report-details">Additional details (optional)</label>
-                <textarea
-                  id="report-details"
-                  rows={3}
-                  maxLength={1000}
-                  value={reportDetails}
-                  onChange={e => setReportDetails(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="nx-modal-foot">
-              <button type="button" className="nx-btn" onClick={() => setShowReportModal(false)}>Cancel</button>
-              <button type="submit" className="nx-btn danger">Submit report</button>
-            </div>
-          </form>
-        </div>
-      )}
+      {/* Report User Modal (Radix Dialog) */}
+      <Modal
+        open={showReportModal && Boolean(activeConv?.peer)}
+        onOpenChange={setShowReportModal}
+        title={activeConv?.peer ? `Report ${activeConv.peer.displayName}` : 'Report user'}
+        footer={
+          <>
+            <Button onClick={() => setShowReportModal(false)}>Cancel</Button>
+            <Button type="submit" form="report-user-form" variant="danger">Submit report</Button>
+          </>
+        }
+      >
+        <form id="report-user-form" onSubmit={handleSubmitReport}>
+          <Field label="Reason" htmlFor="report-reason">
+            <select id="report-reason" value={reportReason} onChange={e => setReportReason(e.target.value)}>
+              <option value="spam">Spam or unsolicited messages</option>
+              <option value="impersonation">Impersonation</option>
+              <option value="harassment">Harassment or abuse</option>
+              <option value="other">Other</option>
+            </select>
+          </Field>
+          <Field label="Additional details (optional)" htmlFor="report-details" compact>
+            <textarea
+              id="report-details"
+              rows={3}
+              maxLength={1000}
+              value={reportDetails}
+              onChange={e => setReportDetails(e.target.value)}
+            />
+          </Field>
+        </form>
+      </Modal>
     </div>
   );
 }

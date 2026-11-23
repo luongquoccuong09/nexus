@@ -1,0 +1,137 @@
+/* ==========================================================================
+   NEXUS DESIGN SYSTEM — SINGLE SOURCE OF TRUTH TOKENS (Ocean Blue Light/Dark)
+   No raw #hex color literals are permitted outside this file (enforced by
+   scripts/audit/Test-UiDesignCompliance.ps1).
+   ========================================================================== */
+:root {
+  color-scheme: light;
+
+  /* Brand ramp (Ocean Blue) */
+  --brand-950: #0B1F33;
+  --brand-900: #0F2942;
+  --brand-800: #154360;
+  --brand-700: #1A5B8A;
+  --brand-600: #1E70B8;
+  --brand-500: #2E86AB;
+  --brand-400: #4BA3E3;
+  --brand-100: #E3F1FC;
+  --brand-50:  #F0F7FD;
+
+  /* Brand gradients & emblem */
+  --logo-start: #4353D6;
+  --logo-end:   #1D9BBF;
+  --group-start: #2563EB;
+  --group-end:   #0EA5E9;
+
+  /* Surfaces */
+  --bg-app:       #F4F7FB;
+  --bg-sidebar:   #F7FAFD;
+  --bg-surface:   #FFFFFF;
+  --bg-elevated:  #FFFFFF;
+  --bg-subtle:    #EDF2F8;
+  --bg-hover:     #E7F0FA;
+  --bg-active:    #D9EAFB;
+  --bg-msg-own:   #E2F0FD;
+  --bg-msg-other: #FFFFFF;
+
+  /* Borders */
+  --border:       #D5E0EC;
+  --border-soft:  #E5ECF4;
+  --border-focus: #1E70B8;
+  --focus-ring:   rgba(30, 112, 184, 0.16);
+  --msg-own-border: rgba(30, 112, 184, 0.22);
+
+  /* Typography */
+  --text-primary:   #13263A;
+  --text-secondary: #485E74;
+  --text-muted:     #6F8499;
+  --text-on-brand:  #FFFFFF;
+  --text-on-rail:   rgba(255, 255, 255, 0.74);
+  --text-on-hero:   rgba(255, 255, 255, 0.86);
+  --link-own:       #1E70B8;
+
+  /* Semantic & Presence */
+  --success:       #15803D;
+  --success-bg:    #E7F7EE;
+  --success-border: rgba(21, 128, 61, 0.25);
+  --warning:       #B45309;
+  --warning-bg:    #FEF3C7;
+  --warning-border: rgba(180, 83, 9, 0.25);
+  --danger:        #C0392B;
+  --danger-bg:     #FDECEC;
+  --danger-border: rgba(192, 57, 43, 0.35);
+
+  --dot-online:       #22C55E;
+  --dot-reconnecting: #F59E0B;
+  --dot-offline:      #94A3B8;
+  --badge-alert:      #E53935;
+  --badge-role-text:  #1A5B8A;
+
+  /* Code & overlays */
+  --code-inline-bg: rgba(15, 41, 66, 0.08);
+  --code-block-bg:  #0F2032;
+  --code-block-fg:  #E6F1FC;
+  --backdrop:       rgba(11, 31, 51, 0.52);
+  --rail-hover:     rgba(255, 255, 255, 0.10);
+  --rail-active:    rgba(75, 163, 227, 0.22);
+  --rail-divider:   rgba(255, 255, 255, 0.10);
+  --scroll-thumb:   rgba(114, 134, 154, 0.35);
+  --scroll-thumb-h: rgba(114, 134, 154, 0.55);
+
+  /* Spacing & radii */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   14px;
+  --radius-pill: 999px;
+
+  /* Layout & elevation */
+  --rail-w: 68px;
+  --side-w: 304px;
+  --drawer-w: 296px;
+  --topbar-h: 48px;
+  --shadow-sm: 0 1px 2px rgba(15, 41, 66, 0.06);
+  --shadow-md: 0 8px 24px rgba(15, 41, 66, 0.12);
+  --shadow-lg: 0 18px 42px rgba(11, 31, 51, 0.24);
+  --font: "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regular, monospace;
+}
+
+body.dark {
+  color-scheme: dark;
+  --bg-app:       #11161D;
+  --bg-sidebar:   #161D26;
+  --bg-surface:   #1B2430;
+  --bg-elevated:  #212C3B;
+  --bg-subtle:    #253142;
+  --bg-hover:     #2A384B;
+  --bg-active:    #244261;
+  --bg-msg-own:   #1D4E7A;
+  --bg-msg-other: #232E3D;
+
+  --border:       #2E3C4F;
+  --border-soft:  #253244;
+  --border-focus: #4BA3E3;
+  --focus-ring:   rgba(75, 163, 227, 0.22);
+
+  --text-primary:   #F0F4F8;
+  --text-secondary: #C1CFDE;
+  --text-muted:     #8DA0B5;
+  --link-own:       #CBE7FF;
+
+  --brand-100:       #1C3A57;
+  --brand-50:        #172A3E;
+  --badge-role-text: #9BD1FA;
+  --success-bg:      #153524;
+  --warning-bg:      #3D2B10;
+  --danger-bg:       #3D1B1A;
+  --code-inline-bg:  rgba(255, 255, 255, 0.12);
+}

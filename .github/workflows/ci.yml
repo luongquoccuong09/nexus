@@ -48,9 +48,10 @@ jobs:
             exit 1
           fi
 
-      - name: Install and build React client
+      - name: Install, test, and build React client
         run: |
           npm --prefix src/Nexus.Client ci
+          npm --prefix src/Nexus.Client run test
           npm --prefix src/Nexus.Client run build
 
       - name: Audit npm dependencies
@@ -63,6 +64,10 @@ jobs:
       - name: Run static security guardrails
         shell: pwsh
         run: pwsh -File ./scripts/audit/Test-SecurityGuardrails.ps1
+
+      - name: Run UI design system compliance audit
+        shell: pwsh
+        run: pwsh -File ./scripts/audit/Test-UiDesignCompliance.ps1
 
       - name: Secret scanning (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
