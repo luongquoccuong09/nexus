@@ -71,6 +71,14 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Observability/ObservabilityExtensions.cs` | Serilog Compact JSON + OpenTelemetry tracing/metrics + health checks |
 | `src/Nexus.Web/Infrastructure/Observability/SensitiveDataRedactingEnricher.cs` | Redacts message bodies, passwords, cookies, and tokens from all logs |
 | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` | `GET /healthz`, `GET /readyz`, `GET /api/version` |
+| `src/Nexus.Web/Infrastructure/Data/NexusDbContext.cs` | EF Core DbContext (`data_protection_keys`, `app_sessions`, `idempotency_keys`) + assembly config discovery |
+| `src/Nexus.Web/Infrastructure/Data/DatabaseOptions.cs` | Separate `Runtime` vs `Migration` connection strings, TLS enforcement, rejects Supabase `:6543` |
+| `src/Nexus.Web/Infrastructure/Data/DatabaseMigrator.cs` | Applies EF Core migrations strictly under `Migration` role (`dotnet run -- --migrate`) |
+| `src/Nexus.Web/Infrastructure/Data/PostgreSqlSessionTicketStore.cs` | Server-side `ITicketStore` persisting BFF session tickets in PostgreSQL `app_sessions` |
+| `src/Nexus.Web/Infrastructure/Idempotency/IdempotencyEndpointFilter.cs` | `Idempotency-Key` endpoint filter (SHA-256 body hash, 24h TTL, replay, `409 Conflict`) |
+| `src/Nexus.Web/Infrastructure/Idempotency/ConditionalTransition.cs` | Conditional `UPDATE ... WHERE` state-transition helper (`Succeeded` / `AlreadyInTargetState` / `Conflict` / `NotFound`) |
+| `deploy/Dockerfile` | Multi-stage non-root container (`node:24-alpine` → `dotnet/sdk:10.0` → `dotnet/aspnet:10.0`) |
+| `deploy/docker-compose.dev.yml` & `deploy/postgres/init-roles.sql` | Local PostgreSQL 17 + separate `nexus_migrator`/`nexus_runtime` roles + `Nexus.Web` stack |
 | `src/Nexus.Web/Infrastructure/Storage/IFileStorage.cs` | Private storage contract, random object keys, path-traversal guards, `<= 60s` signed URL validation, safe download headers |
 | `src/Nexus.Web/Infrastructure/Storage/LocalFileStorage.cs` | Atomic local-volume file storage outside `wwwroot` |
 | `src/Nexus.Web/Infrastructure/Storage/SupabaseFileStorage.cs` | Server-side private Supabase Storage REST adapter |
@@ -83,6 +91,7 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
 | `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
+| `tests/Nexus.IntegrationTests/PostgresFoundationTests.cs` | Testcontainers PostgreSQL 17 tests verifying separate roles (`nexus_runtime` denied DDL), `IdempotencyEndpointFilter` (`SEC-19`), `ConditionalTransition`, Data Protection keys, PostgreSQL sessions, SignalR, and private PDF acceptance |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

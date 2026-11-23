@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.*" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.21.0" />
@@ -14,7 +20,7 @@
     <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
   </ItemGroup>
 
-  <Target Name="PublishClient" AfterTargets="ComputeFilesToPublish">
+  <Target Name="PublishClient" AfterTargets="ComputeFilesToPublish" Condition="'$(SkipClientPublish)' != 'true'">
     <Exec WorkingDirectory="../Nexus.Client" Command="npm ci" />
     <Exec WorkingDirectory="../Nexus.Client" Command="npm run build" />
     <ItemGroup>

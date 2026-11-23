@@ -120,6 +120,15 @@ public static class SecurityDefaultsExtensions
 
     public static IApplicationBuilder UseNexusSecurityDefaults(this IApplicationBuilder app)
     {
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Headers.ContainsKey(Nexus.Web.Infrastructure.Idempotency.IdempotencyEndpointFilter.HeaderName))
+            {
+                context.Request.EnableBuffering();
+            }
+
+            await next();
+        });
         app.UseMiddleware<WebSocketOriginMiddleware>();
         app.UseCors(CorsPolicyName);
         app.UseRateLimiter();

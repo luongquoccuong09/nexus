@@ -19,7 +19,7 @@ Update this table whenever a migration adds or changes a table.
 
 | Module | Planned tables | Critical invariants | Milestone |
 |---|---|---|---|
-| **Foundation** | `idempotency_keys`, Data Protection keys, sessions | Unique key + scope + TTL; conditional state transitions | M0.5, M0.8 |
+| **Foundation** | `data_protection_keys`, `app_sessions`, `idempotency_keys` (**migrated** in `InitialFoundation`) | Separate `nexus_migrator` (DDL) vs `nexus_runtime` (DML only); `UNIQUE(user_id, http_method, route_template, idempotency_key)` with 24h TTL; server-side revocable BFF sessions; PostgreSQL Data Protection keys | M0.2, M0.5, M0.8 (**Done**) |
 | **Org** | `organizations`, `departments`, `branches`, `employees` | Single Organization boundary ([P0-D02](decisions/2026-11-23-p0-d02-single-organization.md)); unique `employee_code` for idempotent HR CSV upsert | M1.1, M1.9 |
 | **Identity** | ASP.NET Core Identity tables, external logins | Unique normalized username; nullable unique `employee_id`; unique `(issuer, sub)` for Google OIDC; security stamp revocation | M1.2, M1.12 |
 | **Conversations** | `communities`, `community_members`, `conversations`, `conversation_members` | Unique `dm_key` for 1:1 DMs; `conversations.kind` in (`dm`, `group`, `channel`); community-scoped conversations require `community_id` (each Community has a primary main feed and zero or more optional sub-channels) | M2.1, M5.0, M5.1 |

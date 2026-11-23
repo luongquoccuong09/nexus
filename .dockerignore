@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/App_Data/
+artifacts/
+docs/
+.git/
+.github/
+.vs/
+tests/

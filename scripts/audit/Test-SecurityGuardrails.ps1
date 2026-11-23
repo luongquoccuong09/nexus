@@ -57,7 +57,7 @@ Scan-Pattern $srcAndDeploy 'DangerousAcceptAnyServerCertificateValidator|ServerC
 Scan-Pattern $clientFiles 'service_role|SUPABASE_SERVICE_ROLE|SupabaseServiceRoleKey|AWS_SECRET_ACCESS_KEY|R2_SECRET_ACCESS_KEY' 'NO_PRIVILEGED_STORAGE_KEYS_IN_CLIENT'
 
 # 4. No Supabase Transaction Mode pooler port 6543
-Scan-Pattern $srcAndDeploy 'pooler\.supabase\.com:6543|Port\s*=\s*6543' 'SUPABASE_SESSION_MODE_5432_ONLY'
+Scan-Pattern $srcAndDeploy 'pooler\.supabase\.com:6543|\bPort\s*=\s*6543' 'SUPABASE_SESSION_MODE_5432_ONLY'
 
 if ($violations.Count -gt 0) {
     foreach ($v in $violations) {

@@ -117,7 +117,7 @@ Preserve the intent of every security test; fix the implementation when a test f
 | `SEC-16` | Disabled account session & hub abort | M0.3 / M1.6 | `SecurityDefaultsTests`; live abort pending M1.6 |
 | `SEC-17` | Complete sync across disconnects/retries without loss or duplicates | M2.12 | *Pending M2.12* |
 | `SEC-18` | Member removal revokes further delivery and offline replay | M0.4 / M2.12 | `AuthorizationMatrixTests` (policy); E2E pending M2.12 |
-| `SEC-19` | `409 Conflict` on mismatched payload under same `client_msg_id` / `Idempotency-Key` | M0.5 / M2.12 | *Pending M0.5 / M2.12* |
+| `SEC-19` | `409 Conflict` on mismatched payload under same `client_msg_id` / `Idempotency-Key` | M0.5 / M2.12 | `PostgresFoundationTests` (`Idempotency-Key`); `client_msg_id` pending M2.12 |
 | `SEC-20` | Open registration rate limiting / anti-abuse | M1.3 | *Pending M1.3* |
 | `SEC-20b` | `Unverified` badge and capability restrictions | M0.4 / M1.4b | `AuthorizationMatrixTests` (policy); UI/API pending M1.4b |
 | `SEC-21` | Password policy (>=12 chars, common password block) | M1.4 | *Pending M1.4* |

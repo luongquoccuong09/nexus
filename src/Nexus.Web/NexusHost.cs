@@ -1,3 +1,4 @@
+using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
@@ -16,6 +17,7 @@ public static class NexusHost
         var builder = WebApplication.CreateBuilder(args);
         builder.AddNexusObservability(additionalLogSink);
         builder.Services.AddNexusSecurityDefaults(builder.Configuration);
+        builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
 
         configureBuilder?.Invoke(builder);
