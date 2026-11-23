@@ -35,8 +35,16 @@ public sealed class NexusDbContext
 
     public DbSet<ConversationEntity> Conversations => Set<ConversationEntity>();
     public DbSet<ConversationMemberEntity> ConversationMembers => Set<ConversationMemberEntity>();
+    public DbSet<CommunityEntity> Communities => Set<CommunityEntity>();
+    public DbSet<CommunityMemberEntity> CommunityMembers => Set<CommunityMemberEntity>();
     public DbSet<MessageEntity> Messages => Set<MessageEntity>();
     public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
+    public DbSet<ChannelPostEntity> ChannelPosts => Set<ChannelPostEntity>();
+    public DbSet<PostCommentEntity> PostComments => Set<PostCommentEntity>();
+    public DbSet<PostReactionEntity> PostReactions => Set<PostReactionEntity>();
+    public DbSet<AnnouncementAcknowledgmentEntity> AnnouncementAcknowledgments => Set<AnnouncementAcknowledgmentEntity>();
+    public DbSet<PollEntity> Polls => Set<PollEntity>();
+    public DbSet<PollVoteEntity> PollVotes => Set<PollVoteEntity>();
     public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
     public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
     public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();

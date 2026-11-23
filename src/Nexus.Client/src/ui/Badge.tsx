@@ -5,7 +5,7 @@ export function Badge({
   children,
   ariaLabel
 }: {
-  variant: 'unverified' | 'verified' | 'role';
+  variant: 'unverified' | 'verified' | 'role' | 'warning' | 'success';
   children: ReactNode;
   ariaLabel?: string;
 }) {

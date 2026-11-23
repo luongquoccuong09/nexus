@@ -1,7 +1,8 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Briefcase, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
+import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
 import { ChatWorkspace } from './chat';
+import { CommunitiesWorkspace } from './communities';
 import { Avatar, Badge, Button, Card, Field, ToastBar, UserNameWithBadge } from './ui';
 import './style.css';
 
@@ -82,7 +83,7 @@ function App() {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
-  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'directory' | 'security' | 'hr'>('chat');
+  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>('chat');
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const [unreadTotal, setUnreadTotal] = useState(0);
@@ -525,6 +526,7 @@ function App() {
 
   const pageTitle =
     workspaceTab === 'chat' ? 'Nexus' :
+    workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'Directory' :
     workspaceTab === 'security' ? 'Profile & Security' :
     'HR CSV Import';
@@ -551,6 +553,16 @@ function App() {
                 {unreadTotal > 99 ? '99+' : unreadTotal}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            className={`nx-rail-btn ${workspaceTab === 'communities' ? 'active' : ''}`}
+            onClick={() => setWorkspaceTab('communities')}
+            aria-label="Communities"
+          >
+            <LayoutGrid size={20} aria-hidden="true" />
+            <span>Teams</span>
           </button>
 
           <button
@@ -674,6 +686,16 @@ function App() {
               onVersionStale={handleVersionStale}
             />
           </div>
+
+          {workspaceTab === 'communities' && (
+            <CommunitiesWorkspace
+              currentUserId={user.id}
+              currentOrgRole={user.orgRole}
+              currentIsUnverified={user.isUnverified}
+              directoryUsers={directory}
+              departments={departments}
+            />
+          )}
 
           {workspaceTab === 'directory' && (
             <div className="nx-page-scroll">

@@ -60,7 +60,9 @@ public static class NexusHost
         app.MapPeopleEndpoints();
         app.MapPeopleSafetyEndpoints();
         app.MapConversationEndpoints();
+        app.MapCommunityEndpoints();
         app.MapMessagingEndpoints();
+        app.MapCommunityFeedEndpoints();
         app.MapFilesEndpoints();
         app.MapHub<MessagingHub>("/hubs/messaging");
 

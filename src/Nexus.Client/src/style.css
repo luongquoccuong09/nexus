@@ -1096,6 +1096,552 @@ body {
 
 .nx-mobile-back { display: none; }
 
+/* ==========================================================================
+   COMMUNITIES, CHANNELS, ANNOUNCEMENTS & POLLS (M5)
+   ========================================================================== */
+.nx-comm-tree-group {
+  margin-bottom: 6px;
+}
+
+.nx-comm-row {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.nx-comm-row:hover { background: var(--bg-hover); }
+.nx-comm-row.active { background: var(--bg-active); }
+
+.nx-comm-emblem {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--logo-start), var(--logo-end));
+  color: var(--text-on-brand);
+  font-weight: 700;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.nx-comm-emblem.sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+
+.nx-comm-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-soft);
+  margin-top: 2px;
+}
+
+.nx-channel-row {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.nx-channel-row:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nx-channel-row.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.nx-channel-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-add-channel-btn {
+  margin-left: 30px;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.nx-add-channel-btn:hover {
+  background: var(--bg-hover);
+  color: var(--brand-600);
+}
+
+.nx-discover-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  margin-bottom: 8px;
+}
+
+.nx-discover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nx-discover-desc {
+  margin: 6px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.nx-discover-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.nx-stage-channel-sep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.nx-comm-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.nx-comm-feed {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 24px 28px;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+
+.nx-post-composer,
+.nx-post-card,
+.nx-readonly-banner {
+  width: 100%;
+  max-width: 780px;
+}
+
+.nx-post-composer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nx-post-title-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 4px 2px 8px;
+  outline: none;
+}
+
+.nx-post-body-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 74px;
+}
+
+.nx-post-body-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.nx-post-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nx-post-composer-toggles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.nx-check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.nx-readonly-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  background: var(--brand-50);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.nx-poll-builder {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-poll-builder-head,
+.nx-poll-builder-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nx-poll-builder input[type="text"] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13.5px;
+}
+
+.nx-poll-builder-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nx-poll-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-post-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nx-post-card.announcement {
+  border-left: 4px solid var(--warning);
+}
+
+.nx-post-card.pinned {
+  border-color: var(--brand-400);
+}
+
+.nx-post-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nx-post-author {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nx-post-author-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nx-post-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.nx-post-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.nx-post-content {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.nx-ack-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+}
+
+.nx-ack-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nx-poll-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nx-poll-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nx-poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.nx-poll-opt-btn {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  font-size: 13.5px;
+  text-align: left;
+}
+
+.nx-poll-opt-btn:hover { border-color: var(--brand-500); }
+.nx-poll-opt-btn.voted { border-color: var(--brand-600); font-weight: 600; }
+
+.nx-poll-opt-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--brand-100);
+  opacity: 0.65;
+  pointer-events: none;
+  transition: width 0.2s ease;
+}
+
+.nx-poll-opt-label,
+.nx-poll-opt-stat {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-poll-opt-stat {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.nx-post-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.nx-reactions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.nx-react-pill {
+  border: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-pill);
+  padding: 3px 9px;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.nx-react-pill:hover { border-color: var(--brand-400); }
+.nx-react-pill.active {
+  background: var(--brand-100);
+  border-color: var(--brand-600);
+  font-weight: 600;
+}
+
+.nx-comments-box {
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-comment-item {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.nx-comment-item:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.nx-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.nx-comment-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.nx-comment-form input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.nx-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.nx-drawer-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.nx-member-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+}
+
+.nx-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 /* Responsive mobile / narrow desktop */
 @media (max-width: 860px) {
   .nx-auth-page { grid-template-columns: 1fr; }

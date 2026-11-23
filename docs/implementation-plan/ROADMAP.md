@@ -110,14 +110,14 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 ## M5 — Communities, channels and announcements
 
-- [ ] **M5.0** Create a community and its General channel atomically. The creator becomes Owner. Store membership and roles on the community. Support joining public communities and invitations to private ones.
-- [ ] **M5.1** Owners/Admins add channels. A channel is a conversation of kind channel with a community_id foreign key. Authorize reads, posts, searches and downloads using community membership. DMs and group chats remain independent. → M5.0
-- [ ] **M5.2** Use one Create community flow. A verified CommsAdmin can designate a community as official. Transfer responsibility when its owner becomes inactive. → M5.1
-- [ ] **M5.3** Channels can restrict announcements to admins (posting = admins_only). Store acknowledgments with unique(post,user), offer an authorized report/CSV and remind outstanding recipients (CM-03).
-- [ ] **M5.4** Optional HR integration (CM-02) maps departments to chosen communities. Reimporting the same data yields the same result.
-- [ ] **M5.5** Channel feeds support posts, comments, reactions and pinned posts (CM-04).
-- [ ] **M5.6** Polls (CM-01) use PUT and uniqueness constraints for votes.
-- **M5 acceptance:** Create a community with General and a second channel. Post, switch and reload, verifying channel isolation. Removed members lose API and realtime access across the community. Measure acknowledgments for an announcement sent to 1,000 recipients.
+- [x] **M5.0** Create a community and its primary main feed atomically (Teams Communities hierarchy per P0-D04 — no default `# General` sub-channel). The creator becomes Owner. Store membership and roles on the community. Support joining public communities and invitations to private ones.
+- [x] **M5.1** Owners/Admins add optional sub-channels on demand. A channel is a conversation of kind channel with a community_id foreign key. Authorize reads, posts, searches and downloads using community membership. DMs and group chats remain independent. → M5.0
+- [x] **M5.2** Use one Create community flow. A verified CommsAdmin can designate a community as official. Transfer responsibility when its owner becomes inactive (including audited emergency transfer by SystemAdmin/CommsAdmin with MFA). → M5.1
+- [x] **M5.3** Channels can restrict announcements to admins (posting = admins_only). Store acknowledgments with unique(post,user), offer an authorized report/CSV and remind outstanding recipients (CM-03).
+- [x] **M5.4** Optional HR integration (CM-02) maps departments to chosen communities. Reimporting/syncing the same data yields the same result.
+- [x] **M5.5** Channel feeds support posts, comments, reactions and pinned posts (CM-04).
+- [x] **M5.6** Polls (CM-01) use PUT and uniqueness constraints for votes.
+- **M5 acceptance:** Create a community with its main feed and optional sub-channels. Post, switch and reload, verifying channel isolation. Removed members lose API, file, and realtime access across the community. *(Verified end-to-end in `CommunitiesM5Tests.cs` on PostgreSQL 17; 1,000-recipient load benchmark runs in `M8.2`.)*
 
 ## M6 — Rich chat features selected from pilot feedback
 

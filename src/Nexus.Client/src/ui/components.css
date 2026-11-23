@@ -75,6 +75,7 @@
 .nx-badge {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
   font-size: 10.5px;
@@ -84,8 +85,8 @@
   white-space: nowrap;
 }
 
-.nx-badge.unverified { background: var(--warning-bg); color: var(--warning); }
-.nx-badge.verified { background: var(--success-bg); color: var(--success); }
+.nx-badge.unverified, .nx-badge.warning { background: var(--warning-bg); color: var(--warning); }
+.nx-badge.verified, .nx-badge.success { background: var(--success-bg); color: var(--success); }
 .nx-badge.role { background: var(--brand-100); color: var(--badge-role-text); }
 
 .nx-user-name-wrap {

@@ -122,33 +122,11 @@ public static class FilesEndpoints
         var actor = await userManager.FindByIdAsync(actorId.ToString());
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
-        var member = await db.ConversationMembers.AsNoTracking()
-            .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
-
-        var isBlocked = false;
-        if (conv?.Kind == ConversationKind.Dm && member is not null)
-        {
-            var peerId = await db.ConversationMembers.AsNoTracking()
-                .Where(m => m.ConversationId == conversationId && m.UserId != actorId)
-                .Select(m => m.UserId)
-                .FirstOrDefaultAsync(ct);
-
-            if (peerId != Guid.Empty)
-            {
-                isBlocked = await db.UserBlocks.AnyAsync(
-                    b => (b.BlockerUserId == actorId && b.BlockedUserId == peerId) ||
-                         (b.BlockerUserId == peerId && b.BlockedUserId == actorId),
-                    ct);
-            }
-        }
-
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        var allowed = conv is not null && authz.Can(
+        var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
+        var allowed = access is not null && authz.Can(
             actor.ToActorContext(),
             ResourceAction.FileUpload,
-            new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, IsBlocked: isBlocked));
+            access.Resource);
 
         if (!allowed)
         {
@@ -384,13 +362,8 @@ public static class FilesEndpoints
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
 
-        var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
-        var member = await db.ConversationMembers.AsNoTracking()
-            .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
-
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role)))
+        var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
+        if (access is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
         {
             return Results.Forbid();
         }
@@ -399,7 +372,7 @@ public static class FilesEndpoints
             .AsNoTracking()
             .Where(a => a.ConversationId == conversationId && a.State == AttachmentState.Attached && a.MessageId != null)
             .Join(
-                db.Messages.AsNoTracking().Where(m => m.ConversationId == conversationId && m.Seq > member.VisibleFromSeq && m.DeletedAt == null),
+                db.Messages.AsNoTracking().Where(m => m.ConversationId == conversationId && m.Seq > access.VisibleFromSeq && m.DeletedAt == null),
                 a => a.MessageId,
                 m => (Guid?)m.Id,
                 (a, m) => new { Attachment = a, MessageSeq = m.Seq });
@@ -624,16 +597,11 @@ public static class FilesEndpoints
             return (null, Results.Forbid());
         }
 
-        var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == attachment.ConversationId && c.OrganizationId == actor.OrganizationId, ct);
-        var member = await db.ConversationMembers.AsNoTracking()
-            .SingleOrDefaultAsync(m => m.ConversationId == attachment.ConversationId && m.UserId == actorId && m.LeftAt == null, ct);
-
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        var allowed = conv is not null && member is not null && authz.Can(
+        var access = await CommunityAccessHelper.ResolveAsync(db, actor, attachment.ConversationId, ct);
+        var allowed = access is not null && authz.Can(
             actor.ToActorContext(),
             ResourceAction.FileDownload,
-            new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role));
+            access.Resource);
 
         if (!allowed)
         {
@@ -641,14 +609,14 @@ public static class FilesEndpoints
         }
 
         // Enforce visible_from_seq on attached files so rejoined members cannot download pre-join files (SEC-04 / SEC-18)
-        if (attachment.MessageId.HasValue && member!.VisibleFromSeq > 0)
+        if (attachment.MessageId.HasValue && access!.VisibleFromSeq > 0)
         {
             var msgSeq = await db.Messages.AsNoTracking()
                 .Where(m => m.Id == attachment.MessageId.Value)
                 .Select(m => (long?)m.Seq)
                 .SingleOrDefaultAsync(ct);
 
-            if (!msgSeq.HasValue || msgSeq.Value <= member.VisibleFromSeq)
+            if (!msgSeq.HasValue || msgSeq.Value <= access.VisibleFromSeq)
             {
                 return (null, Results.Forbid());
             }

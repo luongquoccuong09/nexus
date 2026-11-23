@@ -12,7 +12,7 @@ This directory holds the master [`ROADMAP.md`](ROADMAP.md) plus milestone-scoped
 | **M2 — Core Messaging & Sync** | [`m2-messaging-sync/`](m2-messaging-sync/) | [`PLAN-m2-messaging.md`](m2-messaging-sync/PLAN-m2-messaging.md)<br>[`HANDOFF-m2.md`](m2-messaging-sync/HANDOFF-m2.md)<br>[`RUNBOOK-supabase-render.md`](m2-messaging-sync/RUNBOOK-supabase-render.md) | **Done** on `develop` (`M2.1`–`M2.11` + multi-client HTTP/SignalR `M2.12` + Desktop `.msi` + Supabase/Render kit verified; Playwright browser E2E deferred) |
 | **M3 — Files** | [`m3-files/`](m3-files/) | [`PLAN-m3-files.md`](m3-files/PLAN-m3-files.md)<br>[`HANDOFF-m3.md`](m3-files/HANDOFF-m3.md) | **Done** on `develop` (`M3.1`–`M3.6` verified with Testcontainers PostgreSQL 17, `SEC-04`, `SEC-11`, mock ClamAV `zINSTREAM`) |
 | **M4 — Notifications & Outbox** | [`m4-notifications/`](m4-notifications/) | *Create `PLAN-*.md` when starting M4* | Planned |
-| **M5 — Communities & Channels** | [`m5-communities/`](m5-communities/) | *Create `PLAN-*.md` when starting M5* | Planned |
+| **M5 — Communities & Channels** | [`m5-communities/`](m5-communities/) | [`PLAN-m5-communities.md`](m5-communities/PLAN-m5-communities.md)<br>[`HANDOFF-m5.md`](m5-communities/HANDOFF-m5.md) | **Done** on `develop` (`M5.0`–`M5.6` Teams Communities hierarchy per P0-D04 verified with Testcontainers PostgreSQL 17) |
 
 ## Management rules
 

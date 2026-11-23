@@ -73,7 +73,7 @@ public static class ConversationEndpoints
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
-                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == actor.OrganizationId),
+                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == actor.OrganizationId && c.Kind != ConversationKind.Channel),
                 m => m.ConversationId,
                 c => c.Id,
                 (m, c) => new { Member = m, Conv = c })
@@ -231,8 +231,8 @@ public static class ConversationEndpoints
 
         // Atomic upsert by dm_key so concurrent tabs open exactly one DM conversation (M2.2).
         var inserted = await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO conversations (id, organization_id, kind, title, dm_key, next_seq, change_seq, min_available_change_seq, created_by_user_id, created_at, updated_at)
-            VALUES ({newConvId}, {actor.OrganizationId}, {"Dm"}, NULL, {dmKey}, {0L}, {1L}, {1L}, {actorId}, {now}, {now})
+            INSERT INTO conversations (id, organization_id, kind, community_id, is_community_main_feed, posting_policy, title, dm_key, next_seq, change_seq, min_available_change_seq, created_by_user_id, created_at, updated_at)
+            VALUES ({newConvId}, {actor.OrganizationId}, {"Dm"}, NULL, {false}, {"Members"}, NULL, {dmKey}, {0L}, {1L}, {1L}, {actorId}, {now}, {now})
             ON CONFLICT (organization_id, dm_key) WHERE dm_key IS NOT NULL DO NOTHING
             """, ct);
 

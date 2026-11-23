@@ -18,6 +18,9 @@ public sealed class ConversationEntity
     public Guid Id { get; set; }
     public Guid OrganizationId { get; set; }
     public ConversationKind Kind { get; set; }
+    public Guid? CommunityId { get; set; }
+    public bool IsCommunityMainFeed { get; set; }
+    public PostingPolicy PostingPolicy { get; set; } = PostingPolicy.Members;
     public string? Title { get; set; }
     public string? DmKey { get; set; }
     public long NextSeq { get; set; }
@@ -50,6 +53,9 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
         builder.Property(x => x.Id).HasColumnName("id");
         builder.Property(x => x.OrganizationId).HasColumnName("organization_id").IsRequired();
         builder.Property(x => x.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(x => x.CommunityId).HasColumnName("community_id");
+        builder.Property(x => x.IsCommunityMainFeed).HasColumnName("is_community_main_feed").IsRequired();
+        builder.Property(x => x.PostingPolicy).HasColumnName("posting_policy").HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(120);
         builder.Property(x => x.DmKey).HasColumnName("dm_key").HasMaxLength(128);
         builder.Property(x => x.NextSeq).HasColumnName("next_seq").IsRequired();
@@ -61,6 +67,10 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
 
         builder.HasOne<OrganizationEntity>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<CommunityEntity>().WithMany().HasForeignKey(x => x.CommunityId).OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(x => new { x.CommunityId, x.IsCommunityMainFeed })
+            .HasDatabaseName("ix_conversations_community_feed");
 
         builder.HasIndex(x => new { x.OrganizationId, x.DmKey })
             .IsUnique()
