@@ -157,6 +157,7 @@ export function CommunitiesWorkspace({
   const [communities, setCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverCommunities, setDiscoverCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverMode, setDiscoverMode] = useState(false);
+  const [loadingDiscover, setLoadingDiscover] = useState(false);
 
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -223,10 +224,15 @@ export function CommunitiesWorkspace({
   }, []);
 
   const loadDiscover = useCallback(async () => {
-    const res = await fetch('/api/communities?discover=true&limit=50', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setDiscoverCommunities(data.items ?? []);
+    setLoadingDiscover(true);
+    try {
+      const res = await fetch('/api/communities?discover=true&limit=50', { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        setDiscoverCommunities(data.items ?? []);
+      }
+    } finally {
+      setLoadingDiscover(false);
     }
   }, []);
 
@@ -679,38 +685,48 @@ export function CommunitiesWorkspace({
 
   return (
     <div className={`nx-chat-layout ${selectedConversationId ? 'has-selection' : ''}`}>
-      {/* Left Sidebar: Teams Communities Tree & Discover */}
-      <aside className="nx-chat-sidebar" aria-label="Communities list">
-        <div className="nx-sidebar-head">
-          <h2>{discoverMode ? 'Discover' : 'Communities'}</h2>
-          <div className="nx-sidebar-head-actions">
-            <Button
-              variant={discoverMode ? 'primary' : 'ghost'}
-              size="sm"
-              iconOnly
-              aria-label={discoverMode ? 'Show my communities' : 'Discover public communities'}
-              title={discoverMode ? 'My communities' : 'Discover public communities'}
-              onClick={() => setDiscoverMode(v => !v)}
-            >
-              <Compass size={16} aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Create community"
-              title="Create community"
-              onClick={() => setCreateOpen(true)}
-            >
-              <Plus size={16} aria-hidden="true" />
-            </Button>
+      {/* Left Sidebar: Teams Communities Tree & Browse */}
+      <aside className="nx-chat-sidebar" aria-label="Communities">
+        <div className="nx-side-header">
+          <div className="nx-side-header-row">
+            <h2>{discoverMode ? 'Browse communities' : 'Communities'}</h2>
+            <div className="nx-inline-actions">
+              <Button
+                variant="primary"
+                size="sm"
+                iconOnly
+                aria-label="Create community"
+                title="Create community"
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus size={15} aria-hidden="true" />
+              </Button>
+            </div>
           </div>
+          <Button
+            variant={discoverMode ? 'primary' : 'default'}
+            size="sm"
+            fullWidth
+            onClick={() => setDiscoverMode(v => !v)}
+          >
+            {discoverMode ? (
+              <>
+                <ArrowLeft size={14} aria-hidden="true" /> My communities
+              </>
+            ) : (
+              <>
+                <Compass size={14} aria-hidden="true" /> Browse communities
+              </>
+            )}
+          </Button>
         </div>
 
-        <div className="nx-conv-list">
+        <div className="nx-conv-scroll">
           {discoverMode ? (
-            discoverCommunities.length === 0 ? (
-              <div className="nx-empty-side">No public communities available to discover.</div>
+            loadingDiscover ? (
+              <div className="nx-empty-side" role="status">Loading communities…</div>
+            ) : discoverCommunities.length === 0 ? (
+              <div className="nx-empty-side">No organization-wide communities available yet.</div>
             ) : (
               discoverCommunities.map(comm => (
                 <div className="nx-discover-card" key={comm.id}>
@@ -738,15 +754,7 @@ export function CommunitiesWorkspace({
             )
           ) : communities.length === 0 ? (
             <div className="nx-empty-side">
-              <p>You have not joined any communities yet.</p>
-              <div className="nx-empty-actions" style={{ marginTop: 10 }}>
-                <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
-                  Create community
-                </Button>
-                <Button size="sm" variant="default" onClick={() => setDiscoverMode(true)}>
-                  Discover
-                </Button>
-              </div>
+              <p style={{ margin: 0 }}>You have not joined any communities yet.</p>
             </div>
           ) : (
             communities.map(comm => {
@@ -769,13 +777,13 @@ export function CommunitiesWorkspace({
                       <div className="nx-conv-top">
                         <span className="nx-conv-name">
                           <span>{comm.name}</span>
-                          {comm.visibility === 'Private' && <Lock size={12} aria-label="Private" />}
+                          {comm.visibility === 'Private' && <Lock size={12} aria-label="Invite only" />}
                         </span>
                         {comm.isOfficial && <Badge variant="role">Official</Badge>}
                       </div>
                       <div className="nx-conv-sub">
                         {comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}
-                        {comm.channels.length > 0 ? ` · ${comm.channels.length} sub-ch` : ''}
+                        {comm.channels.length > 0 ? ` · ${comm.channels.length} ${comm.channels.length === 1 ? 'channel' : 'channels'}` : ''}
                       </div>
                     </div>
                   </button>
@@ -829,21 +837,39 @@ export function CommunitiesWorkspace({
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         {!selectedCommunity || !selectedConversationId ? (
-          <EmptyState
-            icon={<Users size={36} aria-hidden="true" />}
-            title="Welcome to Nexus Communities"
-            description="Create a community for your team or department, post announcements with read acknowledgments, and run quick polls."
-            actions={
-              <>
+          discoverMode ? (
+            <EmptyState
+              icon={<Compass size={36} aria-hidden="true" />}
+              title={
+                discoverCommunities.length === 0
+                  ? 'No organization-wide communities yet'
+                  : 'Browse communities'
+              }
+              description={
+                discoverCommunities.length === 0
+                  ? 'Organization-wide communities created in your organization will appear here to join.'
+                  : 'Select a community from the list on the left to join or open its feed.'
+              }
+              actions={
+                discoverCommunities.length === 0 ? (
+                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                    <Plus size={15} aria-hidden="true" /> Create community
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={<Users size={36} aria-hidden="true" />}
+              title="Welcome to Nexus Communities"
+              description="Create a community for your team or department to share updates, announcements with read acknowledgments, and quick polls."
+              actions={
                 <Button variant="primary" onClick={() => setCreateOpen(true)}>
                   <Plus size={15} aria-hidden="true" /> Create community
                 </Button>
-                <Button variant="default" onClick={() => setDiscoverMode(true)}>
-                  <Compass size={15} aria-hidden="true" /> Discover public
-                </Button>
-              </>
-            }
-          />
+              }
+            />
+          )
         ) : (
           <>
             <header className="nx-stage-header">
@@ -873,7 +899,7 @@ export function CommunitiesWorkspace({
                     {activePolicy === 'AdminsOnly' && <Badge variant="warning">Admins only</Badge>}
                   </h3>
                   <div className="nx-stage-subtitle">
-                    <span>{selectedCommunity.visibility}</span>
+                    <span>{selectedCommunity.visibility === 'Private' ? 'Invite only' : 'Organization-wide'}</span>
                     <span>·</span>
                     <span>{selectedCommunity.memberCount} members</span>
                     {selectedCommunity.description && (
@@ -1334,7 +1360,7 @@ export function CommunitiesWorkspace({
                             value={addMemberUserId}
                             onChange={e => setAddMemberUserId(e.target.value)}
                           >
-                            <option value="">Select colleague…</option>
+                            <option value="">Select a person</option>
                             {availableToAdd.map(u => (
                               <option key={u.id} value={u.id}>
                                 {u.displayName} (@{u.username})
@@ -1413,7 +1439,7 @@ export function CommunitiesWorkspace({
         open={createOpen}
         onOpenChange={setCreateOpen}
         title="Create community"
-        description="Starts with a main community feed. You can add optional sub-channels anytime."
+        description="Starts with a main community feed. You can add optional channels anytime."
       >
         <form onSubmit={handleCreateCommunity}>
           <Field label="Community name" htmlFor="new-comm-name">
@@ -1437,17 +1463,35 @@ export function CommunitiesWorkspace({
               onChange={e => setNewCommDesc(e.target.value)}
             />
           </Field>
-          <Field label="Visibility" htmlFor="new-comm-vis">
-            <select
-              id="new-comm-vis"
-              className="nx-select"
-              value={newCommVisibility}
-              onChange={e => setNewCommVisibility(e.target.value as 'Public' | 'Private')}
-            >
-              <option value="Public">Public — Discoverable by colleagues</option>
-              <option value="Private">Private — Invite only</option>
-            </select>
-          </Field>
+          <fieldset className="nx-vis-fieldset">
+            <legend>Who can find and join</legend>
+            <label className={`nx-vis-option ${newCommVisibility === 'Public' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="community-visibility"
+                value="Public"
+                checked={newCommVisibility === 'Public'}
+                onChange={() => setNewCommVisibility('Public')}
+              />
+              <div>
+                <strong>Organization-wide</strong>
+                <p>Any active member in your organization can browse and join. If designated Official later, access is limited to Verified members.</p>
+              </div>
+            </label>
+            <label className={`nx-vis-option ${newCommVisibility === 'Private' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="community-visibility"
+                value="Private"
+                checked={newCommVisibility === 'Private'}
+                onChange={() => setNewCommVisibility('Private')}
+              />
+              <div>
+                <strong>Invite only</strong>
+                <p>Hidden from Browse communities. Only people added by a community owner or admin can see and join.</p>
+              </div>
+            </label>
+          </fieldset>
           <div className="nx-modal-footer">
             <Button type="button" variant="default" onClick={() => setCreateOpen(false)}>
               Cancel
@@ -1459,14 +1503,14 @@ export function CommunitiesWorkspace({
         </form>
       </Modal>
 
-      {/* Add Sub-Channel Modal */}
+      {/* Add Channel Modal */}
       <Modal
         open={Boolean(addChannelForId)}
         onOpenChange={open => {
           if (!open) setAddChannelForId(null);
         }}
-        title="Add sub-channel"
-        description="Sub-channels inherit this community's members and roles automatically."
+        title="Add channel"
+        description="Channels inherit this community's members and roles automatically."
       >
         <form onSubmit={handleCreateChannel}>
           <Field label="Channel name" htmlFor="new-ch-name">

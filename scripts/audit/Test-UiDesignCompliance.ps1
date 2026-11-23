@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -90,6 +90,11 @@ foreach ($file in $clientFiles) {
             if ($m.Value -notmatch '\baria-label=') {
                 Add-Finding 'UI-ICON-BUTTON-A11Y' $rel 'iconOnly <Button> is missing an aria-label attribute.'
             }
+        }
+
+        # Rule 7: Plain-English enterprise copy (UXA-05) — avoid "colleague(s)" in Nexus UI copy
+        if ($content -match '\bcolleagues?\b') {
+            Add-Finding 'UI-COPY-NO-COLLEAGUE' $rel 'Avoid "colleague(s)" in product copy; use "people", "person", or "members".'
         }
     }
 }

@@ -1,6 +1,6 @@
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Download, FileText, FolderOpen, MessageSquare, Paperclip, Plus, Search, Send, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Download, FileText, Flag, FolderOpen, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Users, X } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
 import {
   dequeueOfflineMessage,
@@ -173,11 +173,17 @@ export function ChatWorkspace({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // Report modal (DM) & Image lightbox (Teams-style inline viewer)
+  // Report modal (DM), More actions menu & Image lightbox (Teams-style inline viewer)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('spam');
   const [reportDetails, setReportDetails] = useState('');
   const [lightboxImage, setLightboxImage] = useState<AttachmentItem | null>(null);
+
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const reportMenuItemRef = useRef<HTMLButtonElement | null>(null);
+  const blockMenuItemRef = useRef<HTMLButtonElement | null>(null);
 
   const hubRef = useRef<signalR.HubConnection | null>(null);
   const activeConvRef = useRef<string | null>(selectedConversationId);
@@ -440,6 +446,7 @@ export function ChatWorkspace({
 
   useEffect(() => {
     setRightDrawer('none');
+    setMoreMenuOpen(false);
     setPendingAttachments([]);
     setConversationFiles([]);
     setLoadingFiles(false);
@@ -760,6 +767,28 @@ export function ChatWorkspace({
     }
   }
 
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    requestAnimationFrame(() => reportMenuItemRef.current?.focus());
+    const handleOutsideClick = (ev: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(ev.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    const handleEsc = (ev: globalThis.KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setMoreMenuOpen(false);
+        moreBtnRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [moreMenuOpen]);
+
   const activeConv = conversations.find(c => c.id === selectedConversationId) ?? null;
 
   const filteredConvs = useMemo(() => {
@@ -816,15 +845,15 @@ export function ChatWorkspace({
       <aside className="nx-chat-sidebar" aria-label="Conversations">
         <div className="nx-side-header">
           <div className="nx-side-header-row">
-            <h2>Chats</h2>
-            <div className="nx-inline-actions">
-              <Button size="sm" title="Start a direct message" onClick={onOpenDirectory}>
-                New DM
-              </Button>
-              <Button variant="primary" size="sm" title="Create a new group chat" onClick={() => setShowNewGroupModal(true)}>
-                <Plus size={14} aria-hidden="true" /> Group
-              </Button>
-            </div>
+            <h2>Chat</h2>
+          </div>
+          <div className="nx-side-actions">
+            <Button size="sm" onClick={onOpenDirectory}>
+              <MessageSquare size={14} aria-hidden="true" /> New chat
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setShowNewGroupModal(true)}>
+              <Plus size={14} aria-hidden="true" /> Create group chat
+            </Button>
           </div>
           <div className="nx-search-input-wrap">
             <Search size={15} aria-hidden="true" />
@@ -843,20 +872,20 @@ export function ChatWorkspace({
             <div className="nx-empty-side">
               <p style={{ margin: '0 0 12px' }}>No conversations yet.</p>
               <Button variant="primary" size="sm" onClick={onOpenDirectory}>
-                Find colleagues in Directory
+                Find people in Directory
               </Button>
             </div>
           ) : (
             <>
               {dmConvs.length > 0 && (
                 <>
-                  <div className="nx-section-label">Direct Messages ({dmConvs.length})</div>
+                  <div className="nx-section-label">Direct messages ({dmConvs.length})</div>
                   {dmConvs.map(renderConvItem)}
                 </>
               )}
               {groupConvs.length > 0 && (
                 <>
-                  <div className="nx-section-label">Group Chats ({groupConvs.length})</div>
+                  <div className="nx-section-label">Group chats ({groupConvs.length})</div>
                   {groupConvs.map(renderConvItem)}
                 </>
               )}
@@ -880,14 +909,14 @@ export function ChatWorkspace({
           <EmptyState
             icon={<div className="nx-brand-mark" style={{ margin: '0 auto' }}>N</div>}
             title="Welcome to Nexus"
-            description="Select a conversation on the left, message a colleague from the Directory, or create a group chat."
+            description="Select a conversation on the left, start a new chat, or create a group chat."
             actions={
               <>
                 <Button variant="primary" onClick={onOpenDirectory}>
-                  <Users size={16} aria-hidden="true" /> Open Directory
+                  <MessageSquare size={15} aria-hidden="true" /> New chat
                 </Button>
                 <Button onClick={() => setShowNewGroupModal(true)}>
-                  <Plus size={15} aria-hidden="true" /> New Group
+                  <Plus size={15} aria-hidden="true" /> Create group chat
                 </Button>
               </>
             }
@@ -911,9 +940,9 @@ export function ChatWorkspace({
                   variant={activeConv.kind === 'dm' ? 'user' : 'group'}
                   presence={activeConv.kind === 'dm' ? (activeConv.peer?.isOnline ? 'online' : 'offline') : undefined}
                 />
-                <div>
+                <div className="nx-stage-identity">
                   <h3>
-                    <span>{activeConv.title}</span>
+                    <span className="nx-stage-name">{activeConv.title}</span>
                     {activeConv.peer && <TrustBadge isUnverified={activeConv.peer.isUnverified} showVerified={false} />}
                   </h3>
                   <div className="nx-stage-subtitle">
@@ -921,7 +950,7 @@ export function ChatWorkspace({
                       <>
                         <span className={`nx-dot ${activeConv.peer?.isOnline ? 'online' : 'offline'}`} />
                         <span>{activeConv.peer?.isOnline ? 'Online' : 'Offline'}</span>
-                        {activeConv.peer?.username && <span>· @{activeConv.peer.username}</span>}
+                        {activeConv.peer?.username && <span className="nx-stage-handle">· @{activeConv.peer.username}</span>}
                       </>
                     ) : (
                       <span>{activeConv.memberCount} members · Role: {activeConv.role}</span>
@@ -930,7 +959,7 @@ export function ChatWorkspace({
                 </div>
               </div>
 
-              <div className="nx-inline-actions">
+              <div className="nx-inline-actions nx-stage-actions">
                 <Button
                   variant={rightDrawer === 'files' ? 'primary' : 'default'}
                   size="sm"
@@ -946,18 +975,62 @@ export function ChatWorkspace({
                   <FolderOpen size={15} aria-hidden="true" /> Files
                 </Button>
                 {activeConv.kind === 'dm' && activeConv.peer ? (
-                  <>
-                    <Button size="sm" onClick={() => setShowReportModal(true)}>
-                      Report
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => void handleBlockPeer(activeConv.peer!.id, activeConv.peer!.displayName)}
+                  <div className="nx-menu-wrap" ref={moreMenuRef}>
+                    <button
+                      ref={moreBtnRef}
+                      type="button"
+                      className="nx-btn sm icon-only"
+                      aria-label="More actions"
+                      title="More actions"
+                      aria-haspopup="menu"
+                      aria-expanded={moreMenuOpen}
+                      onClick={() => setMoreMenuOpen(v => !v)}
                     >
-                      Block
-                    </Button>
-                  </>
+                      <MoreVertical size={15} aria-hidden="true" />
+                    </button>
+                    {moreMenuOpen && (
+                      <div
+                        className="nx-dropdown-menu"
+                        role="menu"
+                        aria-label="Conversation actions"
+                        onKeyDown={ev => {
+                          if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+                            ev.preventDefault();
+                            if (document.activeElement === reportMenuItemRef.current) {
+                              blockMenuItemRef.current?.focus();
+                            } else {
+                              reportMenuItemRef.current?.focus();
+                            }
+                          }
+                        }}
+                      >
+                        <button
+                          ref={reportMenuItemRef}
+                          type="button"
+                          role="menuitem"
+                          className="nx-dropdown-item"
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            setShowReportModal(true);
+                          }}
+                        >
+                          <Flag size={14} aria-hidden="true" /> Report user
+                        </button>
+                        <button
+                          ref={blockMenuItemRef}
+                          type="button"
+                          role="menuitem"
+                          className="nx-dropdown-item danger"
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            void handleBlockPeer(activeConv.peer!.id, activeConv.peer!.displayName);
+                          }}
+                        >
+                          <Ban size={14} aria-hidden="true" /> Block user
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <Button
                     variant={rightDrawer === 'members' ? 'primary' : 'default'}
@@ -1164,14 +1237,14 @@ export function ChatWorkspace({
           </div>
           <div className="nx-drawer-body">
             {(activeConv.role === 'Owner' || activeConv.role === 'Admin') && (
-              <Field label="Add colleague" htmlFor="add-group-member" compact>
+              <Field label="Add person" htmlFor="add-group-member" compact>
                 <div className="nx-inline-actions">
                   <select
                     id="add-group-member"
                     value={addMemberId}
                     onChange={e => setAddMemberId(e.target.value)}
                   >
-                    <option value="">Select person…</option>
+                    <option value="">Select a person</option>
                     {otherDirectoryUsers
                       .filter(u => !groupMembers.some(gm => gm.userId === u.id))
                       .map(u => (
@@ -1320,7 +1393,7 @@ export function ChatWorkspace({
             />
           </Field>
 
-          <Field label="Add colleagues (optional)" compact>
+          <Field label="Add people (optional)" compact>
             {otherDirectoryUsers.length === 0 ? (
               <p className="nx-muted">No other active accounts in Directory yet.</p>
             ) : (

@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
+import { Briefcase, Info, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users, X } from 'lucide-react';
 import { ChatWorkspace } from './chat';
 import { CommunitiesWorkspace } from './communities';
 import { Avatar, Badge, Button, Card, Field, ToastBar, UserNameWithBadge } from './ui';
@@ -80,6 +80,7 @@ function App() {
   const [versionStale, setVersionStale] = useState(false);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [trialDismissed, setTrialDismissed] = useState(false);
+  const [trialExpanded, setTrialExpanded] = useState(false);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
@@ -122,6 +123,8 @@ function App() {
   const [dirDeptId, setDirDeptId] = useState('');
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [directory, setDirectory] = useState<DirectoryProfile[]>([]);
+  const dirSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const focusDirSearchRef = useRef(false);
 
   // HR CSV Import state
   const [hrCsv, setHrCsv] = useState('employee_code,full_name,email,department_code,department_name,branch_code,branch_name,is_active\n');
@@ -402,9 +405,17 @@ function App() {
   }
 
   const handleOpenDirectoryFromChat = useCallback(() => {
+    focusDirSearchRef.current = true;
     setWorkspaceTab('directory');
     void loadDirectory(dirQuery, dirDeptId);
   }, [dirDeptId, dirQuery, loadDirectory]);
+
+  useEffect(() => {
+    if (workspaceTab === 'directory' && focusDirSearchRef.current) {
+      focusDirSearchRef.current = false;
+      requestAnimationFrame(() => dirSearchInputRef.current?.focus());
+    }
+  }, [workspaceTab]);
 
   const handleVersionStale = useCallback(() => {
     setVersionStale(true);
@@ -457,7 +468,7 @@ function App() {
             <ul className="nx-auth-features">
               <li>● Instant messaging with offline queue &amp; reliable sync</li>
               <li>● Private conversations protected by strict membership controls</li>
-              <li>● Vietnamese-aware colleague search &amp; TOTP account security</li>
+              <li>● Vietnamese-aware directory search &amp; TOTP account security</li>
             </ul>
           </div>
 
@@ -567,11 +578,11 @@ function App() {
   }
 
   const pageTitle =
-    workspaceTab === 'chat' ? 'Nexus' :
+    workspaceTab === 'chat' ? 'Chat' :
     workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'Directory' :
-    workspaceTab === 'security' ? 'Profile & Security' :
-    'HR CSV Import';
+    workspaceTab === 'security' ? 'Profile & security' :
+    'HR import';
 
   return (
     <div className="nx-app">
@@ -585,8 +596,8 @@ function App() {
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'chat' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'chat' ? 'page' : undefined}
             onClick={() => setWorkspaceTab('chat')}
-            aria-label="Chat"
           >
             <MessageSquare size={20} aria-hidden="true" />
             <span>Chat</span>
@@ -600,45 +611,45 @@ function App() {
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'communities' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'communities' ? 'page' : undefined}
             onClick={() => setWorkspaceTab('communities')}
-            aria-label="Communities"
           >
             <LayoutGrid size={20} aria-hidden="true" />
-            <span>Teams</span>
+            <span>Communities</span>
           </button>
 
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'directory' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'directory' ? 'page' : undefined}
             onClick={() => {
               setWorkspaceTab('directory');
               void loadDirectory(dirQuery, dirDeptId);
             }}
-            aria-label="Directory"
           >
             <Users size={20} aria-hidden="true" />
-            <span>People</span>
+            <span>Directory</span>
           </button>
 
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'security' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'security' ? 'page' : undefined}
             onClick={() => setWorkspaceTab('security')}
-            aria-label="Profile and Security"
           >
             <Shield size={20} aria-hidden="true" />
-            <span>Security</span>
+            <span>Profile &amp; security</span>
           </button>
 
           {user.orgRole === 'HRAdmin' && (
             <button
               type="button"
               className={`nx-rail-btn ${workspaceTab === 'hr' ? 'active' : ''}`}
+              aria-current={workspaceTab === 'hr' ? 'page' : undefined}
               onClick={() => setWorkspaceTab('hr')}
-              aria-label="HR Import"
             >
               <Briefcase size={20} aria-hidden="true" />
-              <span>HR</span>
+              <span>HR import</span>
             </button>
           )}
         </div>
@@ -658,7 +669,7 @@ function App() {
             type="button"
             className="nx-rail-avatar-btn"
             title={`${user.displayName} (@${user.username})`}
-            aria-label="Open profile"
+            aria-label="Open profile & security"
             onClick={() => setWorkspaceTab('security')}
           >
             <Avatar
@@ -688,9 +699,31 @@ function App() {
           <div className="nx-topbar-left">
             <h1 className="nx-topbar-title">{pageTitle}</h1>
             {policy?.confidentialityNotice && !trialDismissed && (
-              <div className="nx-trial-pill" role="note" title={policy.confidentialityNotice}>
-                <span>{policy.confidentialityNotice}</span>
-                <button type="button" onClick={() => setTrialDismissed(true)} aria-label="Dismiss notice">×</button>
+              <div className="nx-trial-pill" role="region" aria-label="Environment notice">
+                <button
+                  type="button"
+                  className="nx-trial-trigger"
+                  aria-expanded={trialExpanded}
+                  aria-controls="trial-notice-banner"
+                  title={policy.confidentialityNotice}
+                  onClick={() => setTrialExpanded(v => !v)}
+                >
+                  <Info size={13} aria-hidden="true" />
+                  <span className="nx-trial-label-full">{policy.confidentialityNotice}</span>
+                  <span className="nx-trial-label-short">Trial notice</span>
+                </button>
+                <button
+                  type="button"
+                  className="nx-trial-dismiss"
+                  onClick={() => {
+                    setTrialExpanded(false);
+                    setTrialDismissed(true);
+                  }}
+                  aria-label="Dismiss environment notice"
+                  title="Dismiss notice"
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
               </div>
             )}
           </div>
@@ -708,6 +741,27 @@ function App() {
             <UserNameWithBadge user={user} />
           </div>
         </header>
+
+        {policy?.confidentialityNotice && !trialDismissed && trialExpanded && (
+          <div id="trial-notice-banner" className="nx-trial-banner" role="note">
+            <span>{policy.confidentialityNotice}</span>
+            <div className="nx-inline-actions">
+              <Button size="sm" variant="ghost" onClick={() => setTrialExpanded(false)}>
+                Hide
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setTrialExpanded(false);
+                  setTrialDismissed(true);
+                }}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
 
         {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
@@ -744,8 +798,8 @@ function App() {
               <div className="nx-page-container">
                 <div className="nx-page-head">
                   <div>
-                    <h2>People Directory</h2>
-                    <p>Search colleagues by display name (Vietnamese diacritic-insensitive) or username.</p>
+                    <h2>Directory</h2>
+                    <p>Search by name or username.</p>
                   </div>
                 </div>
 
@@ -759,10 +813,11 @@ function App() {
                   <div className="nx-search-input-wrap" style={{ flex: 2, minWidth: 220 }}>
                     <Search size={15} aria-hidden="true" />
                     <input
+                      ref={dirSearchInputRef}
                       id="dir-search"
                       type="text"
-                      aria-label="Search colleagues"
-                      placeholder="Search name or @username…"
+                      aria-label="Search directory"
+                      placeholder="Search by name or @username…"
                       value={dirQuery}
                       onChange={e => setDirQuery(e.target.value)}
                     />
@@ -827,7 +882,7 @@ function App() {
               <div className="nx-page-container">
                 <div className="nx-page-head">
                   <div>
-                    <h2>Profile &amp; Security</h2>
+                    <h2>Profile &amp; security</h2>
                     <p>Manage your avatar, custom status, password, authenticator MFA, and signed-in devices.</p>
                   </div>
                   <Button variant="danger" onClick={handleLogout}>
