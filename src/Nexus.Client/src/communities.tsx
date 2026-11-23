@@ -182,6 +182,8 @@ export function CommunitiesWorkspace({
   activeFeedRef.current = selectedConversationId;
 
   const [posts, setPosts] = useState<ChannelPostDto[]>([]);
+  const postsCacheRef = useRef(new Map<string, { items: ChannelPostDto[]; canPost: boolean; canManage: boolean }>());
+  const initialCommunitySelectedRef = useRef(false);
   const [pendingReactions, setPendingReactions] = useState<Record<string, ReactionChange>>({});
   const reactionRequests = useRef(new Set<string>());
   const feedRequestRef = useRef<{
@@ -288,12 +290,16 @@ export function CommunitiesWorkspace({
       if (res.ok) {
         const items: ChannelPostDto[] = data.items ?? [];
         // A fetch started before the reaction was saved can contain an older reaction count.
-        setPosts(items.map(post => request.confirmedReactions.reduce(
+        const nextPosts = items.map(post => request.confirmedReactions.reduce(
           (current, change) => change.postId === current.id ? applyReaction(current, change) : current,
           post
-        )));
-        setCanPost(Boolean(data.canPost));
-        setCanManage(Boolean(data.canManage));
+        ));
+        const nextCanPost = Boolean(data.canPost);
+        const nextCanManage = Boolean(data.canManage);
+        postsCacheRef.current.set(conversationId, { items: nextPosts, canPost: nextCanPost, canManage: nextCanManage });
+        setPosts(nextPosts);
+        setCanPost(nextCanPost);
+        setCanManage(nextCanManage);
       } else {
         if (res.status === 401 || res.status === 403 || res.status === 404) {
           setPosts([]);
@@ -330,14 +336,15 @@ export function CommunitiesWorkspace({
 
   useEffect(() => {
     void loadCommunities().then(items => {
-      if (items.length > 0 && !selectedCommunityId) {
+      if (items.length > 0 && !initialCommunitySelectedRef.current) {
+        initialCommunitySelectedRef.current = true;
         setSelectedCommunityId(items[0].id);
         if (items[0].mainFeedConversationId) {
           setSelectedConversationId(items[0].mainFeedConversationId);
         }
       }
     });
-  }, [loadCommunities, selectedCommunityId]);
+  }, [loadCommunities]);
 
   useEffect(() => {
     if (discoverMode) {
@@ -346,11 +353,19 @@ export function CommunitiesWorkspace({
   }, [discoverMode, loadDiscover]);
 
   useEffect(() => {
-    setPosts([]);
-    setCanPost(false);
-    setCanManage(false);
+    const cached = selectedConversationId ? postsCacheRef.current.get(selectedConversationId) : undefined;
+    if (cached) {
+      setPosts(cached.items);
+      setCanPost(cached.canPost);
+      setCanManage(cached.canManage);
+      setLoadingPosts(false);
+    } else {
+      setPosts([]);
+      setCanPost(false);
+      setCanManage(false);
+    }
     if (selectedConversationId) {
-      void loadPosts(selectedConversationId);
+      void loadPosts(selectedConversationId, Boolean(cached));
     }
 
     return () => {
@@ -586,7 +601,12 @@ export function CommunitiesWorkspace({
 
       const request = feedRequestRef.current;
       if (request?.conversationId === post.conversationId) request.confirmedReactions.push(change);
-      setPosts(previous => previous.map(item => item.id === post.id ? applyReaction(item, change) : item));
+      setPosts(previous => {
+        const next = previous.map(item => item.id === post.id ? applyReaction(item, change) : item);
+        const cached = postsCacheRef.current.get(post.conversationId);
+        if (cached) postsCacheRef.current.set(post.conversationId, { ...cached, items: next });
+        return next;
+      });
     } catch {
       if (activeFeedRef.current === post.conversationId) setError('Unable to update reaction. Try again.');
     } finally {
@@ -830,7 +850,7 @@ export function CommunitiesWorkspace({
                       {comm.name}
                       {comm.isOfficial && <Badge variant="role">Official</Badge>}
                     </strong>
-                    <span className="nx-muted">{comm.memberCount} members</span>
+                    <span className="nx-muted">{comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}</span>
                   </div>
                   {comm.description && <p className="nx-discover-desc">{comm.description}</p>}
                   <div className="nx-discover-actions">
@@ -995,9 +1015,10 @@ export function CommunitiesWorkspace({
                   </h3>
                   <div className="nx-stage-subtitle">
                     <span>{selectedCommunity.visibility === 'Private' ? 'Invite only' : 'Open to organization members'}</span>
+                    <span>·</span>
                     <span>Your role: {selectedCommunity.myRole ?? 'Member'}</span>
                     <span>·</span>
-                    <span>{selectedCommunity.memberCount} members</span>
+                    <span>{selectedCommunity.memberCount} {selectedCommunity.memberCount === 1 ? 'member' : 'members'}</span>
                     {selectedCommunity.description && (
                       <>
                         <span>·</span>

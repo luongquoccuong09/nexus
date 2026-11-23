@@ -208,7 +208,7 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
           <Card title="Invitations">
             <p>Anyone with the link can join once. Invitations expire after seven days.</p>
             <Button onClick={() => void submit(invite)} disabled={busy}>Create invitation link</Button>
-            {link && <>
+            {link && <div style={{ marginTop: 12 }}>
               <Field label="Invitation link" htmlFor="new-invitation-link">
                 <input id="new-invitation-link" value={link} readOnly onFocus={e => e.currentTarget.select()} />
               </Field>
@@ -223,7 +223,7 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
                 }}>Copy invitation link</Button>
                 <span role="status">{copyStatus}</span>
               </div>
-            </>}
+            </div>}
             {invites.filter(i => !i.revokedAt && !i.redeemedAt && Date.parse(i.expiresAt) > Date.now()).map(invitation => <div className="nx-row" key={invitation.id}>
               <span>Expires {new Date(invitation.expiresAt).toLocaleDateString()}</span>
               <Button size="sm" disabled={busy} onClick={() => void submit(async () => {
@@ -265,6 +265,7 @@ export function ContactControls({ onChange, usernameRef }: { onChange: () => voi
   const [requests, setRequests] = useState<{ id: string; displayName: string; username: string }[]>([]);
   const [username, setUsername] = useState('');
   const [link, setLink] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
   const [receivedToken, setReceivedToken] = useState(personalContactLink);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -294,20 +295,40 @@ export function ContactControls({ onChange, usernameRef }: { onChange: () => voi
       window.history.replaceState(null, '', window.location.pathname);
       setMessage('Connection requested. The sender must accept it before you can chat.');
     }}>Request connection from link</Button>}
-    <form className="nx-row" onSubmit={async e => {
+    <form className="nx-row" style={{ alignItems: 'flex-end', gap: 10 }} onSubmit={async e => {
       e.preventDefault();
       if (!await run('requests', 'POST', { username })) return;
       setUsername('');
       setMessage('If this account can receive requests, your connection request was sent.');
     }}>
-      <Field label="Nexus username" htmlFor="contact-username"><input ref={usernameRef} id="contact-username" required value={username} onChange={e => setUsername(e.currentTarget.value)} /></Field>
-      <Button type="submit" disabled={busy || !username.trim()}>Request connection</Button>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <Field label="Nexus username" htmlFor="contact-username" compact><input ref={usernameRef} id="contact-username" required value={username} onChange={e => setUsername(e.currentTarget.value)} /></Field>
+      </div>
+      <Button type="submit" variant="primary" disabled={busy || !username.trim()}>Request connection</Button>
     </form>
-    <Button disabled={busy} onClick={async () => {
-      const res = await run('links', 'POST');
-      if (res) setLink(`${window.location.origin}/personal#personal-contact=${(await res.json()).token}`);
-    }}>Create contact link</Button>
-    {link && <Field label="Copy contact link" htmlFor="new-contact-link"><input id="new-contact-link" value={link} readOnly onFocus={e => e.currentTarget.select()} /></Field>}
+    <div style={{ marginTop: 12 }}>
+      <Button disabled={busy} onClick={async () => {
+        const res = await run('links', 'POST');
+        if (res) {
+          setCopyStatus('');
+          setLink(`${window.location.origin}/personal#personal-contact=${(await res.json()).token}`);
+        }
+      }}>Create contact link</Button>
+    </div>
+    {link && <div style={{ marginTop: 12 }}>
+      <Field label="Copy contact link" htmlFor="new-contact-link"><input id="new-contact-link" value={link} readOnly onFocus={e => e.currentTarget.select()} /></Field>
+      <div className="nx-row">
+        <Button size="sm" onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(link);
+            setCopyStatus('Contact link copied.');
+          } catch {
+            setCopyStatus('Select the contact link to copy it.');
+          }
+        }}>Copy contact link</Button>
+        <span role="status">{copyStatus}</span>
+      </div>
+    </div>}
     {requests.map(request => <div className="nx-row" key={request.id}>
       <span>{request.displayName} · @{request.username}</span>
       {[true, false].map(accept => <Button key={String(accept)} size="sm" disabled={busy} onClick={async () => {

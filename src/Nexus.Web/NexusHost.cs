@@ -24,7 +24,7 @@ public static class NexusHost
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.AddNexusObservability(additionalLogSink);
-        builder.Services.AddNexusSecurityDefaults(builder.Configuration);
+        builder.Services.AddNexusSecurityDefaults(builder.Configuration, builder.Environment.IsDevelopment());
         builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
         builder.Services.AddFilesModule(builder.Configuration);
@@ -76,6 +76,7 @@ public static class NexusHost
 
         configureApp?.Invoke(app);
 
+        app.MapGet("/favicon.ico", () => Results.NoContent()).AllowAnonymous();
         app.MapFallback("/api/{**path}", () => Results.NotFound()).AllowAnonymous();
         app.MapFallbackToFile("index.html").AllowAnonymous();
         return app;

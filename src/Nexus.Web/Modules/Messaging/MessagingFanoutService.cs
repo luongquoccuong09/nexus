@@ -11,20 +11,33 @@ public sealed class MessagingFanoutService(
     NexusDbContext db,
     IHubContext<MessagingHub> hubContext)
 {
-    public async Task NotifyConversationChangedAsync(
+    public Task NotifyConversationChangedAsync(
         Guid conversationId,
         long changeSeq,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        NotifyConversationChangedInternalAsync(conversationId, changeSeq, null, null, cancellationToken);
+
+    public Task NotifyConversationChangedAsync(
+        Guid conversationId,
+        long changeSeq,
+        ConversationKind conversationKind,
+        Guid? communityId,
+        CancellationToken cancellationToken = default) =>
+        NotifyConversationChangedInternalAsync(conversationId, changeSeq, conversationKind, communityId, cancellationToken);
+
+    private async Task NotifyConversationChangedInternalAsync(
+        Guid conversationId,
+        long changeSeq,
+        ConversationKind? conversationKind,
+        Guid? communityId,
+        CancellationToken cancellationToken)
     {
-        var recipientIds = await ResolveAuthorizedRecipientsAsync(conversationId, cancellationToken);
+        var recipientIds = await ResolveAuthorizedRecipientsAsync(conversationId, conversationKind, communityId, cancellationToken);
+        if (recipientIds.Count == 0) return;
 
         var payload = new { conversationId, changeSeq };
-        foreach (var recipientId in recipientIds)
-        {
-            await hubContext.Clients
-                .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, recipientId))
-                .SendAsync("ConversationChanged", payload, cancellationToken);
-        }
+        var groups = recipientIds.Select(id => MessagingHub.UserGroupName(db.OrganizationScopeId, id)).ToArray();
+        await hubContext.Clients.Groups(groups).SendAsync("ConversationChanged", payload, cancellationToken);
     }
 
     public async Task NotifyCommunityFeedChangedAsync(
@@ -33,14 +46,11 @@ public sealed class MessagingFanoutService(
         CancellationToken cancellationToken = default)
     {
         var recipientIds = await ResolveCommunityRecipientsAsync(communityId, cancellationToken);
+        if (recipientIds.Count == 0) return;
 
         var payload = new { communityId, conversationId };
-        foreach (var recipientId in recipientIds)
-        {
-            await hubContext.Clients
-                .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, recipientId))
-                .SendAsync("CommunityFeedChanged", payload, cancellationToken);
-        }
+        var groups = recipientIds.Select(id => MessagingHub.UserGroupName(db.OrganizationScopeId, id)).ToArray();
+        await hubContext.Clients.Groups(groups).SendAsync("CommunityFeedChanged", payload, cancellationToken);
     }
 
     public async Task NotifyReadStateUpdatedAsync(
@@ -55,21 +65,34 @@ public sealed class MessagingFanoutService(
             .SendAsync("ReadStateUpdated", payload, cancellationToken);
     }
 
-    private async Task<List<Guid>> ResolveAuthorizedRecipientsAsync(Guid conversationId, CancellationToken ct)
+    private async Task<List<Guid>> ResolveAuthorizedRecipientsAsync(
+        Guid conversationId,
+        ConversationKind? knownKind,
+        Guid? knownCommunityId,
+        CancellationToken ct)
     {
-        var conv = await db.Conversations.AsNoTracking()
-            .Where(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId)
-            .Select(c => new { c.Kind, c.CommunityId })
-            .SingleOrDefaultAsync(ct);
+        var kind = knownKind;
+        var communityId = knownCommunityId;
 
-        if (conv is null)
+        if (!kind.HasValue)
         {
-            return [];
+            var conv = await db.Conversations.AsNoTracking()
+                .Where(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId)
+                .Select(c => new { c.Kind, c.CommunityId })
+                .SingleOrDefaultAsync(ct);
+
+            if (conv is null)
+            {
+                return [];
+            }
+
+            kind = conv.Kind;
+            communityId = conv.CommunityId;
         }
 
-        if (conv.Kind == ConversationKind.Channel && conv.CommunityId.HasValue)
+        if (kind == ConversationKind.Channel && communityId.HasValue)
         {
-            return await ResolveCommunityRecipientsAsync(conv.CommunityId.Value, ct);
+            return await ResolveCommunityRecipientsAsync(communityId.Value, ct);
         }
 
         return await db.ConversationMembers

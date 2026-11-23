@@ -254,7 +254,14 @@ public static class MessagingEndpoints
 
         // Fan out lightweight (conversationId, changeSeq) signal to user:{id} groups after commit (M2.4).
         var committedAt = Stopwatch.GetTimestamp();
-        await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, ct);
+        if (conv is not null)
+        {
+            await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, conv.Kind, conv.CommunityId, ct);
+        }
+        else
+        {
+            await fanout.NotifyConversationChangedAsync(conversationId, changeSeq, ct);
+        }
         var commitMs = Stopwatch.GetElapsedTime(requestStarted, committedAt).TotalMilliseconds;
         var fanoutMs = Stopwatch.GetElapsedTime(committedAt).TotalMilliseconds;
         ctx.Response.Headers.Append("Server-Timing", FormattableString.Invariant($"message_commit;dur={commitMs:F1}, message_fanout;dur={fanoutMs:F1}"));

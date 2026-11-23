@@ -420,6 +420,7 @@ public static class CommunityFeedEndpoints
         string emoji,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
@@ -448,6 +449,11 @@ public static class CommunityFeedEndpoints
             ON CONFLICT (post_id, user_id, emoji) DO NOTHING
             """, ct);
 
+        if (access.Community is not null)
+        {
+            await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
+        }
+
         return Results.NoContent();
     }
 
@@ -457,6 +463,7 @@ public static class CommunityFeedEndpoints
         string emoji,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
@@ -476,6 +483,11 @@ public static class CommunityFeedEndpoints
         await db.PostReactions
             .Where(r => r.PostId == postId && r.UserId == actorId && r.Emoji == decodedEmoji)
             .ExecuteDeleteAsync(ct);
+
+        if (access.Community is not null)
+        {
+            await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, post.ConversationId, ct);
+        }
 
         return Results.NoContent();
     }

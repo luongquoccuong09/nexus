@@ -14,7 +14,8 @@ public static class SecurityDefaultsExtensions
 
     public static IServiceCollection AddNexusSecurityDefaults(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        bool isDevelopment = false)
     {
         var section = configuration.GetSection(NexusSecurityOptions.SectionName);
         var options = section.Get<NexusSecurityOptions>() ?? new NexusSecurityOptions();
@@ -37,7 +38,8 @@ public static class SecurityDefaultsExtensions
         services.AddAuthentication(SessionAuthScheme)
             .AddCookie(SessionAuthScheme, cookie =>
             {
-                cookie.Cookie.Name = "__Host-nexus-session";
+                // RFC 6265bis rejects __Host- cookies without the Secure attribute on plain HTTP local dev.
+                cookie.Cookie.Name = isDevelopment ? "nexus-session" : "__Host-nexus-session";
                 cookie.Cookie.HttpOnly = true;
                 cookie.Cookie.SameSite = SameSiteMode.Lax;
                 cookie.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;

@@ -160,8 +160,7 @@
   margin-bottom: 5px;
 }
 
-.nx-field input[type="text"],
-.nx-field input[type="password"],
+.nx-field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 .nx-field select,
 .nx-field textarea,
 .nx-select {

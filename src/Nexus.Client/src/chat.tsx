@@ -204,6 +204,9 @@ export function ChatWorkspace({
   const conversationRefreshRef = useRef({ timer: null as number | null, queued: false });
   const conversationListRequest = useRef(0);
   const deltaRequests = useRef(new Map<string, { queued: boolean; full: boolean; promise: Promise<void> }>());
+  const messagesCacheRef = useRef(new Map<string, { items: ChatMessageItem[]; hasMore: boolean; nextBeforeSeq: number | null; lastRead: number }>());
+  const cursorCacheRef = useRef(new Map<string, number>());
+  const flushOfflineQueueRef = useRef<() => Promise<void>>(async () => {});
   connStateCbRef.current = onConnectionStateChange;
   communityFeedCbRef.current = onCommunityFeedChanged;
 
@@ -297,16 +300,22 @@ export function ChatWorkspace({
         pending: true
       }));
 
-    setLastReadSnapshot(data.lastReadSeq ?? 0);
-    setHasMoreOlder(Boolean(data.hasMore));
-    setNextBeforeSeq(typeof data.nextBeforeSeq === 'number' ? data.nextBeforeSeq : null);
-    setMessages([...serverItems, ...optimistic]);
+    const nextLastRead = data.lastReadSeq ?? 0;
+    const nextHasMore = Boolean(data.hasMore);
+    const nextBefore = typeof data.nextBeforeSeq === 'number' ? data.nextBeforeSeq : null;
+    const combined = [...serverItems, ...optimistic];
+    messagesCacheRef.current.set(convId, { items: combined, hasMore: nextHasMore, nextBeforeSeq: nextBefore, lastRead: nextLastRead });
+    setLastReadSnapshot(nextLastRead);
+    setHasMoreOlder(nextHasMore);
+    setNextBeforeSeq(nextBefore);
+    setMessages(combined);
     if (typeof data.changeSeq === 'number') {
-      await setConversationCursor(offlineScope, convId, data.changeSeq);
+      cursorCacheRef.current.set(convId, data.changeSeq);
+      void setConversationCursor(offlineScope, convId, data.changeSeq);
     }
     const maxSeq = serverItems.length > 0 ? serverItems[serverItems.length - 1].seq : 0;
-    if (maxSeq > (data.lastReadSeq ?? 0)) {
-      await markRead(convId, maxSeq);
+    if (maxSeq > nextLastRead) {
+      void markRead(convId, maxSeq);
     }
     requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'auto' }));
   }, [currentDisplayName, currentUserId, markRead, offlineScope]);
@@ -400,7 +409,8 @@ export function ChatWorkspace({
   }, [selectedConversationId]);
 
   const syncConversationDelta = useCallback(async (convId: string) => {
-    let cursor = await getConversationCursor(offlineScope, convId);
+    let cursor = cursorCacheRef.current.get(convId) ?? await getConversationCursor(offlineScope, convId);
+    if (cursor > 0) cursorCacheRef.current.set(convId, cursor);
     if (activeConvRef.current !== convId) return;
     if (cursor <= 0) {
       await loadMessagesFull(convId);
@@ -433,7 +443,10 @@ export function ChatWorkspace({
           setMessages(prev => {
             const byClientId = new Map(prev.map(message => [message.clientMsgId, message]));
             for (const message of added) byClientId.set(message.clientMsgId, message);
-            return [...byClientId.values()].sort((a, b) => a.seq - b.seq);
+            const next = [...byClientId.values()].sort((a, b) => a.seq - b.seq);
+            const cached = messagesCacheRef.current.get(convId);
+            if (cached) messagesCacheRef.current.set(convId, { ...cached, items: next });
+            return next;
           });
           readThrough = Math.max(readThrough, ...added.map(message => message.seq));
           requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
@@ -442,7 +455,8 @@ export function ChatWorkspace({
         const lastEventSeq = events.at(-1)?.changeSeq ?? cursor;
         const nextCursor = Math.max(lastEventSeq, typeof data.nextAfter === 'number' ? data.nextAfter : cursor);
         if (nextCursor <= cursor) return;
-        await setConversationCursor(offlineScope, convId, nextCursor);
+        cursorCacheRef.current.set(convId, nextCursor);
+        void setConversationCursor(offlineScope, convId, nextCursor);
         cursor = nextCursor;
         if (!data.hasMore) return;
       }
@@ -507,6 +521,7 @@ export function ChatWorkspace({
   loadConversationsRef.current = loadConversations;
   syncDeltaRef.current = requestConversationDelta;
   reconcileRef.current = reconcileAll;
+  flushOfflineQueueRef.current = flushOfflineQueue;
 
   useEffect(() => {
     void loadConversations();
@@ -523,12 +538,20 @@ export function ChatWorkspace({
     setQuota(null);
     setTypingText('');
     setError('');
-    setMessages([]);
-    setHasMoreOlder(false);
-    setNextBeforeSeq(null);
-    setLastReadSnapshot(0);
+    const cached = selectedConversationId ? messagesCacheRef.current.get(selectedConversationId) : undefined;
+    if (cached) {
+      setMessages(cached.items);
+      setHasMoreOlder(cached.hasMore);
+      setNextBeforeSeq(cached.nextBeforeSeq);
+      setLastReadSnapshot(cached.lastRead);
+    } else {
+      setMessages([]);
+      setHasMoreOlder(false);
+      setNextBeforeSeq(null);
+      setLastReadSnapshot(0);
+    }
     if (selectedConversationId) {
-      void requestConversationDelta(selectedConversationId, true).catch(() => {
+      void requestConversationDelta(selectedConversationId, !cached).catch(() => {
         if (activeConvRef.current === selectedConversationId) setError('Unable to load messages.');
       });
     }
@@ -545,9 +568,14 @@ export function ChatWorkspace({
 
     connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number }) => {
       if (evt.conversationId === activeConvRef.current) {
-        void syncDeltaRef.current(evt.conversationId)
-          .catch(() => {})
-          .finally(() => { if (!disposed) scheduleConversationRefresh(); });
+        const knownSeq = cursorCacheRef.current.get(evt.conversationId) ?? 0;
+        if (evt.changeSeq > knownSeq) {
+          void syncDeltaRef.current(evt.conversationId)
+            .catch(() => {})
+            .finally(() => { if (!disposed) scheduleConversationRefresh(); });
+        } else {
+          scheduleConversationRefresh();
+        }
       } else {
         scheduleConversationRefresh();
       }
@@ -574,7 +602,7 @@ export function ChatWorkspace({
     connection.onreconnecting(() => {
       if (!disposed) connStateCbRef.current('reconnecting');
     });
-    const onConnected = () => {
+    const onReconnected = () => {
       if (!disposed) {
         connStateCbRef.current('connected');
         communityFeedCbRef.current();
@@ -582,7 +610,7 @@ export function ChatWorkspace({
       }
     };
 
-    connection.onreconnected(onConnected);
+    connection.onreconnected(onReconnected);
     connection.onclose(() => {
       if (!disposed) connStateCbRef.current('offline');
     });
@@ -590,7 +618,12 @@ export function ChatWorkspace({
     hubRef.current = connection;
     connStateCbRef.current('reconnecting');
     connection.start()
-      .then(onConnected)
+      .then(() => {
+        if (!disposed) {
+          connStateCbRef.current('connected');
+          void flushOfflineQueueRef.current();
+        }
+      })
       .catch(() => {
         if (!disposed) connStateCbRef.current('offline');
       });
@@ -628,36 +661,40 @@ export function ChatWorkspace({
 
     const clientMsgId = generateClientMsgId();
     const createdAt = new Date().toISOString();
+    const targetConvId = selectedConversationId;
+    const optimisticMsg: ChatMessageItem = {
+      id: clientMsgId,
+      conversationId: targetConvId,
+      seq: Number.MAX_SAFE_INTEGER,
+      senderId: currentUserId,
+      senderDisplayName: currentDisplayName,
+      clientMsgId,
+      body,
+      createdAt,
+      pending: true,
+      attachments: attached
+    };
 
-    if (attached.length === 0) {
-      const item: QueuedMessage = {
-        clientMsgId,
-        conversationId: selectedConversationId,
-        body,
-        createdAt
-      };
-      await enqueueOfflineMessage(offlineScope, item);
-    }
-
-    setMessages(prev => [
-      ...prev,
-      {
-        id: clientMsgId,
-        conversationId: selectedConversationId,
-        seq: Number.MAX_SAFE_INTEGER,
-        senderId: currentUserId,
-        senderDisplayName: currentDisplayName,
-        clientMsgId,
-        body,
-        createdAt,
-        pending: true,
-        attachments: attached
-      }
-    ]);
+    // Paint optimistically in 0ms before IndexedDB / network I/O.
+    setMessages(prev => {
+      const next = [...prev, optimisticMsg];
+      const cached = messagesCacheRef.current.get(targetConvId);
+      if (cached) messagesCacheRef.current.set(targetConvId, { ...cached, items: next });
+      return next;
+    });
+    const previewText = body || (attached.length === 1 ? `[Attachment: ${attached[0].fileName}]` : `[${attached.length} attachments]`);
+    setConversations(prev => prev.map(c =>
+      c.id === targetConvId ? { ...c, lastMessagePreview: previewText, lastMessageAt: createdAt } : c
+    ));
     requestAnimationFrame(() => feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
 
+    const queueWrite = attached.length === 0
+      ? enqueueOfflineMessage(offlineScope, { clientMsgId, conversationId: targetConvId, body, createdAt })
+      : Promise.resolve();
+
     try {
-      const res = await fetch(`/api/conversations/${selectedConversationId}/messages`, {
+      await queueWrite;
+      const res = await fetch(`/api/conversations/${targetConvId}/messages`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -669,25 +706,40 @@ export function ChatWorkspace({
       });
       if (res.ok) {
         const saved: ChatMessageItem = await res.json();
-        await dequeueOfflineMessage(offlineScope, clientMsgId);
-        setMessages(prev => prev.map(m => (m.clientMsgId === clientMsgId ? saved : m)));
+        void dequeueOfflineMessage(offlineScope, clientMsgId);
+        setMessages(prev => {
+          const next = prev.map(m => (m.clientMsgId === clientMsgId ? saved : m));
+          const cached = messagesCacheRef.current.get(targetConvId);
+          if (cached) messagesCacheRef.current.set(targetConvId, { ...cached, items: next });
+          return next;
+        });
         scheduleConversationRefresh();
         if (rightDrawer === 'files' && attached.length > 0) {
-          void loadConversationFiles(selectedConversationId);
+          void loadConversationFiles(targetConvId);
         }
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Unable to send message.');
         if (res.status === 400 || res.status === 403 || res.status === 409) {
-          await dequeueOfflineMessage(offlineScope, clientMsgId);
-          setMessages(prev => prev.filter(m => m.clientMsgId !== clientMsgId));
+          void dequeueOfflineMessage(offlineScope, clientMsgId);
+          setMessages(prev => {
+            const next = prev.filter(m => m.clientMsgId !== clientMsgId);
+            const cached = messagesCacheRef.current.get(targetConvId);
+            if (cached) messagesCacheRef.current.set(targetConvId, { ...cached, items: next });
+            return next;
+          });
           if (attached.length > 0) setPendingAttachments(attached);
         }
       }
     } catch {
       if (attached.length > 0) {
         setPendingAttachments(attached);
-        setMessages(prev => prev.filter(m => m.clientMsgId !== clientMsgId));
+        setMessages(prev => {
+          const next = prev.filter(m => m.clientMsgId !== clientMsgId);
+          const cached = messagesCacheRef.current.get(targetConvId);
+          if (cached) messagesCacheRef.current.set(targetConvId, { ...cached, items: next });
+          return next;
+        });
         setError('Offline — reconnect to send messages with attachments.');
       } else {
         setError('Offline — message queued locally and will send automatically on reconnect.');

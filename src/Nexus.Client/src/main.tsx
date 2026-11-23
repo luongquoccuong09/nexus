@@ -165,6 +165,7 @@ function App() {
     if (personalContactLink) return 'directory';
     return new URLSearchParams(window.location.search).get('view') === 'security' ? 'security' : 'chat';
   });
+  const [communitiesVisited, setCommunitiesVisited] = useState(() => workspaceTab === 'communities');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const communityFeedListenerRef = useRef<((conversationId?: string) => void) | null>(null);
@@ -250,7 +251,7 @@ function App() {
     }
   }, []);
 
-  const refreshMe = useCallback(async () => {
+  const refreshMe = useCallback(async (): Promise<boolean> => {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
     if (res.ok) {
       const account: UserSummary = await res.json();
@@ -259,19 +260,21 @@ function App() {
         const profile = await fetch(`${scopeApi}/me`);
         if (profile.status === 403 || profile.status === 404) {
           window.location.replace('/');
-          return;
+          return true;
         }
-        if (!profile.ok) return;
+        if (!profile.ok) return false;
         me = { ...account, ...await profile.json() };
         rememberWorkspace(me.id, organizationId);
       }
       setUser(me);
       setCustomStatusInput(me.customStatus ?? '');
       if (!isWorkspaceHome) await Promise.all([loadSessions(), loadDepartments(), loadDirectory('', '')]);
+      return true;
     } else {
       setUser(null);
       setSessions([]);
       setDirectory([]);
+      return false;
     }
   }, [loadSessions, loadDepartments, loadDirectory]);
 
@@ -326,7 +329,9 @@ function App() {
     setMfaChallenge(false);
     setLoginPassword('');
     setLoginTotp('');
-    await refreshMe();
+    if (!await refreshMe()) {
+      setError('Sign-in succeeded, but your browser did not retain the session cookie.');
+    }
   }
 
   async function handleRegister(e: FormEvent) {
@@ -352,7 +357,9 @@ function App() {
       return;
     }
     setRegPassword('');
-    await refreshMe();
+    if (!await refreshMe()) {
+      setError('Account created, but your browser did not retain the session cookie.');
+    }
   }
 
   async function handleLogout() {
@@ -708,7 +715,10 @@ function App() {
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'communities' ? 'active' : ''}`}
             aria-current={workspaceTab === 'communities' ? 'page' : undefined}
-            onClick={() => setWorkspaceTab('communities')}
+            onClick={() => {
+              setCommunitiesVisited(true);
+              setWorkspaceTab('communities');
+            }}
           >
             <LayoutGrid size={20} aria-hidden="true" />
             <span>Communities</span>
@@ -720,7 +730,7 @@ function App() {
             aria-current={workspaceTab === 'directory' ? 'page' : undefined}
             onClick={() => {
               setWorkspaceTab('directory');
-              void loadDirectory(dirQuery, dirDeptId);
+              if (directory.length === 0) void loadDirectory(dirQuery, dirDeptId);
             }}
           >
             <Users size={20} aria-hidden="true" />
@@ -837,15 +847,17 @@ function App() {
             onOpenContacts={openContactsFromChat}
           />}
 
-          {organizationId && workspaceTab === 'communities' && (
-            <CommunitiesWorkspace
-              currentUserId={user.id}
-              currentOrgRole={user.orgRole}
-              currentIsUnverified={user.isUnverified}
-              directoryUsers={directory}
-              departments={departments}
-              feedListenerRef={communityFeedListenerRef}
-            />
+          {organizationId && communitiesVisited && (
+            <div className={`nx-tab-keepalive ${workspaceTab === 'communities' ? '' : 'hidden'}`}>
+              <CommunitiesWorkspace
+                currentUserId={user.id}
+                currentOrgRole={user.orgRole}
+                currentIsUnverified={user.isUnverified}
+                directoryUsers={directory}
+                departments={departments}
+                feedListenerRef={communityFeedListenerRef}
+              />
+            </div>
           )}
 
           {workspaceTab === 'directory' && (
@@ -855,9 +867,14 @@ function App() {
                   <div>
                     <h2>{organizationId ? "Directory" : "Contacts"}</h2>
                     <p>{organizationId ? "Search by name or username." : "Search the people you have connected with."}</p>
-                  {!organizationId && <ContactControls usernameRef={contactUsernameRef} onChange={() => void loadDirectory(dirQuery, '')} />}
                   </div>
                 </div>
+
+                {!organizationId && (
+                  <div style={{ marginBottom: 16 }}>
+                    <ContactControls usernameRef={contactUsernameRef} onChange={() => void loadDirectory(dirQuery, '')} />
+                  </div>
+                )}
 
                 <form
                   className="nx-filter-bar"
@@ -896,7 +913,13 @@ function App() {
 
                 {directory.length === 0 ? (
                   <Card>
-                    <p className="nx-muted" style={{ margin: 0, textAlign: 'center' }}>No matching active accounts.</p>
+                    <p className="nx-muted" style={{ margin: 0, textAlign: 'center' }}>
+                      {organizationId
+                        ? 'No matching active accounts.'
+                        : dirQuery.trim()
+                          ? 'No matching contacts.'
+                          : 'No contacts yet. Send a connection request or share a contact link above.'}
+                    </p>
                   </Card>
                 ) : (
                   <div className="nx-dir-grid">
@@ -947,9 +970,9 @@ function App() {
 
                 {user.mfaSetupRequired && (
                   <ToastBar
-                    variant="error"
+                    variant="info"
                     rounded
-                    message="Administrative roles require TOTP multi-factor authentication. Set up MFA below."
+                    message="Recommended: enable authenticator TOTP below to add extra protection to your workspace admin account."
                   />
                 )}
 

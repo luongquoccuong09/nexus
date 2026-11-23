@@ -130,15 +130,16 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.nx-terms-label {
+.nx-field label.nx-terms-label {
   display: flex;
   gap: var(--space-2);
   font-weight: 400;
-  align-items: flex-start;
+  align-items: center;
+  margin-bottom: 0;
   cursor: pointer;
 }
 
-.nx-terms-label input { margin-top: 3px; }
+.nx-field label.nx-terms-label input { margin: 0; }
 
 /* ==========================================================================
    FULL-VIEWPORT WORKSPACE SHELL (APP RAIL + TOPBAR + BODY)
@@ -314,7 +315,7 @@ body {
 }
 
 .nx-workspace-home-card {
-  width: min(100%, 30rem);
+  width: min(100%, 34rem);
   padding: clamp(var(--space-4), 5vw, var(--space-8));
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
@@ -1688,13 +1689,32 @@ body {
   align-items: center;
   gap: 4px;
   cursor: pointer;
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.14s ease, border-color 0.14s ease;
 }
 
 .nx-react-pill:hover { border-color: var(--brand-400); }
+.nx-react-pill:active { transform: scale(0.9); }
 .nx-react-pill.active {
   background: var(--brand-100);
   border-color: var(--brand-600);
   font-weight: 600;
+  animation: nx-react-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes nx-react-pop {
+  0% { transform: scale(0.88); }
+  50% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-react-pill,
+  .nx-react-pill:active,
+  .nx-react-pill.active {
+    transition: none;
+    animation: none;
+    transform: none;
+  }
 }
 
 .nx-comments-box {
