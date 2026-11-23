@@ -26,10 +26,13 @@ BEGIN
 END
 $$;
 
--- 3. Grant schema DDL privileges strictly to nexus_migrator
+-- 3. Allow managed `postgres` role on Supabase (PostgreSQL 15+) to configure default privileges for nexus_migrator
+GRANT nexus_migrator TO postgres;
+
+-- 4. Grant schema DDL privileges strictly to nexus_migrator
 GRANT USAGE, CREATE ON SCHEMA public TO nexus_migrator;
 
--- 4. Grant least-privilege runtime access to nexus_runtime (no CREATE / DROP / ALTER)
+-- 5. Grant least-privilege runtime access to nexus_runtime (no CREATE / DROP / ALTER)
 GRANT USAGE ON SCHEMA public TO nexus_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nexus_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nexus_runtime;
