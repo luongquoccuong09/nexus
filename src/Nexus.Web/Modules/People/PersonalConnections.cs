@@ -64,6 +64,7 @@ public static class PersonalConnections
     {
         var endpoints = app.MapGroup(OrganizationScope.PersonalApi);
         endpoints.MapGet("/people/directory", ListDirectoryAsync);
+        endpoints.MapGet("/people/chat-candidates", ListChatCandidatesAsync);
         endpoints.MapGet("/contacts/requests", ListRequestsAsync);
         endpoints.MapPost("/contacts/requests", RequestAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         endpoints.MapPut("/contacts/requests/{id:guid}", RespondAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
@@ -76,6 +77,83 @@ public static class PersonalConnections
             .Select(c => c.FirstUserId == userId ? c.SecondUserId : c.FirstUserId)
             .Where(peerId => !db.UserBlocks.Any(b => b.OrganizationId == Guid.Empty &&
                 ((b.BlockerUserId == userId && b.BlockedUserId == peerId) || (b.BlockerUserId == peerId && b.BlockedUserId == userId))));
+
+    public static IQueryable<Guid> SharedWorkspacePeerIds([FromServices] NexusDbContext db, Guid userId) =>
+        db.OrganizationMemberships
+            .Where(mine => mine.Id == userId && mine.Status == AccountStatus.Active)
+            .Join(
+                db.OrganizationMemberships.Where(peer => peer.Id != userId && peer.Status == AccountStatus.Active),
+                mine => mine.OrganizationId,
+                peer => peer.OrganizationId,
+                (_, peer) => peer.Id)
+            .Distinct()
+            .Where(peerId => !db.UserBlocks.Any(b => b.OrganizationId == Guid.Empty &&
+                ((b.BlockerUserId == userId && b.BlockedUserId == peerId) || (b.BlockerUserId == peerId && b.BlockedUserId == userId))));
+
+    public static IQueryable<Guid> AllowedChatPeerIds([FromServices] NexusDbContext db, Guid userId) =>
+        AcceptedContactIds(db, userId).Union(SharedWorkspacePeerIds(db, userId));
+
+    private static async Task<IResult> ListChatCandidatesAsync(string? q, [FromServices] NexusDbContext db, int? limit, CancellationToken ct)
+    {
+        if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var error)) return Results.BadRequest(new { code = "invalid_page_size", message = error });
+        var userId = db.OrganizationActor!.Id;
+        var allowedIds = AllowedChatPeerIds(db, userId);
+        var people = db.Users.AsNoTracking().Where(u => allowedIds.Contains(u.Id) && u.Status == AccountStatus.Active);
+        var search = q?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
+            people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern) || EF.Functions.ILike(u.UserName ?? string.Empty, pattern));
+        }
+
+        var rows = await people
+            .OrderBy(u => u.DisplayName)
+            .Take(pageSize)
+            .Select(u => new { u.Id, Username = u.UserName ?? string.Empty, u.DisplayName })
+            .ToListAsync(ct);
+
+        if (rows.Count == 0) return Results.Ok(new { items = Array.Empty<object>() });
+
+        var rowIds = rows.Select(r => r.Id).ToList();
+        var myOrgIds = await db.OrganizationMemberships.AsNoTracking()
+            .Where(m => m.Id == userId && m.Status == AccountStatus.Active)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(ct);
+
+        var sharedOrgRows = myOrgIds.Count == 0
+            ? []
+            : await db.OrganizationMemberships.AsNoTracking()
+                .Where(m => myOrgIds.Contains(m.OrganizationId) && rowIds.Contains(m.Id) && m.Status == AccountStatus.Active)
+                .Select(m => new { m.Id, OrgName = m.Organization.Name, m.OrganizationId, m.AvatarObjectKey })
+                .ToListAsync(ct);
+
+        var contactSet = (await AcceptedContactIds(db, userId).Where(id => rowIds.Contains(id)).ToListAsync(ct)).ToHashSet();
+        var orgsByUser = sharedOrgRows.GroupBy(x => x.Id).ToDictionary(
+            g => g.Key,
+            g => new
+            {
+                Names = g.Select(x => x.OrgName).Distinct().OrderBy(n => n).ToArray(),
+                AvatarUrl = g.Where(x => !string.IsNullOrEmpty(x.AvatarObjectKey))
+                    .Select(x => $"/api/organizations/{x.OrganizationId}/people/{x.Id}/avatar")
+                    .FirstOrDefault()
+            });
+
+        var items = rows.Select(r =>
+        {
+            orgsByUser.TryGetValue(r.Id, out var orgInfo);
+            return new
+            {
+                id = r.Id,
+                username = r.Username,
+                displayName = r.DisplayName,
+                avatarUrl = orgInfo?.AvatarUrl,
+                isContact = contactSet.Contains(r.Id),
+                workspaceNames = orgInfo?.Names ?? Array.Empty<string>()
+            };
+        }).ToList();
+
+        return Results.Ok(new { items });
+    }
 
     private static async Task<IResult> ListDirectoryAsync(string? q, [FromServices] NexusDbContext db, Guid? after, int? limit, CancellationToken ct)
     {

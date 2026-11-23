@@ -173,6 +173,65 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         Assert.Single((await GetAsync(bob, $"{personalPath}/messages")).GetProperty("items").EnumerateArray());
     }
 
+    [Fact]
+    public async Task UnifiedPersonalChatAllowsSharedWorkspaceMembersAndPreservesHistoryAfterRevocation()
+    {
+        await using var app = NexusHost.Build([
+            "--urls", "http://127.0.0.1:0", "--NexusDatabase:RequireTls=false",
+            "--NexusOrganizations:AllowCreation=true", "--NexusSecurity:RateLimitPermitsPerMinute=240",
+            $"--ConnectionStrings:Runtime={pg.RuntimeConnectionString}"
+        ], additionalLogSink: new ErrorSink(output));
+        await app.StartAsync();
+        var baseUri = new Uri(Assert.Single(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses));
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        using var alice = Client(baseUri, out _);
+        using var bob = Client(baseUri, out var bobCookies);
+        await RegisterAsync(alice, "unialice_" + suffix);
+        var bobId = await RegisterAsync(bob, "unibob_" + suffix);
+
+        // Before sharing a workspace or becoming contacts, bob is not a chat candidate and DM is denied.
+        Assert.Empty((await GetAsync(alice, "/api/personal/people/chat-candidates")).GetProperty("items").EnumerateArray());
+        using var deniedDm = await alice.PostAsJsonAsync("/api/personal/conversations/dm", new { targetUserId = bobId });
+        Assert.Equal(HttpStatusCode.NotFound, deniedDm.StatusCode);
+
+        // Alice creates a workspace and invites Bob (no personal contact request).
+        var org = (await ProtectedAsync(alice, "/api/organizations", new { name = "Unified Workspace" }, HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var orgPath = $"/api/organizations/{org}";
+        var token = (await ProtectedAsync(alice, $"{orgPath}/invitations", new { }, HttpStatusCode.OK)).GetProperty("token").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, await RedeemAsync(bob, token));
+
+        // Bob now appears in Alice's unified chat candidates with the shared workspace name.
+        var candidate = Assert.Single((await GetAsync(alice, "/api/personal/people/chat-candidates")).GetProperty("items").EnumerateArray());
+        Assert.Equal(bobId, candidate.GetProperty("id").GetGuid());
+        Assert.False(candidate.GetProperty("isContact").GetBoolean());
+        Assert.Contains("Unified Workspace", candidate.GetProperty("workspaceNames").EnumerateArray().Select(e => e.GetString()));
+
+        // Alice can open a unified personal DM directly with Bob without a friend request.
+        var dm = await PostAsync(alice, "/api/personal/conversations/dm", new { targetUserId = bobId }, HttpStatusCode.OK);
+        var dmId = dm.GetProperty("id").GetGuid();
+        await PostAsync(alice, $"/api/personal/conversations/{dmId}/messages", new { body = "Shared workspace DM", clientMsgId = "uni-msg-1" }, HttpStatusCode.Created);
+        Assert.Single((await GetAsync(bob, $"/api/personal/conversations/{dmId}/messages")).GetProperty("items").EnumerateArray());
+
+        // Bob connects to the single unified personal hub and receives OrganizationAccessRevoked when removed.
+        await using var personalHub = new HubConnectionBuilder()
+            .WithUrl(new Uri(baseUri, "/hubs/personal/messaging"), o => o.Cookies = bobCookies)
+            .Build();
+        var revokedOrg = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var revokedSub = personalHub.On<JsonElement>("OrganizationAccessRevoked", payload =>
+            revokedOrg.TrySetResult(payload.GetProperty("organizationId").GetGuid()));
+        await personalHub.StartAsync();
+
+        await ProtectedAsync(alice, $"{orgPath}/members/{bobId}", null, HttpStatusCode.NoContent, HttpMethod.Delete);
+        Assert.Equal(org, await revokedOrg.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // Workspace directory and communities are immediately revoked, while unified 1-on-1 DM history persists.
+        using var revokedDir = await bob.GetAsync($"{orgPath}/people/directory");
+        Assert.Equal(HttpStatusCode.Forbidden, revokedDir.StatusCode);
+        using var revokedComm = await bob.GetAsync($"{orgPath}/communities");
+        Assert.Equal(HttpStatusCode.Forbidden, revokedComm.StatusCode);
+        Assert.Single((await GetAsync(bob, $"/api/personal/conversations/{dmId}/messages")).GetProperty("items").EnumerateArray());
+    }
+
     private static HttpClient Client(Uri uri, out CookieContainer cookies)
     {
         cookies = new CookieContainer();

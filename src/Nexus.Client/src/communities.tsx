@@ -1,4 +1,4 @@
-import { scopedFetch as fetch } from "./scope";
+import { orgApiPath, orgFetch } from './scope';
 import { FormEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -6,6 +6,8 @@ import {
   Bell,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Compass,
   Download,
   Hash,
@@ -15,13 +17,16 @@ import {
   Pin,
   Plus,
   RefreshCw,
+  Search,
   Send,
+  Settings,
   ShieldCheck,
   Trash2,
   UserPlus,
   Users
 } from 'lucide-react';
 import { CommunityFeedDelta } from './chat';
+import { OrganizationItem } from './organizationControls';
 import { renderSafeMarkdown } from './markdown';
 import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
 
@@ -34,6 +39,8 @@ export interface CommunityChannelDto {
 
 export interface CommunityItemDto {
   id: string;
+  organizationId: string;
+  organizationName: string;
   name: string;
   description?: string | null;
   visibility: string;
@@ -133,11 +140,11 @@ export interface DepartmentLite {
 interface CommunitiesWorkspaceProps {
   currentUserId: string;
   currentDisplayName: string;
-  currentOrgRole: string;
-  currentIsUnverified: boolean;
-  directoryUsers: DirectoryUserLite[];
-  departments: DepartmentLite[];
+  organizations: OrganizationItem[];
   feedListenerRef: RefObject<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>;
+  onOpenCreateWorkspace: () => void;
+  onOpenJoinWorkspace: () => void;
+  onOpenWorkspaceSettings: (org: OrganizationItem) => void;
 }
 
 const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
@@ -170,21 +177,28 @@ function formatPostTime(iso: string): string {
 export function CommunitiesWorkspace({
   currentUserId,
   currentDisplayName,
-  currentOrgRole,
-  currentIsUnverified,
-  directoryUsers,
-  departments,
-  feedListenerRef
+  organizations,
+  feedListenerRef,
+  onOpenCreateWorkspace,
+  onOpenJoinWorkspace,
+  onOpenWorkspaceSettings
 }: CommunitiesWorkspaceProps) {
   const [communities, setCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverCommunities, setDiscoverCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverMode, setDiscoverMode] = useState(false);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
+  const [sidebarFilter, setSidebarFilter] = useState('');
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({});
+  const [orgDirectoryByOrg, setOrgDirectoryByOrg] = useState<Record<string, DirectoryUserLite[]>>({});
+  const [orgDepartmentsByOrg, setOrgDepartmentsByOrg] = useState<Record<string, DepartmentLite[]>>({});
+  const [createOrgId, setCreateOrgId] = useState<string>('');
 
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const activeFeedRef = useRef(selectedConversationId);
   activeFeedRef.current = selectedConversationId;
+  const orgById = useMemo(() => new Map(organizations.map(o => [o.id, o])), [organizations]);
+  const communityOrgByConvRef = useRef(new Map<string, string>());
 
   const [posts, setPosts] = useState<ChannelPostDto[]>([]);
   const postsCacheRef = useRef(new Map<string, { items: ChannelPostDto[]; canPost: boolean; canManage: boolean }>());
@@ -240,6 +254,11 @@ export function CommunitiesWorkspace({
     [communities, selectedCommunityId]
   );
 
+  const activeOrgId = selectedCommunity?.organizationId ?? null;
+  const activeOrg = activeOrgId ? orgById.get(activeOrgId) ?? null : null;
+  const directoryUsers = activeOrgId ? (orgDirectoryByOrg[activeOrgId] ?? []) : [];
+  const departments = activeOrgId ? (orgDepartmentsByOrg[activeOrgId] ?? []) : [];
+
   const selectedSubChannel = useMemo(() => {
     if (!selectedCommunity || !selectedConversationId) return null;
     if (selectedConversationId === selectedCommunity.mainFeedConversationId) return null;
@@ -247,31 +266,63 @@ export function CommunitiesWorkspace({
   }, [selectedCommunity, selectedConversationId]);
 
   const loadCommunities = useCallback(async () => {
-    const res = await fetch('/api/communities?limit=50', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      const items: CommunityItemDto[] = data.items ?? [];
-      setCommunities(items);
-      return items;
+    if (organizations.length === 0) {
+      setCommunities([]);
+      communityOrgByConvRef.current.clear();
+      return [];
     }
-    return [];
-  }, []);
+    const results = await Promise.all(
+      organizations.map(async org => {
+        const res = await orgFetch(org.id, '/api/communities?limit=50', { credentials: 'same-origin' });
+        if (!res.ok) return [] as CommunityItemDto[];
+        const data = await res.json();
+        return ((data.items ?? []) as Omit<CommunityItemDto, 'organizationId' | 'organizationName'>[]).map(item => ({
+          ...item,
+          organizationId: org.id,
+          organizationName: org.name
+        }));
+      })
+    );
+    const items = results.flat();
+    const convMap = new Map<string, string>();
+    for (const comm of items) {
+      if (comm.mainFeedConversationId) convMap.set(comm.mainFeedConversationId, comm.organizationId);
+      for (const ch of comm.channels) convMap.set(ch.id, comm.organizationId);
+    }
+    communityOrgByConvRef.current = convMap;
+    setCommunities(items);
+    return items;
+  }, [organizations]);
 
   const loadDiscover = useCallback(async () => {
+    if (organizations.length === 0) {
+      setDiscoverCommunities([]);
+      return;
+    }
     setLoadingDiscover(true);
     try {
-      const res = await fetch('/api/communities?discover=true&limit=50', { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
-        setDiscoverCommunities(data.items ?? []);
-      }
+      const results = await Promise.all(
+        organizations.map(async org => {
+          const res = await orgFetch(org.id, '/api/communities?discover=true&limit=50', { credentials: 'same-origin' });
+          if (!res.ok) return [] as CommunityItemDto[];
+          const data = await res.json();
+          return ((data.items ?? []) as Omit<CommunityItemDto, 'organizationId' | 'organizationName'>[]).map(item => ({
+            ...item,
+            organizationId: org.id,
+            organizationName: org.name
+          }));
+        })
+      );
+      setDiscoverCommunities(results.flat());
     } finally {
       setLoadingDiscover(false);
     }
-  }, []);
+  }, [organizations]);
 
-  const loadPosts = useCallback(async function loadPosts(conversationId: string, background = false) {
+  const loadPosts = useCallback(async function loadPosts(conversationId: string, background = false, explicitOrgId?: string) {
     if (activeFeedRef.current !== conversationId) return;
+    const orgId = explicitOrgId ?? communityOrgByConvRef.current.get(conversationId);
+    if (!orgId) return;
 
     const previous = feedRequestRef.current;
     if (background && previous?.conversationId === conversationId) {
@@ -285,7 +336,7 @@ export function CommunitiesWorkspace({
     if (!background) setLoadingPosts(true);
 
     try {
-      const res = await fetch(`/api/channels/${conversationId}/posts?limit=50`, {
+      const res = await orgFetch(orgId, `/api/channels/${conversationId}/posts?limit=50`, {
         credentials: 'same-origin',
         signal: request.controller.signal
       });
@@ -294,7 +345,6 @@ export function CommunitiesWorkspace({
 
       if (res.ok) {
         const items: ChannelPostDto[] = data.items ?? [];
-        // A fetch started before the reaction was saved can contain an older reaction count.
         const nextPosts = items.map(post => request.confirmedReactions.reduce(
           (current, change) => change.postId === current.id ? applyReaction(current, change) : current,
           post
@@ -321,27 +371,49 @@ export function CommunitiesWorkspace({
       if (feedRequestRef.current === request) {
         feedRequestRef.current = null;
         setLoadingPosts(false);
-        if (request.refreshQueued) void loadPosts(conversationId, true);
+        if (request.refreshQueued) void loadPosts(conversationId, true, orgId);
       }
     }
   }, []);
 
-  const loadMembers = useCallback(async (communityId: string) => {
+  const loadMembers = useCallback(async (orgId: string, communityId: string) => {
     setLoadingMembers(true);
     try {
-      const res = await fetch(`/api/communities/${communityId}/members?limit=50`, { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
+      const [membersRes, dirRes, deptRes] = await Promise.all([
+        orgFetch(orgId, `/api/communities/${communityId}/members?limit=50`, { credentials: 'same-origin' }),
+        orgDirectoryByOrg[orgId]
+          ? Promise.resolve(null)
+          : orgFetch(orgId, '/api/people/directory?limit=50', { credentials: 'same-origin' }),
+        orgDepartmentsByOrg[orgId]
+          ? Promise.resolve(null)
+          : orgFetch(orgId, '/api/org/departments?limit=50', { credentials: 'same-origin' })
+      ]);
+      if (membersRes.ok) {
+        const data = await membersRes.json();
         setMembers(data.items ?? []);
+      }
+      if (dirRes && dirRes.ok) {
+        const dirData = await dirRes.json();
+        setOrgDirectoryByOrg(prev => ({ ...prev, [orgId]: dirData.items ?? [] }));
+      }
+      if (deptRes && deptRes.ok) {
+        const deptData = await deptRes.json();
+        setOrgDepartmentsByOrg(prev => ({ ...prev, [orgId]: deptData.items ?? [] }));
       }
     } finally {
       setLoadingMembers(false);
     }
-  }, []);
+  }, [orgDepartmentsByOrg, orgDirectoryByOrg]);
 
   useEffect(() => {
     void loadCommunities().then(items => {
-      if (items.length > 0 && !initialCommunitySelectedRef.current) {
+      if (items.length === 0) {
+        setSelectedCommunityId(null);
+        setSelectedConversationId(null);
+        initialCommunitySelectedRef.current = false;
+        return;
+      }
+      if (!initialCommunitySelectedRef.current || !items.some(c => c.id === selectedCommunityId)) {
         initialCommunitySelectedRef.current = true;
         setSelectedCommunityId(items[0].id);
         if (items[0].mainFeedConversationId) {
@@ -442,7 +514,7 @@ export function CommunitiesWorkspace({
     if (selectedCommunity) {
       setMappedDeptId(selectedCommunity.mappedDepartmentId ?? '');
       if (membersOpen) {
-        void loadMembers(selectedCommunity.id);
+        void loadMembers(selectedCommunity.organizationId, selectedCommunity.id);
       }
     }
   }, [selectedCommunity, membersOpen, loadMembers]);
@@ -462,11 +534,19 @@ export function CommunitiesWorkspace({
     setSelectedConversationId(ch.id);
   }
 
+  function openCreateCommunity(orgId?: string) {
+    const target = orgId || activeOrgId || organizations[0]?.id || '';
+    setCreateOrgId(target);
+    setCreateOpen(true);
+  }
+
   async function handleCreateCommunity(e: FormEvent) {
     e.preventDefault();
+    const targetOrgId = createOrgId || organizations[0]?.id;
+    if (!targetOrgId) return;
     setError('');
     setNotice('');
-    const res = await fetch('/api/communities', {
+    const res = await orgFetch(targetOrgId, '/api/communities', {
       method: 'POST',
       credentials: 'same-origin',
       headers: {
@@ -496,10 +576,10 @@ export function CommunitiesWorkspace({
     setNotice(`Community "${data.name}" created.`);
   }
 
-  async function handleJoinCommunity(communityId: string) {
+  async function handleJoinCommunity(orgId: string, communityId: string) {
     setError('');
     setNotice('');
-    const res = await fetch(`/api/communities/${communityId}/join`, {
+    const res = await orgFetch(orgId, `/api/communities/${communityId}/join`, {
       method: 'POST',
       credentials: 'same-origin'
     });
@@ -520,9 +600,11 @@ export function CommunitiesWorkspace({
   async function handleCreateChannel(e: FormEvent) {
     e.preventDefault();
     if (!addChannelForId) return;
+    const comm = communities.find(c => c.id === addChannelForId);
+    if (!comm) return;
     setError('');
     setNotice('');
-    const res = await fetch(`/api/communities/${addChannelForId}/channels`, {
+    const res = await orgFetch(comm.organizationId, `/api/communities/${addChannelForId}/channels`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -623,7 +705,9 @@ export function CommunitiesWorkspace({
     setPollAllowMultiple(false);
 
     try {
-      const res = await fetch(`/api/channels/${targetConvId}/posts`, {
+      const targetOrgId = activeOrgId ?? communityOrgByConvRef.current.get(targetConvId);
+      if (!targetOrgId) return;
+      const res = await orgFetch(targetOrgId, `/api/channels/${targetConvId}/posts`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -686,7 +770,9 @@ export function CommunitiesWorkspace({
       .map(p => p.id === post.id ? { ...p, isPinned: nextPinned } : p)
       .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
     );
-    const res = await fetch(`/api/posts/${post.id}/pin`, {
+    const orgId = activeOrgId ?? communityOrgByConvRef.current.get(post.conversationId);
+    if (!orgId) return;
+    const res = await orgFetch(orgId, `/api/posts/${post.id}/pin`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -711,7 +797,9 @@ export function CommunitiesWorkspace({
           : p
       ));
     }
-    const res = await fetch(`/api/posts/${postId}/acknowledge`, {
+    const orgId = activeOrgId ?? (convId ? communityOrgByConvRef.current.get(convId) : undefined);
+    if (!orgId) return;
+    const res = await orgFetch(orgId, `/api/posts/${postId}/acknowledge`, {
       method: 'PUT',
       credentials: 'same-origin'
     });
@@ -733,7 +821,8 @@ export function CommunitiesWorkspace({
   async function handleRemind(postId: string) {
     setError('');
     setNotice('');
-    const res = await fetch(`/api/posts/${postId}/remind`, {
+    if (!activeOrgId) return;
+    const res = await orgFetch(activeOrgId, `/api/posts/${postId}/remind`, {
       method: 'POST',
       credentials: 'same-origin'
     });
@@ -756,7 +845,9 @@ export function CommunitiesWorkspace({
     setError('');
 
     try {
-      const res = await fetch(`/api/posts/${post.id}/reactions/${encodeURIComponent(emoji)}`, {
+      const orgId = activeOrgId ?? communityOrgByConvRef.current.get(post.conversationId);
+      if (!orgId) throw new Error('Missing workspace');
+      const res = await orgFetch(orgId, `/api/posts/${post.id}/reactions/${encodeURIComponent(emoji)}`, {
         method: reactedByMe ? 'PUT' : 'DELETE',
         credentials: 'same-origin'
       });
@@ -814,7 +905,9 @@ export function CommunitiesWorkspace({
       }));
     }
 
-    const res = await fetch(`/api/polls/${poll.id}/vote`, {
+    const orgId = activeOrgId ?? (convId ? communityOrgByConvRef.current.get(convId) : undefined);
+    if (!orgId) return;
+    const res = await orgFetch(orgId, `/api/polls/${poll.id}/vote`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -852,7 +945,9 @@ export function CommunitiesWorkspace({
       ));
     }
 
-    const res = await fetch(`/api/posts/${postId}/comments`, {
+    const orgId = activeOrgId ?? (convId ? communityOrgByConvRef.current.get(convId) : undefined);
+    if (!orgId) return;
+    const res = await orgFetch(orgId, `/api/posts/${postId}/comments`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -884,7 +979,7 @@ export function CommunitiesWorkspace({
     e.preventDefault();
     if (!selectedCommunity || !addMemberUserId) return;
     setError('');
-    const res = await fetch(`/api/communities/${selectedCommunity.id}/members`, {
+    const res = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/members`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -896,14 +991,14 @@ export function CommunitiesWorkspace({
       return;
     }
     setAddMemberUserId('');
-    await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
+    await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
     setNotice('Member added to community.');
   }
 
   async function handleRemoveMember(targetUserId: string) {
     if (!selectedCommunity) return;
     setError('');
-    const res = await fetch(`/api/communities/${selectedCommunity.id}/members/${targetUserId}`, {
+    const res = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/members/${targetUserId}`, {
       method: 'DELETE',
       credentials: 'same-origin'
     });
@@ -912,14 +1007,14 @@ export function CommunitiesWorkspace({
       setError(data.message || 'Unable to remove member.');
       return;
     }
-    await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
+    await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
     setNotice('Member removed. Access revoked across all channels.');
   }
 
   async function handleToggleAdmin(member: CommunityMemberDto) {
     if (!selectedCommunity) return;
     setError('');
-    const res = await fetch(`/api/communities/${selectedCommunity.id}/admins/${member.userId}`, {
+    const res = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/admins/${member.userId}`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -930,13 +1025,13 @@ export function CommunitiesWorkspace({
       setError(data.message || 'Unable to update member role.');
       return;
     }
-    await loadMembers(selectedCommunity.id);
+    await loadMembers(selectedCommunity.organizationId, selectedCommunity.id);
   }
 
   async function handleLeaveCommunity() {
     if (!selectedCommunity) return;
     setError('');
-    const res = await fetch(`/api/communities/${selectedCommunity.id}/leave`, {
+    const res = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/leave`, {
       method: 'POST',
       credentials: 'same-origin'
     });
@@ -957,7 +1052,7 @@ export function CommunitiesWorkspace({
     setError('');
     setNotice('');
     const nextOfficial = !selectedCommunity.isOfficial;
-    const res = await fetch(`/api/communities/${selectedCommunity.id}/official`, {
+    const res = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/official`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -976,7 +1071,7 @@ export function CommunitiesWorkspace({
     if (!selectedCommunity) return;
     setError('');
     setNotice('');
-    const mapRes = await fetch(`/api/communities/${selectedCommunity.id}/department-mapping`, {
+    const mapRes = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/department-mapping`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -987,7 +1082,7 @@ export function CommunitiesWorkspace({
       return;
     }
     if (mappedDeptId) {
-      const syncRes = await fetch(`/api/communities/${selectedCommunity.id}/sync-department`, {
+      const syncRes = await orgFetch(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/sync-department`, {
         method: 'POST',
         credentials: 'same-origin'
       });
@@ -996,7 +1091,7 @@ export function CommunitiesWorkspace({
         setError(data.message || 'Unable to sync department members.');
         return;
       }
-      await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
+      await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
       setNotice(`Department synced · Added ${data.addedCount ?? 0}, unchanged ${data.unchangedCount ?? 0}.`);
     } else {
       await loadCommunities();
@@ -1013,52 +1108,74 @@ export function CommunitiesWorkspace({
     ? selectedSubChannel.postingPolicy
     : selectedCommunity?.mainFeedPostingPolicy ?? 'Members';
 
+  const normalizedFilter = sidebarFilter.trim().toLowerCase();
+
+  const filteredDiscover = useMemo(() => {
+    if (!normalizedFilter) return discoverCommunities;
+    return discoverCommunities.filter(comm =>
+      comm.name.toLowerCase().includes(normalizedFilter) ||
+      comm.organizationName.toLowerCase().includes(normalizedFilter) ||
+      (comm.description ?? '').toLowerCase().includes(normalizedFilter)
+    );
+  }, [discoverCommunities, normalizedFilter]);
+
+  const workspaceGroups = useMemo(() => {
+    return organizations.map(org => {
+      const orgComms = communities.filter(c => c.organizationId === org.id);
+      const matchesOrg = !normalizedFilter || org.name.toLowerCase().includes(normalizedFilter);
+      const visibleComms = matchesOrg
+        ? orgComms
+        : orgComms.filter(comm =>
+            comm.name.toLowerCase().includes(normalizedFilter) ||
+            comm.channels.some(ch => ch.name.toLowerCase().includes(normalizedFilter))
+          );
+      return { org, allCount: orgComms.length, communities: visibleComms };
+    }).filter(group => !normalizedFilter || group.communities.length > 0 || group.org.name.toLowerCase().includes(normalizedFilter));
+  }, [organizations, communities, normalizedFilter]);
+
   return (
     <div className={`nx-chat-layout ${selectedConversationId ? 'has-selection' : ''}`}>
-      {/* Left Sidebar: Teams Communities Tree & Browse */}
-      <aside className="nx-chat-sidebar" aria-label="Communities">
-        <div className="nx-side-header">
-          <div className="nx-side-header-row">
-            <h2>{discoverMode ? 'Browse communities' : 'Communities'}</h2>
-            <div className="nx-inline-actions">
+      {/* Left Sidebar: Multi-Workspace Communities Tree & Browse */}
+      <aside className="nx-chat-sidebar" aria-label="Workspaces and communities">
+        <div className="nx-comm-sidebar-head">
+          <div className="nx-comm-sidebar-row">
+            <div className="nx-search-input-wrap" style={{ flex: 1 }}>
+              <Search size={14} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="Filter workspaces and communities"
+                placeholder="Filter communities…"
+                value={sidebarFilter}
+                onChange={e => setSidebarFilter(e.target.value)}
+              />
+            </div>
+            {organizations.length > 0 && (
               <Button
-                variant="primary"
+                variant={discoverMode ? 'primary' : 'default'}
                 size="sm"
                 iconOnly
-                aria-label="Create community"
-                title="Create community"
-                onClick={() => setCreateOpen(true)}
+                aria-label={discoverMode ? 'Back to my communities' : 'Browse shared communities'}
+                title={discoverMode ? 'My communities' : 'Browse shared communities'}
+                onClick={() => setDiscoverMode(v => !v)}
               >
-                <Plus size={15} aria-hidden="true" />
+                {discoverMode ? <ArrowLeft size={15} aria-hidden="true" /> : <Compass size={15} aria-hidden="true" />}
               </Button>
-            </div>
-          </div>
-          <Button
-            variant={discoverMode ? 'primary' : 'default'}
-            size="sm"
-            fullWidth
-            onClick={() => setDiscoverMode(v => !v)}
-          >
-            {discoverMode ? (
-              <>
-                <ArrowLeft size={14} aria-hidden="true" /> My communities
-              </>
-            ) : (
-              <>
-                <Compass size={14} aria-hidden="true" /> Browse communities
-              </>
             )}
-          </Button>
+          </div>
         </div>
 
         <div className="nx-conv-scroll">
-          {discoverMode ? (
+          {organizations.length === 0 ? (
+            <div className="nx-empty-side">
+              <p style={{ margin: 0 }}>Create or join a workspace to organize communities and channels.</p>
+            </div>
+          ) : discoverMode ? (
             loadingDiscover ? (
               <div className="nx-empty-side" role="status">Loading communities…</div>
-            ) : discoverCommunities.length === 0 ? (
-              <div className="nx-empty-side">No communities open to organization members yet.</div>
+            ) : filteredDiscover.length === 0 ? (
+              <div className="nx-empty-side">No shared communities found.</div>
             ) : (
-              discoverCommunities.map(comm => (
+              filteredDiscover.map(comm => (
                 <div className="nx-discover-card" key={comm.id}>
                   <div className="nx-discover-head">
                     <strong className="nx-conv-name">
@@ -1067,6 +1184,9 @@ export function CommunitiesWorkspace({
                     </strong>
                     <span className="nx-muted">{comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}</span>
                   </div>
+                  {organizations.length > 1 && (
+                    <div className="nx-muted" style={{ fontSize: 12 }}>{comm.organizationName}</div>
+                  )}
                   {comm.description && <p className="nx-discover-desc">{comm.description}</p>}
                   <div className="nx-discover-actions">
                     {comm.isMember ? (
@@ -1074,7 +1194,7 @@ export function CommunitiesWorkspace({
                         Open
                       </Button>
                     ) : (
-                      <Button size="sm" variant="primary" onClick={() => void handleJoinCommunity(comm.id)}>
+                      <Button size="sm" variant="primary" onClick={() => void handleJoinCommunity(comm.organizationId, comm.id)}>
                         Join
                       </Button>
                     )}
@@ -1082,82 +1202,149 @@ export function CommunitiesWorkspace({
                 </div>
               ))
             )
-          ) : communities.length === 0 ? (
-            <div className="nx-empty-side">
-              <p style={{ margin: 0 }}>You have not joined any communities yet.</p>
-            </div>
+          ) : workspaceGroups.length === 0 ? (
+            <div className="nx-empty-side">No matching workspaces or communities.</div>
           ) : (
-            communities.map(comm => {
-              const isMainActive =
-                selectedCommunityId === comm.id &&
-                selectedConversationId === comm.mainFeedConversationId;
-              const isManager = comm.myRole === 'Owner' || comm.myRole === 'Admin';
-
-              return (
-                <div className="nx-comm-tree-group" key={comm.id}>
-                  <button
-                    type="button"
-                    className={`nx-comm-row ${isMainActive ? 'active' : ''}`}
-                    onClick={() => selectCommunityMainFeed(comm)}
-                  >
-                    <span className="nx-comm-emblem" aria-hidden="true">
-                      {comm.name.trim().slice(0, 2).toUpperCase()}
-                    </span>
-                    <div className="nx-conv-meta">
-                      <div className="nx-conv-top">
-                        <span className="nx-conv-name">
-                          <span>{comm.name}</span>
-                          {comm.visibility === 'Private' && <Lock size={12} aria-label="Invite only" />}
-                        </span>
-                        {comm.isOfficial && <Badge variant="role">Official</Badge>}
-                      </div>
-                      <div className="nx-conv-sub">
-                        {comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}
-                        {comm.channels.length > 0 ? ` · ${comm.channels.length} ${comm.channels.length === 1 ? 'channel' : 'channels'}` : ''}
-                      </div>
-                    </div>
-                  </button>
-
-                  {comm.channels.length > 0 && (
-                    <div className="nx-comm-channels">
-                      {comm.channels.map(ch => {
-                        const isChActive = selectedConversationId === ch.id;
-                        return (
-                          <button
-                            type="button"
-                            key={ch.id}
-                            className={`nx-channel-row ${isChActive ? 'active' : ''}`}
-                            onClick={() => selectSubChannel(comm, ch)}
+            <div className="nx-ws-list">
+              {workspaceGroups.map(({ org, allCount, communities: orgComms }) => {
+                const isCollapsed = Boolean(collapsedWorkspaces[org.id]) && !normalizedFilter;
+                const canAdminWorkspace = org.isOwner || org.role === 'SystemAdmin';
+                return (
+                  <section className="nx-ws-group" key={org.id} aria-label={org.name}>
+                    <div className="nx-ws-header">
+                      <button
+                        type="button"
+                        className="nx-ws-toggle"
+                        aria-expanded={!isCollapsed}
+                        onClick={() =>
+                          setCollapsedWorkspaces(prev => ({ ...prev, [org.id]: !prev[org.id] }))
+                        }
+                      >
+                        {isCollapsed ? (
+                          <ChevronRight size={14} aria-hidden="true" />
+                        ) : (
+                          <ChevronDown size={14} aria-hidden="true" />
+                        )}
+                        <span className="nx-ws-name">{org.name}</span>
+                      </button>
+                      <div className="nx-ws-actions">
+                        {canAdminWorkspace && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            aria-label={`${org.name} workspace settings`}
+                            title="Workspace settings"
+                            onClick={() => onOpenWorkspaceSettings(org)}
                           >
-                            {ch.postingPolicy === 'AdminsOnly' ? (
-                              <Megaphone size={14} aria-hidden="true" />
-                            ) : (
-                              <Hash size={14} aria-hidden="true" />
-                            )}
-                            <span className="nx-channel-name">{ch.name}</span>
-                          </button>
-                        );
-                      })}
+                            <Settings size={14} aria-hidden="true" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          aria-label={`Create community in ${org.name}`}
+                          title="Create community"
+                          onClick={() => openCreateCommunity(org.id)}
+                        >
+                          <Plus size={14} aria-hidden="true" />
+                        </Button>
+                      </div>
                     </div>
-                  )}
 
-                  {isManager && (
-                    <button
-                      type="button"
-                      className="nx-add-channel-btn"
-                      onClick={() => {
-                        setAddChannelForId(comm.id);
-                        setNewChannelName('');
-                        setNewChannelPolicy('Members');
-                      }}
-                    >
-                      <Plus size={13} aria-hidden="true" /> Add channel
-                    </button>
-                  )}
-                </div>
-              );
-            })
+                    {!isCollapsed && (
+                      orgComms.length === 0 ? (
+                        <div className="nx-ws-empty">
+                          {allCount === 0 ? 'No communities yet.' : 'No matches in this workspace.'}
+                        </div>
+                      ) : (
+                        orgComms.map(comm => {
+                          const isMainActive =
+                            selectedCommunityId === comm.id &&
+                            selectedConversationId === comm.mainFeedConversationId;
+                          const isManager = comm.myRole === 'Owner' || comm.myRole === 'Admin';
+
+                          return (
+                            <div className="nx-comm-tree-group" key={comm.id}>
+                              <button
+                                type="button"
+                                className={`nx-comm-row ${isMainActive ? 'active' : ''}`}
+                                onClick={() => selectCommunityMainFeed(comm)}
+                              >
+                                <span className="nx-comm-emblem" aria-hidden="true">
+                                  {comm.name.trim().slice(0, 2).toUpperCase()}
+                                </span>
+                                <div className="nx-conv-meta">
+                                  <div className="nx-conv-top">
+                                    <span className="nx-conv-name">
+                                      <span>{comm.name}</span>
+                                      {comm.visibility === 'Private' && <Lock size={12} aria-label="Private Community" />}
+                                    </span>
+                                    {comm.isOfficial && <Badge variant="role">Official</Badge>}
+                                  </div>
+                                  <div className="nx-conv-sub">
+                                    {comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}
+                                    {comm.channels.length > 0 ? ` · ${comm.channels.length} ${comm.channels.length === 1 ? 'channel' : 'channels'}` : ''}
+                                  </div>
+                                </div>
+                              </button>
+
+                              {comm.channels.length > 0 && (
+                                <div className="nx-comm-channels">
+                                  {comm.channels.map(ch => {
+                                    const isChActive = selectedConversationId === ch.id;
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={ch.id}
+                                        className={`nx-channel-row ${isChActive ? 'active' : ''}`}
+                                        onClick={() => selectSubChannel(comm, ch)}
+                                      >
+                                        {ch.postingPolicy === 'AdminsOnly' ? (
+                                          <Megaphone size={14} aria-hidden="true" />
+                                        ) : (
+                                          <Hash size={14} aria-hidden="true" />
+                                        )}
+                                        <span className="nx-channel-name">{ch.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {isManager && (
+                                <button
+                                  type="button"
+                                  className="nx-add-channel-btn"
+                                  onClick={() => {
+                                    setAddChannelForId(comm.id);
+                                    setNewChannelName('');
+                                    setNewChannelPolicy('Members');
+                                  }}
+                                >
+                                  <Plus size={13} aria-hidden="true" /> Add channel
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
+                      )
+                    )}
+                  </section>
+                );
+              })}
+            </div>
           )}
+        </div>
+
+        <div className="nx-ws-footer">
+          <Button variant="default" size="sm" onClick={onOpenCreateWorkspace}>
+            <Plus size={14} aria-hidden="true" /> Create workspace
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onOpenJoinWorkspace}>
+            Join
+          </Button>
         </div>
       </aside>
 
@@ -1167,22 +1354,38 @@ export function CommunitiesWorkspace({
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         {!selectedCommunity || !selectedConversationId ? (
-          discoverMode ? (
+          organizations.length === 0 ? (
+            <EmptyState
+              icon={<Users size={36} aria-hidden="true" />}
+              title="Workspaces and Communities"
+              description="Create a workspace for your company or team, or join one with an invitation link to collaborate in shared and private communities."
+              actions={
+                <div className="nx-inline-actions">
+                  <Button variant="primary" onClick={onOpenCreateWorkspace}>
+                    <Plus size={15} aria-hidden="true" /> Create workspace
+                  </Button>
+                  <Button variant="default" onClick={onOpenJoinWorkspace}>
+                    Join a workspace
+                  </Button>
+                </div>
+              }
+            />
+          ) : discoverMode ? (
             <EmptyState
               icon={<Compass size={36} aria-hidden="true" />}
               title={
-                discoverCommunities.length === 0
-                  ? 'No communities open to organization members yet'
-                  : 'Browse communities'
+                filteredDiscover.length === 0
+                  ? 'No shared communities yet'
+                  : 'Browse shared communities'
               }
               description={
-                discoverCommunities.length === 0
-                  ? 'Communities open to organization members will appear here.'
+                filteredDiscover.length === 0
+                  ? 'Shared communities across your workspaces will appear here.'
                   : 'Select a community from the list on the left to join or open its feed.'
               }
               actions={
-                discoverCommunities.length === 0 ? (
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                filteredDiscover.length === 0 ? (
+                  <Button variant="primary" onClick={() => openCreateCommunity()}>
                     <Plus size={15} aria-hidden="true" /> Create community
                   </Button>
                 ) : undefined
@@ -1194,7 +1397,7 @@ export function CommunitiesWorkspace({
               title="Welcome to Nexus Communities"
               description="Create a community for your team or department to share updates, announcements with read acknowledgments, and quick polls."
               actions={
-                <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                <Button variant="primary" onClick={() => openCreateCommunity()}>
                   <Plus size={15} aria-hidden="true" /> Create community
                 </Button>
               }
@@ -1229,7 +1432,9 @@ export function CommunitiesWorkspace({
                     {activePolicy === 'AdminsOnly' && <Badge variant="role">Admins only</Badge>}
                   </h3>
                   <div className="nx-stage-subtitle">
-                    <span>{selectedCommunity.visibility === 'Private' ? 'Invite only' : 'Open to organization members'}</span>
+                    <span>{selectedCommunity.organizationName}</span>
+                    <span>·</span>
+                    <span>{selectedCommunity.visibility === 'Private' ? 'Private Community' : 'Shared Community'}</span>
                     <span>·</span>
                     <span>Your role: {selectedCommunity.myRole ?? 'Member'}</span>
                     <span>·</span>
@@ -1509,7 +1714,7 @@ export function CommunitiesWorkspace({
                               <div className="nx-inline-actions">
                                 <a
                                   className="nx-btn nx-btn-sm"
-                                  href={`/api/posts/${post.id}/acknowledgments?format=csv`}
+                                  href={orgApiPath(selectedCommunity.organizationId, `/api/posts/${post.id}/acknowledgments?format=csv`)}
                                   download
                                 >
                                   <Download size={13} aria-hidden="true" /> Export CSV
@@ -1656,8 +1861,8 @@ export function CommunitiesWorkspace({
                   </div>
 
                   <div className="nx-drawer-body">
-                    {/* Official designation for Verified CommsAdmin */}
-                    {currentOrgRole === 'CommsAdmin' && !currentIsUnverified && (
+                    {/* Official designation for CommsAdmin */}
+                    {activeOrg?.role === 'CommsAdmin' && (
                       <div className="nx-drawer-section">
                         <Button variant="default" size="sm" fullWidth onClick={() => void handleToggleOfficial()}>
                           <ShieldCheck size={14} aria-hidden="true" />{' '}
@@ -1785,6 +1990,20 @@ export function CommunitiesWorkspace({
         description="Starts with a main community feed. You can add optional channels anytime."
       >
         <form onSubmit={handleCreateCommunity}>
+          {organizations.length > 1 && (
+            <Field label="Workspace" htmlFor="new-comm-workspace">
+              <select
+                id="new-comm-workspace"
+                className="nx-select"
+                value={createOrgId || organizations[0]?.id || ''}
+                onChange={e => setCreateOrgId(e.target.value)}
+              >
+                {organizations.map(org => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Community name" htmlFor="new-comm-name">
             <input
               id="new-comm-name"
@@ -1807,7 +2026,7 @@ export function CommunitiesWorkspace({
             />
           </Field>
           <fieldset className="nx-vis-fieldset">
-            <legend>Who can find and join</legend>
+            <legend>Community access</legend>
             <label className={`nx-vis-option ${newCommVisibility === 'Public' ? 'selected' : ''}`}>
               <input
                 type="radio"
@@ -1817,7 +2036,7 @@ export function CommunitiesWorkspace({
                 onChange={() => setNewCommVisibility('Public')}
               />
               <div>
-                <strong>Open to organization members</strong>
+                <strong>Shared Community</strong>
                 <p>Any active member of this workspace can browse and join. Official communities require a confirmed employee profile.</p>
               </div>
             </label>
@@ -1830,7 +2049,7 @@ export function CommunitiesWorkspace({
                 onChange={() => setNewCommVisibility('Private')}
               />
               <div>
-                <strong>Invite only</strong>
+                <strong>Private Community</strong>
                 <p>Hidden from Browse communities. Only people added by a community owner or admin can see and join.</p>
               </div>
             </label>

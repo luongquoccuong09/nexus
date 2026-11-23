@@ -11,6 +11,7 @@ public interface IUserConnectionRegistry
 {
     void Register(Guid userId, HubCallerContext callerContext);
     void Unregister(Guid userId, string connectionId);
+    IReadOnlyList<string> GetUserConnectionIds(Guid userId);
     int AbortUserConnections(Guid userId);
     void AbortOrganizationConnections(Guid organizationId, Guid userId);
 }
@@ -36,6 +37,9 @@ public sealed class InMemoryUserConnectionRegistry : IUserConnectionRegistry
             }
         }
     }
+
+    public IReadOnlyList<string> GetUserConnectionIds(Guid userId) =>
+        _connections.TryGetValue(userId, out var sockets) ? sockets.Keys.ToArray() : [];
 
     public int AbortUserConnections(Guid userId)
     {

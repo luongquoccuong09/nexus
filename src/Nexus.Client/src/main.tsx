@@ -1,9 +1,9 @@
-import { scopedFetch as fetch, isWorkspaceHome, organizationId, personalContactLink, rememberWorkspace, scopeApi, workspaceInvitation } from "./scope";
-import { ContactControls, OrganizationControls } from "./organizationControls";
-import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLink, workspaceInvitation } from './scope';
+import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
+import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
-import { ChatWorkspace, CommunityFeedDelta } from './chat';
+import { ChatWorkspace, CommunityFeedDelta, DirectoryUserLite } from './chat';
 import { CommunitiesWorkspace } from './communities';
 import { Avatar, Badge, Button, Card, Field, Modal, ToastBar } from './ui';
 import './style.css';
@@ -71,14 +71,31 @@ interface HrImportReport {
   }>;
 }
 
-async function searchDirectory(query: string, departmentId: string, signal?: AbortSignal): Promise<DirectoryProfile[]> {
+async function searchChatCandidates(query: string, signal?: AbortSignal): Promise<DirectoryUserLite[]> {
   const params = new URLSearchParams({ limit: '50' });
   const name = query.trim().replace(/^@/, '');
   if (name) params.set('q', name);
-  if (departmentId) params.set('departmentId', departmentId);
-  const res = await fetch(`/api/people/directory?${params}`, { signal });
-  if (!res.ok) throw new Error(organizationId ? 'Unable to load workspace members.' : 'Unable to load contacts.');
-  return (await res.json()).items;
+  const res = await fetch(`/api/people/chat-candidates?${params}`, { credentials: 'same-origin', signal });
+  if (!res.ok) throw new Error('Unable to load people you can message.');
+  return (await res.json()).items ?? [];
+}
+
+async function searchPeopleScope(
+  scope: 'contacts' | string,
+  query: string,
+  departmentId: string,
+  signal?: AbortSignal
+): Promise<DirectoryProfile[]> {
+  const params = new URLSearchParams({ limit: '50' });
+  const name = query.trim().replace(/^@/, '');
+  if (name) params.set('q', name);
+  if (scope !== 'contacts' && departmentId) params.set('departmentId', departmentId);
+
+  const res = scope === 'contacts'
+    ? await fetch(`/api/people/directory?${params}`, { credentials: 'same-origin', signal })
+    : await orgFetch(scope, `/api/people/directory?${params}`, { credentials: 'same-origin', signal });
+  if (!res.ok) throw new Error(scope === 'contacts' ? 'Unable to load contacts.' : 'Unable to load workspace members.');
+  return (await res.json()).items ?? [];
 }
 
 function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
@@ -88,7 +105,7 @@ function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
   onOpenContacts: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [people, setPeople] = useState<DirectoryProfile[]>([]);
+  const [people, setPeople] = useState<DirectoryUserLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchError, setSearchError] = useState('');
   const [openError, setOpenError] = useState('');
@@ -99,7 +116,7 @@ function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void searchDirectory(query, '', controller.signal).then(items => {
+      void searchChatCandidates(query, controller.signal).then(items => {
         if (!controller.signal.aborted) setPeople(items.filter(item => item.id !== currentUserId));
       }).catch((failure: Error) => {
         if (!controller.signal.aborted) setSearchError(failure.message);
@@ -121,35 +138,59 @@ function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
     finally { setOpening(false); }
   }
 
-  return <Modal open onOpenChange={open => { if (!open && !opening) onClose(); }} title="New chat"
-    description={organizationId ? 'Find someone in this workspace.' : 'Find an accepted contact or send a connection request.'}
-    initialFocusRef={searchInput}>
-    <Field label={organizationId ? 'Search workspace members' : 'Search contacts'} htmlFor="new-chat-search">
-      <input ref={searchInput} id="new-chat-search" type="search" placeholder="Name or username" value={query} onChange={event => {
-        setLoading(true);
-        setSearchError('');
-        setOpenError('');
-        setQuery(event.currentTarget.value);
-      }} />
-    </Field>
-    {openError && <p className="nx-error" role="alert">{openError}</p>}
-    {loading ? <p className="nx-muted" role="status">Searching…</p> : searchError ? (
-      <div className="nx-row">
-        <p className="nx-error" role="alert">{searchError}</p>
-        <Button size="sm" onClick={() => { setLoading(true); setSearchError(''); setAttempt(n => n + 1); }}>Retry</Button>
-      </div>
-    ) : people.length > 0 ? (
-      <ul className="nx-new-chat-results" aria-label={organizationId ? 'Workspace members' : 'Contacts'}>
-        {people.map(person => <li key={person.id}>
-          <Button variant="ghost" fullWidth disabled={opening} onClick={() => void choose(person.id)}>
-            <Avatar displayName={person.displayName} avatarUrl={person.avatarUrl} />
-            <span><strong>{person.displayName}</strong> <span className="nx-muted">@{person.username}</span></span>
-          </Button>
-        </li>)}
-      </ul>
-    ) : <p className="nx-muted" role="status">{organizationId ? 'No matching workspace members.' : 'No matching contacts.'}</p>}
-    {!organizationId && <Button onClick={onOpenContacts}>Add a contact</Button>}
-  </Modal>;
+  return (
+    <Modal
+      open
+      onOpenChange={open => { if (!open && !opening) onClose(); }}
+      title="New chat"
+      description="Message workspace members or accepted contacts in one unified chat list."
+      initialFocusRef={searchInput}
+    >
+      <Field label="Search people" htmlFor="new-chat-search">
+        <input
+          ref={searchInput}
+          id="new-chat-search"
+          type="search"
+          placeholder="Name or username"
+          value={query}
+          onChange={event => {
+            setLoading(true);
+            setSearchError('');
+            setOpenError('');
+            setQuery(event.currentTarget.value);
+          }}
+        />
+      </Field>
+      {openError && <p className="nx-error" role="alert">{openError}</p>}
+      {loading ? <p className="nx-muted" role="status">Searching…</p> : searchError ? (
+        <div className="nx-row">
+          <p className="nx-error" role="alert">{searchError}</p>
+          <Button size="sm" onClick={() => { setLoading(true); setSearchError(''); setAttempt(n => n + 1); }}>Retry</Button>
+        </div>
+      ) : people.length > 0 ? (
+        <ul className="nx-new-chat-results" aria-label="People you can message">
+          {people.map(person => {
+            const tag = [
+              ...(person.workspaceNames ?? []),
+              ...(person.isContact ? ['Contact'] : [])
+            ].join(', ');
+            return (
+              <li key={person.id}>
+                <Button variant="ghost" fullWidth disabled={opening} onClick={() => void choose(person.id)}>
+                  <Avatar displayName={person.displayName} avatarUrl={person.avatarUrl} />
+                  <span>
+                    <strong>{person.displayName}</strong>{' '}
+                    <span className="nx-muted">@{person.username}{tag ? ` · ${tag}` : ''}</span>
+                  </span>
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p className="nx-muted" role="status">No matching people yet.</p>}
+      <Button onClick={onOpenContacts}>Add an external contact</Button>
+    </Modal>
+  );
 }
 
 function App() {
@@ -157,23 +198,34 @@ function App() {
   const [versionStale, setVersionStale] = useState(false);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [user, setUser] = useState<UserSummary | null>(null);
+  const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
+  const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
+  const inviteAutoOpenedRef = useRef(false);
+
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const loginTabRef = useRef<HTMLButtonElement | null>(null);
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
+
   const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>(() => {
     if (personalContactLink) return 'directory';
+    if (initialOrganizationId) return 'communities';
     return new URLSearchParams(window.location.search).get('view') === 'security' ? 'security' : 'chat';
   });
   const [communitiesVisited, setCommunitiesVisited] = useState(() => workspaceTab === 'communities');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
+
   const communityFeedListenerRef = useRef<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>(null);
+  const refreshOrgSubscriptionsRef = useRef<(() => Promise<void>) | null>(null);
+  const reloadConversationsRef = useRef<(() => Promise<void>) | null>(null);
+
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nexus-theme') === 'dark');
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [chatCandidates, setChatCandidates] = useState<DirectoryUserLite[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [avatarBust, setAvatarBust] = useState(0);
@@ -192,6 +244,7 @@ function App() {
   const [regHoneypot, setRegHoneypot] = useState('');
 
   // Profile, Password & MFA state
+  const [profileOrgId, setProfileOrgId] = useState('');
   const [customStatusInput, setCustomStatusInput] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -199,14 +252,24 @@ function App() {
   const [mfaCode, setMfaCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
-  // Directory state
+  // People (Contacts + Multi-Workspace Directory) state
+  const [peopleFilter, setPeopleFilter] = useState<'contacts' | string>(() =>
+    personalContactLink ? 'contacts' : (initialOrganizationId ?? 'contacts')
+  );
+  const peopleFilterPickedRef = useRef(Boolean(personalContactLink || initialOrganizationId));
   const [dirQuery, setDirQuery] = useState('');
   const [dirDeptId, setDirDeptId] = useState('');
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
   const [directory, setDirectory] = useState<DirectoryProfile[]>([]);
+  const [loadingDirectory, setLoadingDirectory] = useState(false);
   const contactUsernameRef = useRef<HTMLInputElement | null>(null);
 
   // HR CSV Import state
+  const hrOrganizations = useMemo(
+    () => organizations.filter(org => org.role === 'HRAdmin'),
+    [organizations]
+  );
+  const [hrOrgId, setHrOrgId] = useState('');
   const [hrCsv, setHrCsv] = useState('employee_code,full_name,email,department_code,department_name,branch_code,branch_name,is_active\n');
   const [hrReport, setHrReport] = useState<HrImportReport | null>(null);
 
@@ -238,45 +301,92 @@ function App() {
     }
   }, []);
 
-  const loadDirectory = useCallback(async (q: string, deptId: string) => {
-    try { setDirectory(await searchDirectory(q, deptId)); } catch { setDirectory([]); }
+  const loadChatCandidates = useCallback(async () => {
+    try {
+      setChatCandidates(await searchChatCandidates(''));
+    } catch {
+      setChatCandidates([]);
+    }
   }, []);
 
-  const loadDepartments = useCallback(async () => {
-    if (!organizationId) return;
-    const res = await fetch('/api/org/departments?limit=50', { credentials: 'same-origin' });
+  const loadDirectory = useCallback(async (scope: 'contacts' | string, q: string, deptId: string) => {
+    setLoadingDirectory(true);
+    try {
+      setDirectory(await searchPeopleScope(scope, q, deptId));
+    } catch {
+      setDirectory([]);
+    } finally {
+      setLoadingDirectory(false);
+    }
+  }, []);
+
+  const loadDepartments = useCallback(async (orgId: string) => {
+    if (!orgId || orgId === 'contacts') {
+      setDepartments([]);
+      return;
+    }
+    const res = await orgFetch(orgId, '/api/org/departments?limit=50', { credentials: 'same-origin' });
     if (res.ok) {
       const data = await res.json();
       setDepartments(data.items ?? []);
+    } else {
+      setDepartments([]);
     }
+  }, []);
+
+  const syncOrgProfile = useCallback(async (orgId: string) => {
+    if (!orgId) return;
+    const res = await orgFetch(orgId, '/api/me', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const profile = await res.json();
+    setCustomStatusInput(profile.customStatus ?? '');
+    setUser(prev => prev ? { ...prev, customStatus: profile.customStatus ?? prev.customStatus, avatarUrl: profile.avatarUrl ?? prev.avatarUrl } : prev);
   }, []);
 
   const refreshMe = useCallback(async (): Promise<boolean> => {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-    if (res.ok) {
-      const account: UserSummary = await res.json();
-      let me = account;
-      if (organizationId) {
-        const profile = await fetch(`${scopeApi}/me`);
-        if (profile.status === 403 || profile.status === 404) {
-          window.location.replace('/');
-          return true;
-        }
-        if (!profile.ok) return false;
-        me = { ...account, ...await profile.json() };
-        rememberWorkspace(me.id, organizationId);
-      }
-      setUser(me);
-      setCustomStatusInput(me.customStatus ?? '');
-      if (!isWorkspaceHome) await Promise.all([loadSessions(), loadDepartments(), loadDirectory('', '')]);
-      return true;
-    } else {
+    if (!res.ok) {
       setUser(null);
+      setOrganizations([]);
       setSessions([]);
+      setChatCandidates([]);
       setDirectory([]);
       return false;
     }
-  }, [loadSessions, loadDepartments, loadDirectory]);
+
+    const account: UserSummary = await res.json();
+    const orgs = await listOrganizations().catch(() => [] as OrganizationItem[]);
+    setOrganizations(orgs);
+
+    let me = account;
+    const activeProfileOrg = orgs.find(o => o.id === initialOrganizationId) ?? orgs[0] ?? null;
+    if (activeProfileOrg) {
+      setProfileOrgId(prev => (prev && orgs.some(o => o.id === prev) ? prev : activeProfileOrg.id));
+      const profileRes = await orgFetch(activeProfileOrg.id, '/api/me', { credentials: 'same-origin' });
+      if (profileRes.ok) {
+        me = { ...account, ...(await profileRes.json()) };
+      }
+    } else {
+      setProfileOrgId('');
+    }
+
+    setUser(me);
+    setCustomStatusInput(me.customStatus ?? '');
+
+    if (!peopleFilterPickedRef.current && orgs.length > 0) {
+      setPeopleFilter(orgs[0].id);
+    } else if (peopleFilter !== 'contacts' && !orgs.some(o => o.id === peopleFilter)) {
+      setPeopleFilter(orgs[0]?.id ?? 'contacts');
+    }
+
+    if (workspaceInvitation && !inviteAutoOpenedRef.current) {
+      inviteAutoOpenedRef.current = true;
+      setWorkspaceModal({ mode: 'join', initialToken: workspaceInvitation });
+    }
+
+    await Promise.all([loadSessions(), loadChatCandidates()]);
+    return true;
+  }, [loadSessions, loadChatCandidates, peopleFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -301,6 +411,47 @@ function App() {
     void bootstrap();
     return () => controller.abort();
   }, [refreshMe]);
+
+  useEffect(() => {
+    if (!user || workspaceTab !== 'directory') return;
+    void loadDirectory(peopleFilter, dirQuery, dirDeptId);
+    void loadDepartments(peopleFilter);
+  }, [user, workspaceTab, peopleFilter, dirDeptId, loadDirectory, loadDepartments]);
+
+  useEffect(() => {
+    if (hrOrganizations.length > 0 && !hrOrganizations.some(o => o.id === hrOrgId)) {
+      setHrOrgId(hrOrganizations[0].id);
+    }
+  }, [hrOrganizations, hrOrgId]);
+
+  const handleOrganizationsChanged = useCallback(async (focusOrgId?: string) => {
+    const nextOrgs = await listOrganizations().catch(() => [] as OrganizationItem[]);
+    setOrganizations(nextOrgs);
+    if (focusOrgId) {
+      setProfileOrgId(focusOrgId);
+      setCommunitiesVisited(true);
+      setWorkspaceTab('communities');
+      setNotice('Workspace ready.');
+    } else if (peopleFilter !== 'contacts' && !nextOrgs.some(o => o.id === peopleFilter)) {
+      setPeopleFilter(nextOrgs[0]?.id ?? 'contacts');
+    }
+    await Promise.all([
+      loadChatCandidates(),
+      refreshOrgSubscriptionsRef.current?.() ?? Promise.resolve()
+    ]);
+  }, [loadChatCandidates, peopleFilter]);
+
+  const handleOrganizationAccessRevoked = useCallback((revokedOrgId: string) => {
+    setOrganizations(prev => {
+      const next = prev.filter(o => o.id !== revokedOrgId);
+      if (peopleFilter === revokedOrgId) {
+        setPeopleFilter(next[0]?.id ?? 'contacts');
+      }
+      return next;
+    });
+    void loadChatCandidates();
+    setNotice('Your workspace memberships were updated.');
+  }, [loadChatCandidates, peopleFilter]);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -377,12 +528,13 @@ function App() {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (res.status === 404) throw new Error(organizationId ? 'This person is no longer available in this workspace.' : 'This contact is no longer available.');
+      if (res.status === 404) throw new Error('Connect as contacts or share a workspace before starting a new chat.');
       throw new Error(data.message || 'Unable to open chat.');
     }
     const dm = await res.json();
     setActiveConvId(dm.id);
     setWorkspaceTab('chat');
+    void reloadConversationsRef.current?.();
   }
 
   async function handleOpenDm(targetUserId: string) {
@@ -392,9 +544,11 @@ function App() {
 
   async function handleUpdateCustomStatus(e: FormEvent) {
     e.preventDefault();
+    const targetOrg = profileOrgId || organizations[0]?.id;
+    if (!targetOrg) return;
     setError('');
     setNotice('');
-    const res = await fetch('/api/people/me/status', {
+    const res = await orgFetch(targetOrg, '/api/people/me/status', {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -406,15 +560,16 @@ function App() {
       return;
     }
     setNotice('Custom status updated.');
-    await refreshMe();
+    await syncOrgProfile(targetOrg);
   }
 
   async function handleAvatarChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    const targetOrg = profileOrgId || organizations[0]?.id;
+    if (!file || !targetOrg) return;
     setError('');
     setNotice('');
-    const res = await fetch('/api/people/me/avatar', {
+    const res = await orgFetch(targetOrg, '/api/people/me/avatar', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
@@ -427,7 +582,7 @@ function App() {
     }
     setAvatarBust(v => v + 1);
     setNotice('Avatar updated.');
-    await refreshMe();
+    await syncOrgProfile(targetOrg);
   }
 
   async function handleChangePassword(e: FormEvent) {
@@ -490,9 +645,11 @@ function App() {
   }
 
   async function handleHrImport(dryRun: boolean) {
+    const targetOrg = hrOrgId || hrOrganizations[0]?.id;
+    if (!targetOrg) return;
     setError('');
     setNotice('');
-    const res = await fetch(`/api/org/employees/import?dryRun=${dryRun ? 'true' : 'false'}`, {
+    const res = await orgFetch(targetOrg, `/api/org/employees/import?dryRun=${dryRun ? 'true' : 'false'}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -505,13 +662,15 @@ function App() {
     }
     setHrReport(data);
     setNotice(dryRun ? 'Dry-run diff generated.' : 'HR directory import applied.');
-    if (!dryRun) await loadDepartments();
+    if (!dryRun && peopleFilter === targetOrg) await loadDepartments(targetOrg);
   }
 
   function openContactsFromChat() {
     setNewChatOpen(false);
+    peopleFilterPickedRef.current = true;
+    setPeopleFilter('contacts');
+    setDirDeptId('');
     setWorkspaceTab('directory');
-    void loadDirectory(dirQuery, dirDeptId);
     requestAnimationFrame(() => contactUsernameRef.current?.focus());
   }
 
@@ -561,15 +720,14 @@ function App() {
           <div>
             <h1>Workplace communication, simplified.</h1>
             <p>
-              Message people, start group chats, and stay connected in your team’s workspace.
+              Message people across workspaces and contacts, and organize shared and private communities in one window.
             </p>
             <ul className="nx-auth-features">
               <li>● Instant messaging with offline queue &amp; reliable sync</li>
-              <li>● Private conversations protected by strict membership controls</li>
+              <li>● Multi-workspace communities protected by strict membership controls</li>
               <li>● Vietnamese-aware directory search &amp; TOTP account security</li>
             </ul>
           </div>
-
         </section>
 
         <section className="nx-auth-panel">
@@ -617,54 +775,54 @@ function App() {
               id={authTab === 'login' ? 'auth-panel-login' : 'auth-panel-register'}
               aria-labelledby={authTab === 'login' ? 'auth-tab-login' : 'auth-tab-register'}
             >
-            {authTab === 'login' ? (
-              <form onSubmit={handleLogin}>
-                <Field label="Username" htmlFor="login-username">
-                  <input id="login-username" type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
-                </Field>
-                <Field label="Password" htmlFor="login-password">
-                  <input id="login-password" type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-                </Field>
-                {mfaChallenge && (
-                  <Field label="Authenticator code" htmlFor="login-totp">
-                    <input id="login-totp" type="text" inputMode="numeric" required value={loginTotp} onChange={e => setLoginTotp(e.target.value)} />
+              {authTab === 'login' ? (
+                <form onSubmit={handleLogin}>
+                  <Field label="Username" htmlFor="login-username">
+                    <input id="login-username" type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
                   </Field>
-                )}
-                <Button type="submit" variant="primary" fullWidth>
-                  Sign in to Nexus
-                </Button>
-              </form>
-            ) : (
-              <form onSubmit={handleRegister}>
-                <div className="nx-hp" aria-hidden="true">
-                  <label htmlFor="reg-website">Website</label>
-                  <input id="reg-website" tabIndex={-1} autoComplete="off" value={regHoneypot} onChange={e => setRegHoneypot(e.target.value)} />
-                </div>
-                <Field label="Username (3–32 characters)" htmlFor="reg-username">
-                  <input id="reg-username" type="text" autoComplete="username" required minLength={3} maxLength={32} value={regUsername} onChange={e => setRegUsername(e.target.value)} />
-                </Field>
-                <Field label="Display name" htmlFor="reg-display-name">
-                  <input id="reg-display-name" type="text" autoComplete="name" required maxLength={80} value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} />
-                </Field>
-                <Field label="Password (at least 12 characters)" htmlFor="reg-password">
-                  <input id="reg-password" type="password" autoComplete="new-password" required minLength={12} value={regPassword} onChange={e => setRegPassword(e.target.value)} />
-                </Field>
-                {policy?.mode === 'OpenWithJoinCode' && (
-                  <Field label="Join code" htmlFor="reg-join-code">
-                    <input id="reg-join-code" type="text" required value={regJoinCode} onChange={e => setRegJoinCode(e.target.value)} />
+                  <Field label="Password" htmlFor="login-password">
+                    <input id="login-password" type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
                   </Field>
-                )}
-                <div className="nx-field">
-                  <label className="nx-terms-label">
-                    <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} required />
-                    <span>I accept the terms of use.</span>
-                  </label>
-                </div>
-                <Button type="submit" variant="primary" fullWidth>
-                  Create Nexus account
-                </Button>
-              </form>
-            )}
+                  {mfaChallenge && (
+                    <Field label="Authenticator code" htmlFor="login-totp">
+                      <input id="login-totp" type="text" inputMode="numeric" required value={loginTotp} onChange={e => setLoginTotp(e.target.value)} />
+                    </Field>
+                  )}
+                  <Button type="submit" variant="primary" fullWidth>
+                    Sign in to Nexus
+                  </Button>
+                </form>
+              ) : (
+                <form onSubmit={handleRegister}>
+                  <div className="nx-hp" aria-hidden="true">
+                    <label htmlFor="reg-website">Website</label>
+                    <input id="reg-website" tabIndex={-1} autoComplete="off" value={regHoneypot} onChange={e => setRegHoneypot(e.target.value)} />
+                  </div>
+                  <Field label="Username (3–32 characters)" htmlFor="reg-username">
+                    <input id="reg-username" type="text" autoComplete="username" required minLength={3} maxLength={32} value={regUsername} onChange={e => setRegUsername(e.target.value)} />
+                  </Field>
+                  <Field label="Display name" htmlFor="reg-display-name">
+                    <input id="reg-display-name" type="text" autoComplete="name" required maxLength={80} value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} />
+                  </Field>
+                  <Field label="Password (at least 12 characters)" htmlFor="reg-password">
+                    <input id="reg-password" type="password" autoComplete="new-password" required minLength={12} value={regPassword} onChange={e => setRegPassword(e.target.value)} />
+                  </Field>
+                  {policy?.mode === 'OpenWithJoinCode' && (
+                    <Field label="Join code" htmlFor="reg-join-code">
+                      <input id="reg-join-code" type="text" required value={regJoinCode} onChange={e => setRegJoinCode(e.target.value)} />
+                    </Field>
+                  )}
+                  <div className="nx-field">
+                    <label className="nx-terms-label">
+                      <input type="checkbox" checked={regTerms} onChange={e => setRegTerms(e.target.checked)} required />
+                      <span>I accept the terms of use.</span>
+                    </label>
+                  </div>
+                  <Button type="submit" variant="primary" fullWidth>
+                    Create Nexus account
+                  </Button>
+                </form>
+              )}
             </div>
           </div>
         </section>
@@ -672,18 +830,13 @@ function App() {
     );
   }
 
-  if (isWorkspaceHome) {
-    return <>
-      <OrganizationControls home userId={user.id} mfaEnabled={user.mfaEnabled} onSignOut={() => void handleLogout()}
-        onSecurity={() => window.location.assign('/personal?view=security')} />
-      {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
-    </>;
-  }
+  const activeProfileOrg = organizations.find(o => o.id === profileOrgId) ?? organizations[0] ?? null;
+  const activePeopleOrg = peopleFilter === 'contacts' ? null : (organizations.find(o => o.id === peopleFilter) ?? null);
 
   const pageTitle =
     workspaceTab === 'chat' ? 'Chat' :
     workspaceTab === 'communities' ? 'Communities' :
-    workspaceTab === 'directory' ? (organizationId ? 'Directory' : 'Contacts') :
+    workspaceTab === 'directory' ? 'People' :
     workspaceTab === 'security' ? 'Profile & security' :
     'HR import';
 
@@ -711,7 +864,7 @@ function App() {
             )}
           </button>
 
-          {organizationId && <button
+          <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'communities' ? 'active' : ''}`}
             aria-current={workspaceTab === 'communities' ? 'page' : undefined}
@@ -722,19 +875,16 @@ function App() {
           >
             <LayoutGrid size={20} aria-hidden="true" />
             <span>Communities</span>
-          </button>}
+          </button>
 
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'directory' ? 'active' : ''}`}
             aria-current={workspaceTab === 'directory' ? 'page' : undefined}
-            onClick={() => {
-              setWorkspaceTab('directory');
-              if (directory.length === 0) void loadDirectory(dirQuery, dirDeptId);
-            }}
+            onClick={() => setWorkspaceTab('directory')}
           >
             <Users size={20} aria-hidden="true" />
-            <span>{organizationId ? "Directory" : "Contacts"}</span>
+            <span>People</span>
           </button>
 
           <button
@@ -747,7 +897,7 @@ function App() {
             <span>Profile &amp; security</span>
           </button>
 
-          {user.orgRole === 'HRAdmin' && (
+          {hrOrganizations.length > 0 && (
             <button
               type="button"
               className={`nx-rail-btn ${workspaceTab === 'hr' ? 'active' : ''}`}
@@ -803,7 +953,6 @@ function App() {
       <div className="nx-workspace">
         <header className="nx-topbar">
           <div className="nx-topbar-left">
-            <OrganizationControls userId={user.id} mfaEnabled={user.mfaEnabled} onSignOut={() => void handleLogout()} onSecurity={() => setWorkspaceTab('security')} />
             <h1 className="nx-topbar-title">{pageTitle}</h1>
           </div>
 
@@ -831,7 +980,10 @@ function App() {
               currentDisplayName={user.displayName}
               initialVersion={apiVersion}
               selectedConversationId={activeConvId}
-              directoryUsers={directory}
+              directoryUsers={chatCandidates}
+              refreshOrgSubscriptionsRef={refreshOrgSubscriptionsRef}
+              onReloadConversationsRef={reloadConversationsRef}
+              onOrganizationAccessRevoked={handleOrganizationAccessRevoked}
               onSelectConversation={setActiveConvId}
               onNewChat={() => setNewChatOpen(true)}
               onConnectionStateChange={setConnState}
@@ -840,23 +992,25 @@ function App() {
               onVersionStale={handleVersionStale}
             />
           </div>
-          {newChatOpen && <NewChatDialog
-            currentUserId={user.id}
-            onClose={() => setNewChatOpen(false)}
-            onOpenChat={openDm}
-            onOpenContacts={openContactsFromChat}
-          />}
+          {newChatOpen && (
+            <NewChatDialog
+              currentUserId={user.id}
+              onClose={() => setNewChatOpen(false)}
+              onOpenChat={openDm}
+              onOpenContacts={openContactsFromChat}
+            />
+          )}
 
-          {organizationId && communitiesVisited && (
+          {communitiesVisited && (
             <div className={`nx-tab-keepalive ${workspaceTab === 'communities' ? '' : 'hidden'}`}>
               <CommunitiesWorkspace
                 currentUserId={user.id}
                 currentDisplayName={user.displayName}
-                currentOrgRole={user.orgRole}
-                currentIsUnverified={user.isUnverified}
-                directoryUsers={directory}
-                departments={departments}
+                organizations={organizations}
                 feedListenerRef={communityFeedListenerRef}
+                onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
+                onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
+                onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}
               />
             </div>
           )}
@@ -866,14 +1020,54 @@ function App() {
               <div className="nx-page-container">
                 <div className="nx-page-head">
                   <div>
-                    <h2>{organizationId ? "Directory" : "Contacts"}</h2>
-                    <p>{organizationId ? "Search by name or username." : "Search the people you have connected with."}</p>
+                    <h2>{activePeopleOrg ? activePeopleOrg.name : 'Contacts'}</h2>
+                    <p>
+                      {activePeopleOrg
+                        ? 'Search workspace members by name or username and message them directly.'
+                        : 'Connect with external people by exact username or a one-time contact link.'}
+                    </p>
                   </div>
                 </div>
 
-                {!organizationId && (
+                <div className="nx-filter-pills" role="group" aria-label="People scope">
+                  <button
+                    type="button"
+                    className={`nx-filter-pill ${peopleFilter === 'contacts' ? 'active' : ''}`}
+                    aria-pressed={peopleFilter === 'contacts'}
+                    onClick={() => {
+                      peopleFilterPickedRef.current = true;
+                      setPeopleFilter('contacts');
+                      setDirDeptId('');
+                    }}
+                  >
+                    Contacts
+                  </button>
+                  {organizations.map(org => (
+                    <button
+                      key={org.id}
+                      type="button"
+                      className={`nx-filter-pill ${peopleFilter === org.id ? 'active' : ''}`}
+                      aria-pressed={peopleFilter === org.id}
+                      onClick={() => {
+                        peopleFilterPickedRef.current = true;
+                        setPeopleFilter(org.id);
+                        setDirDeptId('');
+                      }}
+                    >
+                      {org.name}
+                    </button>
+                  ))}
+                </div>
+
+                {peopleFilter === 'contacts' && (
                   <div style={{ marginBottom: 16 }}>
-                    <ContactControls usernameRef={contactUsernameRef} onChange={() => void loadDirectory(dirQuery, '')} />
+                    <ContactControls
+                      usernameRef={contactUsernameRef}
+                      onChange={() => {
+                        void loadDirectory('contacts', dirQuery, '');
+                        void loadChatCandidates();
+                      }}
+                    />
                   </div>
                 )}
 
@@ -881,7 +1075,7 @@ function App() {
                   className="nx-filter-bar"
                   onSubmit={e => {
                     e.preventDefault();
-                    void loadDirectory(dirQuery, dirDeptId);
+                    void loadDirectory(peopleFilter, dirQuery, dirDeptId);
                   }}
                 >
                   <div className="nx-search-input-wrap" style={{ flex: 2, minWidth: 220 }}>
@@ -889,37 +1083,42 @@ function App() {
                     <input
                       id="dir-search"
                       type="text"
-                      aria-label={organizationId ? 'Search directory' : 'Search contacts'}
+                      aria-label={activePeopleOrg ? `Search ${activePeopleOrg.name}` : 'Search contacts'}
                       placeholder="Search by name or @username…"
                       value={dirQuery}
                       onChange={e => setDirQuery(e.target.value)}
                     />
                   </div>
-                  {organizationId && <select
-                    id="dir-dept"
-                    className="nx-select"
-                    aria-label="Filter by department"
-                    value={dirDeptId}
-                    onChange={e => {
-                      setDirDeptId(e.target.value);
-                      void loadDirectory(dirQuery, e.target.value);
-                    }}
-                    style={{ flex: 1, minWidth: 180 }}
-                  >
-                    <option value="">All departments</option>
-                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>}
+                  {activePeopleOrg && (
+                    <select
+                      id="dir-dept"
+                      className="nx-select"
+                      aria-label="Filter by department"
+                      value={dirDeptId}
+                      onChange={e => setDirDeptId(e.target.value)}
+                      style={{ flex: 1, minWidth: 180 }}
+                    >
+                      <option value="">All departments</option>
+                      {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  )}
                   <Button type="submit" variant="primary">Search</Button>
                 </form>
 
-                {directory.length === 0 ? (
+                {loadingDirectory && directory.length === 0 ? (
+                  <Card>
+                    <p className="nx-muted" role="status" style={{ margin: 0, textAlign: 'center' }}>
+                      Loading people…
+                    </p>
+                  </Card>
+                ) : directory.length === 0 ? (
                   <Card>
                     <p className="nx-muted" style={{ margin: 0, textAlign: 'center' }}>
-                      {organizationId
-                        ? 'No matching active accounts.'
+                      {activePeopleOrg
+                        ? 'No matching workspace members.'
                         : dirQuery.trim()
                           ? 'No matching contacts.'
-                          : 'No contacts yet. Send a connection request or share a contact link above.'}
+                          : 'No external contacts yet. Send a connection request or share a contact link above.'}
                     </p>
                   </Card>
                 ) : (
@@ -978,37 +1177,57 @@ function App() {
                 )}
 
                 <div className="nx-settings-grid">
-                  {organizationId && <Card title="Profile & Status">
-                    <div className="nx-profile-hero">
-                      <Avatar displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} size="lg" />
-                      <div>
-                        <strong className="nx-user-name-wrap">{user.displayName}</strong>
-                        <div className="nx-muted" style={{ marginTop: 3 }}>
-                          @{user.username} · <Badge variant="role">{user.orgRole}</Badge>
+                  {activeProfileOrg && (
+                    <Card title="Profile & Status">
+                      <div className="nx-profile-hero">
+                        <Avatar displayName={user.displayName} avatarUrl={user.avatarUrl} cacheKey={avatarBust} size="lg" />
+                        <div>
+                          <strong className="nx-user-name-wrap">{user.displayName}</strong>
+                          <div className="nx-muted" style={{ marginTop: 3 }}>
+                            @{user.username} · <Badge variant="role">{activeProfileOrg.role}</Badge>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <form onSubmit={handleUpdateCustomStatus} className="nx-status-form">
-                      <div style={{ flex: 1 }}>
-                        <Field label="Custom status" htmlFor="custom-status" compact>
-                          <input
-                            id="custom-status"
-                            type="text"
-                            maxLength={100}
-                            placeholder="e.g. On site until 15:00"
-                            value={customStatusInput}
-                            onChange={e => setCustomStatusInput(e.target.value)}
-                          />
+                      {organizations.length > 1 && (
+                        <Field label="Workspace profile" htmlFor="profile-org-select" compact>
+                          <select
+                            id="profile-org-select"
+                            className="nx-select"
+                            value={activeProfileOrg.id}
+                            onChange={e => {
+                              setProfileOrgId(e.target.value);
+                              void syncOrgProfile(e.target.value);
+                            }}
+                          >
+                            {organizations.map(org => (
+                              <option key={org.id} value={org.id}>{org.name}</option>
+                            ))}
+                          </select>
                         </Field>
-                      </div>
-                      <Button type="submit" variant="primary">Save</Button>
-                    </form>
+                      )}
 
-                    <Field label="Avatar image (re-encoded to 256×256 PNG, max 2 MB)" htmlFor="avatar-upload" compact>
-                      <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarChange} />
-                    </Field>
-                  </Card>}
+                      <form onSubmit={handleUpdateCustomStatus} className="nx-status-form">
+                        <div style={{ flex: 1 }}>
+                          <Field label="Custom status" htmlFor="custom-status" compact>
+                            <input
+                              id="custom-status"
+                              type="text"
+                              maxLength={100}
+                              placeholder="e.g. On site until 15:00"
+                              value={customStatusInput}
+                              onChange={e => setCustomStatusInput(e.target.value)}
+                            />
+                          </Field>
+                        </div>
+                        <Button type="submit" variant="primary">Save</Button>
+                      </form>
+
+                      <Field label="Avatar image (re-encoded to 256×256 PNG, max 2 MB)" htmlFor="avatar-upload" compact>
+                        <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarChange} />
+                      </Field>
+                    </Card>
+                  )}
 
                   <Card title="Change password">
                     <form onSubmit={handleChangePassword}>
@@ -1071,7 +1290,7 @@ function App() {
             </div>
           )}
 
-          {workspaceTab === 'hr' && user.orgRole === 'HRAdmin' && (
+          {workspaceTab === 'hr' && hrOrganizations.length > 0 && (
             <div className="nx-page-scroll">
               <div className="nx-page-container">
                 <div className="nx-page-head">
@@ -1081,6 +1300,20 @@ function App() {
                   </div>
                 </div>
                 <Card>
+                  {hrOrganizations.length > 1 && (
+                    <Field label="Workspace" htmlFor="hr-org-select">
+                      <select
+                        id="hr-org-select"
+                        className="nx-select"
+                        value={hrOrgId || hrOrganizations[0].id}
+                        onChange={e => setHrOrgId(e.target.value)}
+                      >
+                        {hrOrganizations.map(org => (
+                          <option key={org.id} value={org.id}>{org.name}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
                   <Field label="CSV records" htmlFor="hr-csv">
                     <textarea id="hr-csv" rows={7} value={hrCsv} onChange={e => setHrCsv(e.target.value)} />
                   </Field>
@@ -1112,6 +1345,17 @@ function App() {
           )}
         </main>
       </div>
+
+      <WorkspaceModals
+        modal={workspaceModal}
+        mfaEnabled={user.mfaEnabled}
+        onClose={() => setWorkspaceModal(null)}
+        onOrganizationsChanged={handleOrganizationsChanged}
+        onSecurity={() => {
+          setWorkspaceModal(null);
+          setWorkspaceTab('security');
+        }}
+      />
     </div>
   );
 }

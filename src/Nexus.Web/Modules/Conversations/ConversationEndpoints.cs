@@ -166,7 +166,7 @@ public static class ConversationEndpoints
             .Select(u => new { u.Id, u.Status, u.DisplayName, u.TrustLevel })
             .SingleOrDefaultAsync(ct);
 
-        if (target is null || (db.IsPersonalScope && !await PersonalConnections.AcceptedContactIds(db, actorId).ContainsAsync(request.TargetUserId, ct)))
+        if (target is null || (db.IsPersonalScope && !await PersonalConnections.AllowedChatPeerIds(db, actorId).ContainsAsync(request.TargetUserId, ct)))
         {
             return Results.NotFound(new { code = "user_not_found", message = "Target user not found." });
         }
@@ -308,7 +308,7 @@ public static class ConversationEndpoints
             return Results.BadRequest(new { code = "invalid_title", message = "Group title must be 1 to 120 characters." });
         }
 
-        var allowedContacts = PersonalConnections.AcceptedContactIds(db, actorId);
+        var allowedContacts = PersonalConnections.AllowedChatPeerIds(db, actorId);
         var requestedIds = (request.MemberUserIds ?? [])
             .Where(id => id != actorId)
             .Distinct()
@@ -450,7 +450,7 @@ public static class ConversationEndpoints
             return Results.Forbid();
         }
 
-        if (db.IsPersonalScope && !await PersonalConnections.AcceptedContactIds(db, actorId).ContainsAsync(request.UserId, ct)) return Results.Forbid();
+        if (db.IsPersonalScope && !await PersonalConnections.AllowedChatPeerIds(db, actorId).ContainsAsync(request.UserId, ct)) return Results.Forbid();
         var target = await db.OrganizationPeople.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.UserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
         if (target is null)
         {

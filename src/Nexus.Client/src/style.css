@@ -130,7 +130,8 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.nx-field label.nx-terms-label {
+.nx-field > label.nx-terms-label,
+.nx-terms-label {
   display: flex;
   gap: var(--space-2);
   font-weight: 400;
@@ -139,7 +140,8 @@ body {
   cursor: pointer;
 }
 
-.nx-field label.nx-terms-label input { margin: 0; }
+.nx-field > label.nx-terms-label input,
+.nx-terms-label input { margin: 0; }
 
 /* ==========================================================================
    FULL-VIEWPORT WORKSPACE SHELL (APP RAIL + TOPBAR + BODY)
@@ -1723,6 +1725,136 @@ body {
     animation: none;
     transform: none;
   }
+}
+
+.nx-ws-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nx-ws-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nx-ws-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.nx-ws-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.nx-ws-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.nx-ws-toggle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-ws-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.nx-ws-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.nx-ws-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  gap: 6px;
+}
+
+.nx-ws-footer > .nx-btn {
+  flex: 1;
+}
+
+.nx-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.nx-filter-pill {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  padding: 4px 11px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.08s ease;
+}
+
+.nx-filter-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nx-filter-pill:active {
+  transform: scale(0.96);
+}
+
+.nx-filter-pill.active {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+  color: var(--text-on-brand);
+}
+
+.nx-chat-filters {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.nx-comm-sidebar-head {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-comm-sidebar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .nx-comments-box {

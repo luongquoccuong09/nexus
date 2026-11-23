@@ -1,5 +1,5 @@
-import { scopedFetch as fetch, organizationId, messagingHub } from "./scope";
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { chatFetch as fetch, messagingHub } from "./scope";
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { ArrowLeft, Ban, Download, FileText, Flag, FolderOpen, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Users, X } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
@@ -88,6 +88,8 @@ export interface DirectoryUserLite {
   displayName: string;
   departmentName?: string | null;
   avatarUrl?: string | null;
+  isContact?: boolean;
+  workspaceNames?: string[];
 }
 
 interface GroupMemberItem {
@@ -121,6 +123,9 @@ interface ChatWorkspaceProps {
   initialVersion: string | null;
   selectedConversationId: string | null;
   directoryUsers: DirectoryUserLite[];
+  refreshOrgSubscriptionsRef?: MutableRefObject<(() => Promise<void>) | null>;
+  onReloadConversationsRef?: MutableRefObject<(() => Promise<void>) | null>;
+  onOrganizationAccessRevoked?: (organizationId: string) => void;
   onSelectConversation: (id: string | null) => void;
   onNewChat: () => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
@@ -158,6 +163,9 @@ export function ChatWorkspace({
   initialVersion,
   selectedConversationId,
   directoryUsers,
+  refreshOrgSubscriptionsRef,
+  onReloadConversationsRef,
+  onOrganizationAccessRevoked,
   onSelectConversation,
   onNewChat,
   onConnectionStateChange,
@@ -165,9 +173,10 @@ export function ChatWorkspace({
   onCommunityFeedChanged,
   onVersionStale
 }: ChatWorkspaceProps) {
-  const offlineScope = `${currentUserId}:${organizationId ?? "personal"}`;
+  const offlineScope = `${currentUserId}:personal`;
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [convSearch, setConvSearch] = useState('');
+  const [chatFilter, setChatFilter] = useState<'all' | 'dm' | 'group'>('all');
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [nextBeforeSeq, setNextBeforeSeq] = useState<number | null>(null);
@@ -218,6 +227,7 @@ export function ChatWorkspace({
   const reconcileRef = useRef<() => Promise<void>>(async () => {});
   const connStateCbRef = useRef(onConnectionStateChange);
   const communityFeedCbRef = useRef(onCommunityFeedChanged);
+  const orgRevokedCbRef = useRef(onOrganizationAccessRevoked);
   const conversationRefreshRef = useRef({ timer: null as number | null, queued: false });
   const conversationListRequest = useRef(0);
   const deltaRequests = useRef(new Map<string, { queued: boolean; full: boolean; promise: Promise<void> }>());
@@ -229,6 +239,7 @@ export function ChatWorkspace({
   currentUserIdRef.current = currentUserId;
   connStateCbRef.current = onConnectionStateChange;
   communityFeedCbRef.current = onCommunityFeedChanged;
+  orgRevokedCbRef.current = onOrganizationAccessRevoked;
 
   const scheduleConversationRefresh = useCallback(function scheduleConversationRefresh() {
     const refresh = conversationRefreshRef.current;
@@ -549,6 +560,31 @@ export function ChatWorkspace({
   }, [loadConversations]);
 
   useEffect(() => {
+    if (!onReloadConversationsRef) return;
+    onReloadConversationsRef.current = loadConversations;
+    return () => {
+      if (onReloadConversationsRef.current === loadConversations) {
+        onReloadConversationsRef.current = null;
+      }
+    };
+  }, [onReloadConversationsRef, loadConversations]);
+
+  useEffect(() => {
+    if (!refreshOrgSubscriptionsRef) return;
+    const refresh = async () => {
+      if (hubRef.current?.state === signalR.HubConnectionState.Connected) {
+        await hubRef.current.invoke('RefreshOrganizationSubscriptions').catch(() => {});
+      }
+    };
+    refreshOrgSubscriptionsRef.current = refresh;
+    return () => {
+      if (refreshOrgSubscriptionsRef.current === refresh) {
+        refreshOrgSubscriptionsRef.current = null;
+      }
+    };
+  }, [refreshOrgSubscriptionsRef]);
+
+  useEffect(() => {
     setRightDrawer('none');
     setMoreMenuOpen(false);
     setPendingAttachments([]);
@@ -670,6 +706,12 @@ export function ChatWorkspace({
 
     connection.on('CommunityFeedChanged', (evt: { conversationId: string; delta?: CommunityFeedDelta | null }) => {
       communityFeedCbRef.current(evt.conversationId, evt.delta ?? null);
+    });
+
+    connection.on('OrganizationAccessRevoked', (evt: { organizationId: string }) => {
+      if (evt?.organizationId) {
+        orgRevokedCbRef.current?.(evt.organizationId);
+      }
     });
 
     connection.on('TypingIndicator', (evt: { conversationId: string; displayName: string }) => {
@@ -1020,6 +1062,9 @@ export function ChatWorkspace({
 
   const dmConvs = useMemo(() => filteredConvs.filter(c => c.kind === 'dm'), [filteredConvs]);
   const groupConvs = useMemo(() => filteredConvs.filter(c => c.kind !== 'dm'), [filteredConvs]);
+  const visibleDmConvs = chatFilter === 'group' ? [] : dmConvs;
+  const visibleGroupConvs = chatFilter === 'dm' ? [] : groupConvs;
+  const visibleConvCount = visibleDmConvs.length + visibleGroupConvs.length;
 
   const otherDirectoryUsers = useMemo(
     () => directoryUsers.filter(u => u.id !== currentUserId),
@@ -1064,9 +1109,6 @@ export function ChatWorkspace({
       {/* Conversation Sidebar */}
       <aside className="nx-chat-sidebar" aria-label="Conversations">
         <div className="nx-side-header">
-          <div className="nx-side-header-row">
-            <h2>Chat</h2>
-          </div>
           <div className="nx-side-actions">
             <Button variant="primary" size="sm" onClick={onNewChat}>
               <MessageSquare size={14} aria-hidden="true" /> New chat
@@ -1085,25 +1127,53 @@ export function ChatWorkspace({
               onChange={e => setConvSearch(e.target.value)}
             />
           </div>
+          <div className="nx-chat-filters" role="group" aria-label="Conversation type filter">
+            <button
+              type="button"
+              className={`nx-filter-pill ${chatFilter === 'all' ? 'active' : ''}`}
+              aria-pressed={chatFilter === 'all'}
+              onClick={() => setChatFilter('all')}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={`nx-filter-pill ${chatFilter === 'dm' ? 'active' : ''}`}
+              aria-pressed={chatFilter === 'dm'}
+              onClick={() => setChatFilter('dm')}
+            >
+              Direct
+            </button>
+            <button
+              type="button"
+              className={`nx-filter-pill ${chatFilter === 'group' ? 'active' : ''}`}
+              aria-pressed={chatFilter === 'group'}
+              onClick={() => setChatFilter('group')}
+            >
+              Groups
+            </button>
+          </div>
         </div>
 
         <div className="nx-conv-scroll">
-          {filteredConvs.length === 0 ? (
+          {visibleConvCount === 0 ? (
             <div className="nx-empty-side">
-              <p style={{ margin: '0 0 12px' }}>No conversations yet.</p>
+              <p style={{ margin: '0 0 12px' }}>
+                {conversations.length === 0 ? 'No conversations yet.' : 'No matching conversations.'}
+              </p>
             </div>
           ) : (
             <>
-              {dmConvs.length > 0 && (
+              {visibleDmConvs.length > 0 && (
                 <>
-                  <div className="nx-section-label">Direct messages ({dmConvs.length})</div>
-                  {dmConvs.map(renderConvItem)}
+                  <div className="nx-section-label">Direct messages ({visibleDmConvs.length})</div>
+                  {visibleDmConvs.map(renderConvItem)}
                 </>
               )}
-              {groupConvs.length > 0 && (
+              {visibleGroupConvs.length > 0 && (
                 <>
-                  <div className="nx-section-label">Group chats ({groupConvs.length})</div>
-                  {groupConvs.map(renderConvItem)}
+                  <div className="nx-section-label">Group chats ({visibleGroupConvs.length})</div>
+                  {visibleGroupConvs.map(renderConvItem)}
                 </>
               )}
             </>
@@ -1603,11 +1673,16 @@ export function ChatWorkspace({
 
           <Field label="Add people (optional)" compact>
             {otherDirectoryUsers.length === 0 ? (
-              <p className="nx-muted">No other active accounts in Directory yet.</p>
+              <p className="nx-muted">No contacts or workspace members available yet.</p>
             ) : (
               <div className="nx-member-picker">
                 {otherDirectoryUsers.map(u => {
                   const checked = selectedGroupMemberIds.includes(u.id);
+                  const contextTag = [
+                    ...(u.workspaceNames ?? []),
+                    ...(u.isContact ? ['Contact'] : []),
+                    ...(u.departmentName ? [u.departmentName] : [])
+                  ].filter(Boolean).join(', ');
                   return (
                     <label className="nx-member-option" key={u.id}>
                       <input
@@ -1624,7 +1699,7 @@ export function ChatWorkspace({
                         <div className="nx-user-name-wrap">
                           <strong style={{ fontSize: 13 }}>{u.displayName}</strong>
                         </div>
-                        <div className="nx-muted">@{u.username}{u.departmentName ? ` · ${u.departmentName}` : ''}</div>
+                        <div className="nx-muted">@{u.username}{contextTag ? ` · ${contextTag}` : ''}</div>
                       </div>
                     </label>
                   );

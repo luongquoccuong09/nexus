@@ -3,11 +3,13 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.Org;
 
@@ -199,7 +201,7 @@ public static class OrganizationManagementEndpoints
     }
 
     private static async Task<IResult> RevokeMemberAsync(Guid memberId, HttpContext ctx, [FromServices] NexusDbContext db,
-        IUserConnectionRegistry connections, CancellationToken ct)
+        IUserConnectionRegistry connections, IHubContext<MessagingHub> hubContext, CancellationToken ct)
     {
         if (!CanManage(ctx, db)) return Results.Forbid();
         var actor = db.OrganizationActor!;
@@ -216,6 +218,13 @@ public static class OrganizationManagementEndpoints
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         connections.AbortOrganizationConnections(actor.OrganizationId, memberId);
+        var orgGroup = MessagingHub.UserGroupName(actor.OrganizationId, memberId);
+        foreach (var connectionId in connections.GetUserConnectionIds(memberId))
+        {
+            await hubContext.Groups.RemoveFromGroupAsync(connectionId, orgGroup, ct);
+        }
+        await hubContext.Clients.Group(MessagingHub.UserGroupName(Guid.Empty, memberId))
+            .SendAsync("OrganizationAccessRevoked", new { organizationId = actor.OrganizationId }, ct);
         return Results.NoContent();
     }
 

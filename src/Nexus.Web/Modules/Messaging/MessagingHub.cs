@@ -29,8 +29,36 @@ public sealed class MessagingHub(
         }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(ScopeId, userId), Context.ConnectionAborted);
+        if (db.IsPersonalScope)
+        {
+            await SubscribeActiveOrganizationsAsync(userId, Context.ConnectionAborted);
+        }
         presence.OnConnected(ScopeId, userId, Context.ConnectionId);
         await base.OnConnectedAsync();
+    }
+
+    public async Task RefreshOrganizationSubscriptions()
+    {
+        if (!Context.User.TryGetUserId(out var userId) || !await SetScopeAsync(userId) || !db.IsPersonalScope)
+        {
+            return;
+        }
+
+        await SubscribeActiveOrganizationsAsync(userId, Context.ConnectionAborted);
+    }
+
+    private async Task SubscribeActiveOrganizationsAsync(Guid userId, CancellationToken ct)
+    {
+        var orgIds = await db.OrganizationMemberships
+            .AsNoTracking()
+            .Where(m => m.Id == userId && m.Status == AccountStatus.Active)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(ct);
+
+        foreach (var orgId in orgIds)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(orgId, userId), ct);
+        }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
