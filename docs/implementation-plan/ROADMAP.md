@@ -45,15 +45,15 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 
 **M1a — Username and password**
 
-- [ ] **M1.1** Model one Organization, Department/Branch and `employees` records for verification. Bootstrap the first SystemAdmin via CLI or seed.
-- [ ] **M1.2** Use ASP.NET Core Identity, EF Core, PostgreSQL and a BFF session cookie. Store UUID, unique normalized username, display name, status, Unverified/Verified trust level, nullable unique employee_id, terms_version and accepted_at. Define username and reserved-name rules.
-- [ ] **M1.3** Open registration (D13) accepts username, password, display name and terms. New accounts enter the Organization as Unverified. Configure RegistrationMode (Open by default, OpenWithJoinCode, later InviteOnly/Approval). Add per-IP limits, honeypot, switchable CAPTCHA, noindex and trial confidentiality notice. A unique username prevents duplicate accounts. Test SEC-20.
-- [ ] **M1.4** Sign in and out. Require at least 12 characters, block common passwords, lock out repeated account failures, rate-limit by IP and return generic errors that conceal username existence. Test SEC-01 and SEC-21.
-- [ ] **M1.4b** Display Unverified wherever a name appears. Enforce official/announcement channel restrictions, @all and admin-role restrictions through the matrix. Limit new DMs per day. Admins verify employee_id and can rename impersonating accounts. Test SEC-20b.
-- [ ] **M1.5** Password changes update the security stamp, revoke other sessions and disconnect SignalR. Audit one-time admin reset links. Test SEC-24.
-- [ ] **M1.6** Support Active/Disabled and Former if D06 approves it. Revoke sessions, update the security stamp, abort SignalR connections and audit the change. Test SEC-08 and SEC-16.
-- [ ] **M1.7** List signed-in devices and support remote sign-out.
-- [ ] **M1.8** Use Identity authenticator TOTP. Require MFA for SystemAdmin, HRAdmin and CommsAdmin.
+- [x] **M1.1** Model one Organization, Department/Branch and `employees` records for verification. Bootstrap the first SystemAdmin via CLI or seed.
+- [x] **M1.2** Use ASP.NET Core Identity, EF Core, PostgreSQL and a BFF session cookie. Store UUID, unique normalized username, display name, status, Unverified/Verified trust level, nullable unique employee_id, terms_version and accepted_at. Define username and reserved-name rules.
+- [x] **M1.3** Open registration (D13) accepts username, password, display name and terms. New accounts enter the Organization as Unverified. Configure RegistrationMode (Open by default, OpenWithJoinCode, later InviteOnly/Approval). Add per-IP limits, honeypot, switchable CAPTCHA, noindex and trial confidentiality notice. A unique username prevents duplicate accounts. Test SEC-20.
+- [x] **M1.4** Sign in and out. Require at least 12 characters, block common passwords, lock out repeated account failures, rate-limit by IP and return generic errors that conceal username existence. Test SEC-01 and SEC-21.
+- [x] **M1.4b** Display Unverified wherever a name appears. Enforce official/announcement channel restrictions, @all and admin-role restrictions through the matrix. Limit new DMs per day. Admins verify employee_id and can rename impersonating accounts. Test SEC-20b.
+- [x] **M1.5** Password changes update the security stamp, revoke other sessions and disconnect SignalR. Audit one-time admin reset links. Test SEC-24.
+- [x] **M1.6** Support Active/Disabled and Former if D06 approves it. Revoke sessions, update the security stamp, abort SignalR connections and audit the change. Test SEC-08 and SEC-16.
+- [x] **M1.7** List signed-in devices and support remote sign-out.
+- [x] **M1.8** Use Identity authenticator TOTP. Require MFA for SystemAdmin, HRAdmin and CommsAdmin.
 
 **M1b — Directory**
 

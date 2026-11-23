@@ -2,6 +2,7 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
+using Nexus.Web.Modules.Identity;
 using Serilog.Core;
 
 namespace Nexus.Web;
@@ -19,6 +20,7 @@ public static class NexusHost
         builder.Services.AddNexusSecurityDefaults(builder.Configuration);
         builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
+        builder.Services.AddIdentityModule(builder.Configuration);
 
         configureBuilder?.Invoke(builder);
 
@@ -30,6 +32,7 @@ public static class NexusHost
         app.UseNexusSecurityDefaults();
 
         app.MapNexusOperationalEndpoints();
+        app.MapIdentityEndpoints();
 
         configureApp?.Invoke(app);
 

@@ -107,6 +107,7 @@ public static class SecurityDefaultsExtensions
         });
 
         services.TryAddSingleton<IAccountStatusLookup, InMemoryAccountStatusLookup>();
+        services.TryAddSingleton<IUserConnectionRegistry, InMemoryUserConnectionRegistry>();
         services.TryAddSingleton<IAuthorizationService, NexusAuthorizationService>();
         services.AddSingleton<ActiveUserHubFilter>();
 

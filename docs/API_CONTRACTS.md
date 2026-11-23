@@ -24,7 +24,13 @@
 |---|---|---|---|
 | `GET /api/version` | Public (`AllowAnonymous`) | `{ "version": "<major.minor.build>" }` — client reloads when version changes across deploys (M2.6) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
 | `GET /healthz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — process liveness probe (excluded from rate limiting) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
-| `GET /readyz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — dependency readiness probe (will include PostgreSQL in M0.2) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
+| `GET /readyz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — dependency readiness probe (includes PostgreSQL check) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
+| `GET /api/auth/csrf`, `GET /api/auth/registration-policy` | Public (`AllowAnonymous`) | Antiforgery token & registration mode / trial confidentiality notice | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/reset-password` | Public (rate-limited) | Open trial registration (`Unverified`), sign-in (generic `401` + TOTP challenge), one-time admin reset link redemption | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/auth/change-password` | Authenticated (`Active`) | Profile with `isUnverified` flag, sign-out, password change revoking other sessions & aborting SignalR | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{id}`, `POST /api/auth/sessions/revoke-others` | Authenticated (`Active`) | Signed-in device list (`<= 50`) and remote sign-out | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/enable` | Authenticated (`Active`) | RFC 6238 TOTP authenticator enrollment + recovery codes | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `GET /api/admin/accounts`, `POST /api/admin/accounts/{id}/{verify,rename,status,reset-link}` | Verified Admin + TOTP MFA | Account listing (`<= 50`), HR employee verification, impersonator rename, disablement with immediate session/SignalR revocation, audited one-time reset links | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 
 ## 3. SignalR hub contract (planned M0 / M2.4)
 

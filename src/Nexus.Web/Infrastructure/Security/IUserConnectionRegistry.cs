@@ -1,0 +1,62 @@
+using System.Collections.Concurrent;
+using Microsoft.AspNetCore.SignalR;
+
+namespace Nexus.Web.Infrastructure.Security;
+
+/// <summary>
+/// Tracks live SignalR hub connections per user so password changes (M1.5 / SEC-24)
+/// and account disablement (M1.6 / SEC-08 / SEC-16) can abort open sockets immediately.
+/// </summary>
+public interface IUserConnectionRegistry
+{
+    void Register(Guid userId, HubCallerContext callerContext);
+    void Unregister(Guid userId, string connectionId);
+    int AbortUserConnections(Guid userId);
+}
+
+public sealed class InMemoryUserConnectionRegistry : IUserConnectionRegistry
+{
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, HubCallerContext>> _connections = new();
+
+    public void Register(Guid userId, HubCallerContext callerContext)
+    {
+        var userSockets = _connections.GetOrAdd(userId, _ => new ConcurrentDictionary<string, HubCallerContext>());
+        userSockets[callerContext.ConnectionId] = callerContext;
+    }
+
+    public void Unregister(Guid userId, string connectionId)
+    {
+        if (_connections.TryGetValue(userId, out var userSockets))
+        {
+            userSockets.TryRemove(connectionId, out _);
+            if (userSockets.IsEmpty)
+            {
+                _connections.TryRemove(userId, out _);
+            }
+        }
+    }
+
+    public int AbortUserConnections(Guid userId)
+    {
+        if (!_connections.TryRemove(userId, out var userSockets))
+        {
+            return 0;
+        }
+
+        var aborted = 0;
+        foreach (var kvp in userSockets)
+        {
+            try
+            {
+                kvp.Value.Abort();
+                aborted++;
+            }
+            catch
+            {
+                // Best-effort abort for already-closed sockets.
+            }
+        }
+
+        return aborted;
+    }
+}

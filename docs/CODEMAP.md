@@ -75,6 +75,12 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Data/DatabaseOptions.cs` | Separate `Runtime` vs `Migration` connection strings, TLS enforcement, rejects Supabase `:6543` |
 | `src/Nexus.Web/Infrastructure/Data/DatabaseMigrator.cs` | Applies EF Core migrations strictly under `Migration` role (`dotnet run -- --migrate`) |
 | `src/Nexus.Web/Infrastructure/Data/PostgreSqlSessionTicketStore.cs` | Server-side `ITicketStore` persisting BFF session tickets in PostgreSQL `app_sessions` |
+| `src/Nexus.Web/Modules/Org/OrgEntities.cs` | Single `Organization`, `Department`, `Branch`, and `Employee` entities (`M1.1`) |
+| `src/Nexus.Web/Modules/Admin/AuditLogEntity.cs` | Append-only `audit_logs` entity (`M1.6` / `M7.1`) |
+| `src/Nexus.Web/Modules/Identity/NexusUser.cs` | `NexusUser : IdentityUser<Guid>` + `AdminPasswordResetLinkEntity` (`M1.2` / `M1.5`) |
+| `src/Nexus.Web/Modules/Identity/UsernameAndPasswordPolicies.cs` | `UsernamePolicy` (3–32 chars, reserved list) + `CommonPasswordValidator` (`>= 12` chars, `SEC-21`) |
+| `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` | `/api/auth/*` (register, login, logout, me, change/reset password, sessions, TOTP MFA) + `/api/admin/accounts/*` (`M1.3`–`M1.8`) |
+| `src/Nexus.Web/Modules/Identity/IdentityBootstrapService.cs` | Default org creation + `--bootstrap-admin` CLI (`M1.1`) |
 | `src/Nexus.Web/Infrastructure/Idempotency/IdempotencyEndpointFilter.cs` | `Idempotency-Key` endpoint filter (SHA-256 body hash, 24h TTL, replay, `409 Conflict`) |
 | `src/Nexus.Web/Infrastructure/Idempotency/ConditionalTransition.cs` | Conditional `UPDATE ... WHERE` state-transition helper (`Succeeded` / `AlreadyInTargetState` / `Conflict` / `NotFound`) |
 | `deploy/Dockerfile` | Multi-stage non-root container (`node:24-alpine` → `dotnet/sdk:10.0` → `dotnet/aspnet:10.0`) |
@@ -92,6 +98,7 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
 | `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
 | `tests/Nexus.IntegrationTests/PostgresFoundationTests.cs` | Testcontainers PostgreSQL 17 tests verifying separate roles (`nexus_runtime` denied DDL), `IdempotencyEndpointFilter` (`SEC-19`), `ConditionalTransition`, Data Protection keys, PostgreSQL sessions, SignalR, and private PDF acceptance |
+| `tests/Nexus.IntegrationTests/IdentityM1aTests.cs` | Testcontainers PostgreSQL 17 tests for `M1a` covering `SEC-01`, `SEC-08`, `SEC-16`, `SEC-20`, `SEC-20b`, `SEC-21`, `SEC-24`, `M1.7` devices, and `M1.8` RFC 6238 TOTP admin MFA |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

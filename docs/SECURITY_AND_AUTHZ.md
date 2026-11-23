@@ -104,23 +104,23 @@ Preserve the intent of every security test; fix the implementation when a test f
 
 | Code | Focus | Target milestone | Test reference |
 |---|---|---|---|
-| `SEC-01` | Sign-in lockout, rate limiting, generic auth errors | M1.4 | *Pending M1.4* |
+| `SEC-01` | Sign-in lockout, rate limiting, generic auth errors | M1.4 | `IdentityM1aTests.SEC01_SEC21_PasswordPolicy_GenericLoginErrors_AndAccountLockout` |
 | `SEC-03` | Private DM/group isolation (nonmember C cannot read A/B) | M0.4 / M2.12 | `AuthorizationMatrixTests` (policy); E2E pending M2.12 |
 | `SEC-04` | Authorized file downloads & short-lived signed URLs | M3.3 | *Pending M3.3* |
 | `SEC-05` | Membership enforcement on message sends and reads | M0.4 / M2.12 | `AuthorizationMatrixTests` (policy); E2E pending M2.12 |
 | `SEC-07` | SignalR unauthorized subscription / Origin / fanout isolation | M0.3 / M2.12 | `SecurityDefaultsTests` (Origin + ActiveUserHubFilter); fanout pending M2.12 |
-| `SEC-08` | Account disablement revokes HTTP + SignalR immediately | M0.3 / M1.6 | `SecurityDefaultsTests` (middleware/hub filter); session revocation pending M1.6 |
+| `SEC-08` | Account disablement revokes HTTP + SignalR immediately | M0.3 / M1.6 | `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |
 | `SEC-10` | Sanitized Markdown / XSS prevention | M2.9 | *Pending M2.9* |
 | `SEC-11` | File content-type / `attachment` + `nosniff` headers | M3.3 | *Pending M3.3* |
 | `SEC-14` | Offsite encrypted backup & independent restore rehearsal | M8.3 | *Pending M8.3* |
 | `SEC-15` | Search/delta authorization enforcement | M0.4 / M2.12 | `AuthorizationMatrixTests` (policy); SQL search pending M2.12/M6.6 |
-| `SEC-16` | Disabled account session & hub abort | M0.3 / M1.6 | `SecurityDefaultsTests`; live abort pending M1.6 |
+| `SEC-16` | Disabled account session & hub abort | M0.3 / M1.6 | `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |
 | `SEC-17` | Complete sync across disconnects/retries without loss or duplicates | M2.12 | *Pending M2.12* |
 | `SEC-18` | Member removal revokes further delivery and offline replay | M0.4 / M2.12 | `AuthorizationMatrixTests` (policy); E2E pending M2.12 |
 | `SEC-19` | `409 Conflict` on mismatched payload under same `client_msg_id` / `Idempotency-Key` | M0.5 / M2.12 | `PostgresFoundationTests` (`Idempotency-Key`); `client_msg_id` pending M2.12 |
-| `SEC-20` | Open registration rate limiting / anti-abuse | M1.3 | *Pending M1.3* |
-| `SEC-20b` | `Unverified` badge and capability restrictions | M0.4 / M1.4b | `AuthorizationMatrixTests` (policy); UI/API pending M1.4b |
-| `SEC-21` | Password policy (>=12 chars, common password block) | M1.4 | *Pending M1.4* |
+| `SEC-20` | Open registration rate limiting / anti-abuse | M1.3 | `IdentityM1aTests.SEC20_OpenRegistration_CreatesUnverifiedAccount_EnforcesUniqueReservedHoneypotAndRateLimit` |
+| `SEC-20b` | `Unverified` badge and capability restrictions | M0.4 / M1.4b | `AuthorizationMatrixTests` + `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |
+| `SEC-21` | Password policy (>=12 chars, common password block) | M1.4 | `IdentityM1aTests.SEC01_SEC21_PasswordPolicy_GenericLoginErrors_AndAccountLockout` |
 | `SEC-22` | Google OIDC PKCE/nonce/state & no auto-link by email | M1.12 | *Pending M1.12* |
 | `SEC-23` | Google linking requires active login + password reauth | M1.12 | *Pending M1.12* |
-| `SEC-24` | Password change rotates security stamp & revokes other sessions | M1.5 | *Pending M1.5* |
+| `SEC-24` | Password change rotates security stamp & revokes other sessions | M1.5 | `IdentityM1aTests.SEC24_M1_5_M1_7_ChangePassword_RemoteSignOut_AndAdminResetLink` |

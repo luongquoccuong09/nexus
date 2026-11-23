@@ -1,5 +1,6 @@
 using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Modules.Identity;
 
 if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -17,6 +18,17 @@ if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
     }
 
     await DatabaseMigrator.MigrateAsync(dbOptions.MigrationConnectionString, dbOptions.RequireTls);
+    return;
+}
+
+if (args.Contains("--bootstrap-admin", StringComparer.OrdinalIgnoreCase))
+{
+    var bootstrapApp = NexusHost.Build(args);
+    var cfg = bootstrapApp.Configuration;
+    var username = cfg["BootstrapAdmin:Username"] ?? throw new InvalidOperationException("BootstrapAdmin:Username is required.");
+    var password = cfg["BootstrapAdmin:Password"] ?? throw new InvalidOperationException("BootstrapAdmin:Password is required.");
+    var displayName = cfg["BootstrapAdmin:DisplayName"] ?? "System Administrator";
+    await IdentityBootstrapService.BootstrapSystemAdminAsync(bootstrapApp.Services, username, password, displayName);
     return;
 }
 

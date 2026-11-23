@@ -24,8 +24,13 @@ public static class DatabaseExtensions
             dbOptions.RequireTls,
             "Runtime");
 
+        services.AddHttpContextAccessor();
+
         services.AddDbContext<NexusDbContext>(options =>
             options.UseNpgsql(dbOptions.RuntimeConnectionString));
+
+        // Replace default in-memory status lookup with PostgreSQL-backed lookup when DB is configured.
+        services.AddSingleton<IAccountStatusLookup, DatabaseAccountStatusLookup>();
 
         // M0.8: persist ASP.NET Core Data Protection keys and BFF sessions in PostgreSQL.
         services.AddDataProtection()
@@ -43,6 +48,28 @@ public static class DatabaseExtensions
             .AddCheck<PostgreSqlReadinessHealthCheck>("postgres", tags: ["ready"]);
 
         return services;
+    }
+
+    private sealed class DatabaseAccountStatusLookup(IServiceScopeFactory scopeFactory) : IAccountStatusLookup
+    {
+        public async Task<AccountStatus?> GetStatusAsync(Guid userId, CancellationToken cancellationToken = default)
+        {
+            var state = await GetRuntimeStateAsync(userId, cancellationToken);
+            return state?.Status;
+        }
+
+        public async Task<AccountRuntimeState?> GetRuntimeStateAsync(Guid userId, CancellationToken cancellationToken = default)
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var row = await db.Users
+                .AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => new { u.Status, u.SecurityStamp })
+                .SingleOrDefaultAsync(cancellationToken);
+
+            return row is null ? null : new AccountRuntimeState(row.Status, row.SecurityStamp);
+        }
     }
 
     private sealed class PostgreSqlReadinessHealthCheck(IServiceScopeFactory scopeFactory) : IHealthCheck
