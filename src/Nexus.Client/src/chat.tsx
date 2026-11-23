@@ -1112,6 +1112,7 @@ export function ChatWorkspace({
                                   </button>
                                   <a
                                     href={att.downloadUrl}
+                                    download={att.fileName}
                                     className="nx-att-img-dl"
                                     aria-label={`Download ${att.fileName}`}
                                     title={`Download ${att.fileName} (${formatBytes(att.sizeBytes)})`}
@@ -1120,7 +1121,7 @@ export function ChatWorkspace({
                                   </a>
                                 </div>
                               ) : (
-                                <a key={att.id} href={att.downloadUrl} className="nx-att-file-card">
+                                <a key={att.id} href={att.downloadUrl} download={att.fileName} className="nx-att-file-card">
                                   <span className="nx-att-file-meta">
                                     <FileText size={16} aria-hidden="true" />
                                     <span style={{ minWidth: 0 }}>
@@ -1357,7 +1358,7 @@ export function ChatWorkspace({
                         </div>
                       </div>
                     )}
-                    <a href={f.downloadUrl} className="nx-btn sm" aria-label={`Download ${f.fileName}`} title={`Download ${f.fileName}`}>
+                    <a href={f.downloadUrl} download={f.fileName} className="nx-btn sm" aria-label={`Download ${f.fileName}`} title={`Download ${f.fileName}`}>
                       <Download size={13} aria-hidden="true" />
                     </a>
                   </div>
@@ -1475,7 +1476,7 @@ export function ChatWorkspace({
                   : ''}
                 {formatBytes(lightboxImage.sizeBytes)}
               </span>
-              <a href={lightboxImage.downloadUrl} className="nx-btn primary sm">
+              <a href={lightboxImage.downloadUrl} download={lightboxImage.fileName} className="nx-btn primary sm">
                 <Download size={14} aria-hidden="true" /> Download
               </a>
               <Button size="sm" onClick={() => setLightboxImage(null)}>Close</Button>

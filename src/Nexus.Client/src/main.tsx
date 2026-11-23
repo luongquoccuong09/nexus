@@ -135,6 +135,21 @@ function App() {
     localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
 
+  // Prevent accidental file drops outside the chat dropzone from navigating WebView2/browser away.
+  useEffect(() => {
+    const preventFileNav = (ev: DragEvent) => {
+      if (ev.dataTransfer?.types && Array.from(ev.dataTransfer.types).includes('Files')) {
+        ev.preventDefault();
+      }
+    };
+    window.addEventListener('dragover', preventFileNav);
+    window.addEventListener('drop', preventFileNav);
+    return () => {
+      window.removeEventListener('dragover', preventFileNav);
+      window.removeEventListener('drop', preventFileNav);
+    };
+  }, []);
+
   const loadSessions = useCallback(async () => {
     const res = await fetch('/api/auth/sessions', { credentials: 'same-origin' });
     if (res.ok) {

@@ -13,6 +13,8 @@ public sealed class MainForm : Form
     private readonly bool _startMinimized;
     private bool _exiting;
     private Uri? _currentServerOrigin;
+    private Uri? _lastNavigationUri;
+    private DateTimeOffset _lastDownloadStartedAt = DateTimeOffset.MinValue;
 
     public MainForm(DesktopUserConfig config, bool startMinimized)
     {
@@ -152,6 +154,10 @@ public sealed class MainForm : Form
             _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
             _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
+            _webView.CoreWebView2.DownloadStarting += (_, _) =>
+            {
+                _lastDownloadStartedAt = DateTimeOffset.UtcNow;
+            };
             _webView.CoreWebView2.DocumentTitleChanged += (_, _) =>
             {
                 var docTitle = _webView.CoreWebView2.DocumentTitle;
@@ -222,6 +228,15 @@ public sealed class MainForm : Form
             return;
         }
 
+        _lastNavigationUri = target;
+
+        if (target.Scheme == Uri.UriSchemeFile)
+        {
+            // Prevent accidental local file drag-and-drop outside the chat dropzone from navigating away.
+            e.Cancel = true;
+            return;
+        }
+
         if (target.Scheme == "about" || target.Scheme == "data")
         {
             return;
@@ -237,6 +252,14 @@ public sealed class MainForm : Form
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         if (e.IsSuccess || e.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled)
+        {
+            return;
+        }
+
+        // WebView2 aborts a top-level navigation with ConnectionAborted when a server response
+        // triggers a file download (Content-Disposition: attachment). Never replace the live app
+        // with an offline error screen in that case.
+        if (e.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted && IsDownloadAbort())
         {
             return;
         }
@@ -270,6 +293,27 @@ public sealed class MainForm : Form
             """;
 
         _webView.CoreWebView2.NavigateToString(html);
+    }
+
+    private bool IsDownloadAbort()
+    {
+        if (DateTimeOffset.UtcNow - _lastDownloadStartedAt <= TimeSpan.FromSeconds(5))
+        {
+            return true;
+        }
+
+        if (_lastNavigationUri is not null)
+        {
+            var path = _lastNavigationUri.AbsolutePath;
+            var query = _lastNavigationUri.Query;
+            if (path.Contains("/api/files/", StringComparison.OrdinalIgnoreCase) ||
+                query.Contains("format=csv", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool IsSameServerOrigin(Uri target)
