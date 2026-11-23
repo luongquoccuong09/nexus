@@ -197,14 +197,17 @@ public sealed class SecurityDefaultsAndObservabilityTests
             AccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
         };
 
-        logger.LogInformation(
-            "Processed request for {UserId} with {Password} {MessageBody} {Cookie} {Token} {@Payload}",
-            safeUserId,
-            "TopSecretPass#99",
-            "Private DM body text",
-            "cookie-secret-abc",
-            "bearer-token-xyz",
-            payload);
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation(
+                "Processed request for {UserId} with {Password} {MessageBody} {Cookie} {Token} {@Payload}",
+                safeUserId,
+                "TopSecretPass#99",
+                "Private DM body text",
+                "cookie-secret-abc",
+                "bearer-token-xyz",
+                payload);
+        }
 
         var combinedJson = string.Join("\n", sink.Lines);
         Assert.Contains(safeUserId.ToString(), combinedJson);
@@ -231,7 +234,7 @@ public sealed class SecurityDefaultsAndObservabilityTests
 
     private sealed class ProbeHub : Hub
     {
-        public string Ping() => "pong";
+        public string Ping() => Context.ConnectionId is not null ? "pong" : string.Empty;
     }
 
     private sealed class TestHeaderAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>

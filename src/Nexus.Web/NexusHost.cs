@@ -1,5 +1,6 @@
 using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Infrastructure.Storage;
 using Serilog.Core;
 
 namespace Nexus.Web;
@@ -15,6 +16,7 @@ public static class NexusHost
         var builder = WebApplication.CreateBuilder(args);
         builder.AddNexusObservability(additionalLogSink);
         builder.Services.AddNexusSecurityDefaults(builder.Configuration);
+        builder.Services.AddNexusStorage(builder.Configuration);
 
         configureBuilder?.Invoke(builder);
 

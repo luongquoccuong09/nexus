@@ -13,3 +13,4 @@ test-results/
 *.user
 *.pfx
 /artifacts/
+**/App_Data/

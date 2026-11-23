@@ -71,10 +71,18 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | `src/Nexus.Web/Infrastructure/Observability/ObservabilityExtensions.cs` | Serilog Compact JSON + OpenTelemetry tracing/metrics + health checks |
 | `src/Nexus.Web/Infrastructure/Observability/SensitiveDataRedactingEnricher.cs` | Redacts message bodies, passwords, cookies, and tokens from all logs |
 | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` | `GET /healthz`, `GET /readyz`, `GET /api/version` |
+| `src/Nexus.Web/Infrastructure/Storage/IFileStorage.cs` | Private storage contract, random object keys, path-traversal guards, `<= 60s` signed URL validation, safe download headers |
+| `src/Nexus.Web/Infrastructure/Storage/LocalFileStorage.cs` | Atomic local-volume file storage outside `wwwroot` |
+| `src/Nexus.Web/Infrastructure/Storage/SupabaseFileStorage.cs` | Server-side private Supabase Storage REST adapter |
+| `src/Nexus.Web/Infrastructure/Storage/IFileScanner.cs` | Malware scan contract + `PrototypeFileScannerStub` (`skipped_prototype`) |
+| `Directory.Build.props` | Roslyn security analyzers (`AnalysisModeSecurity=All`, security rules promoted to build errors) |
+| `scripts/audit/Test-SecurityGuardrails.ps1` | Static security guardrails rejecting `AllowAnyOrigin`, disabled TLS validation, client storage secrets, and Supabase port `6543` |
+| `.github/workflows/ci.yml` | CI workflow running build/test, Roslyn analyzers, `dotnet list package --vulnerable`, `npm audit`, Gitleaks, Trivy, and audit scripts |
 | `src/Nexus.Client/vite.config.ts` | Dev server on `127.0.0.1:5173`, proxies `/api` to `http://127.0.0.1:5080` |
 | `src/Nexus.Client/src/main.tsx` | React client bootstrap |
 | `tests/Nexus.IntegrationTests/AuthorizationMatrixTests.cs` | 66 matrix-derived `[Theory]` cases verifying `IAuthorizationService.Can` |
 | `tests/Nexus.IntegrationTests/SecurityDefaultsAndObservabilityTests.cs` | Integration tests for `FallbackPolicy`, `ActiveUserMiddleware`, `ActiveUserHubFilter`, WebSocket Origin, CORS wildcard rejection, CSP headers, pagination cap, and Serilog redaction |
+| `tests/Nexus.IntegrationTests/StorageAndScannerTests.cs` | Integration tests for `LocalFileStorage`, `SupabaseFileStorage`, path traversal, signed URL TTL cap, safe download headers, and `PrototypeFileScannerStub` |
 | `tests/Nexus.IntegrationTests/HostTests.cs` | xUnit integration smoke tests against `NexusHost` |
 
 ## 3. Task → starting file → verification

@@ -1,0 +1,79 @@
+name: Nexus CI & Security Gates
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-and-guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: src/Nexus.Client/package-lock.json
+
+      - name: Restore .NET solution
+        run: dotnet restore Nexus.slnx
+
+      - name: Build .NET solution (with Roslyn security analyzers)
+        run: dotnet build Nexus.slnx --no-restore -c Release
+
+      - name: Run .NET tests
+        run: dotnet test Nexus.slnx --no-build -c Release --verbosity normal
+
+      - name: Check vulnerable NuGet packages
+        run: |
+          output=$(dotnet list Nexus.slnx package --vulnerable --include-transitive)
+          echo "$output"
+          if echo "$output" | grep -qiE "has the following vulnerable packages"; then
+            echo "::error::Vulnerable NuGet packages detected."
+            exit 1
+          fi
+
+      - name: Install and build React client
+        run: |
+          npm --prefix src/Nexus.Client ci
+          npm --prefix src/Nexus.Client run build
+
+      - name: Audit npm dependencies
+        run: npm --prefix src/Nexus.Client audit --audit-level=high
+
+      - name: Verify documentation indexes
+        shell: pwsh
+        run: pwsh -File ./scripts/audit/Build-KnowledgeIndex.ps1 -Check
+
+      - name: Run static security guardrails
+        shell: pwsh
+        run: pwsh -File ./scripts/audit/Test-SecurityGuardrails.ps1
+
+      - name: Secret scanning (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Vulnerability & misconfiguration scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true

@@ -36,9 +36,9 @@ D02 establishes one Organization for accounts. Under D04, communities manage mem
 - [x] **M0.4** Implement `IAuthorizationService.Can(actor, action, resource)` and matrix-derived tests, initially denying all cases. → P0.2
 - [ ] **M0.5** Add the `idempotency_keys` table, an `Idempotency-Key` filter and a conditional state-transition helper. → P0.3
 - [x] **M0.6** Serilog JSON logging without bodies or tokens, OpenTelemetry, `/healthz`, `/readyz` and `/api/version`.
-- [ ] **M0.7** CI checks: Gitleaks, `dotnet list package --vulnerable`, `npm audit`, Trivy and Roslyn security analyzers. Reject AllowAnyOrigin, disabled certificate validation and privileged storage credentials in the frontend.
+- [x] **M0.7** CI checks: Gitleaks, `dotnet list package --vulnerable`, `npm audit`, Trivy and Roslyn security analyzers. Reject AllowAnyOrigin, disabled certificate validation and privileged storage credentials in the frontend.
 - [ ] **M0.8** Containerize and deploy the demo. Sleeping PaaS instances are acceptable for demos. Persist Data Protection keys and sessions in PostgreSQL. Use development-only seeded accounts for M0.
-- [ ] **M0.9** Provide `IFileStorage` for private Supabase storage/local volumes and an `IFileScanner` stub returning `skipped_prototype`.
+- [x] **M0.9** Provide `IFileStorage` for private Supabase storage/local volumes and an `IFileScanner` stub returning `skipped_prototype`.
 - **M0 acceptance:** Simulate login, write a record, receive a SignalR event and upload/download a private PDF. CI passes the security checks.
 
 ## M1 — Identity and directory (D03, audit §8)

@@ -70,17 +70,17 @@ Stop with `Ctrl+C` and run `Pop-Location`.
 - Verify TLS on database connections. When connecting through Supabase's pooler, always use **Session Mode on port 5432**.
 - Every schema change must update [`DATA_MODEL.md`](DATA_MODEL.md).
 
-## 6. Security & quality gates (M0.7+)
+## 6. Security & quality gates (M0.7)
 
-CI runs the same restore/build/test commands as local development plus:
+CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the same restore/build/test commands as local development plus:
 
 - Secret scanning (`Gitleaks`)
-- Dependency vulnerability checks (`dotnet list package --vulnerable`, `npm audit`, `Trivy`)
-- Roslyn security analyzers
-- Static guards rejecting `AllowAnyOrigin`, disabled certificate validation, and privileged storage credentials in `src/Nexus.Client/`
-- Documentation index verification:
+- Dependency vulnerability checks (`dotnet list Nexus.slnx package --vulnerable --include-transitive`, `npm audit --audit-level=high`, `Trivy`)
+- Roslyn security analyzers (`Directory.Build.props` promotes security CA rules to build errors)
+- Static guardrails rejecting `AllowAnyOrigin`, disabled TLS certificate validation, Supabase port `6543`, and privileged storage credentials in `src/Nexus.Client/`:
 
 ```powershell
+pwsh -File ./scripts/audit/Test-SecurityGuardrails.ps1
 pwsh -File ./scripts/audit/Build-KnowledgeIndex.ps1 -Check
 ```
 

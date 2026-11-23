@@ -7,7 +7,7 @@ This directory holds the master [`ROADMAP.md`](ROADMAP.md) plus milestone-scoped
 | Milestone | Directory | Key documents | Status |
 |---|---|---|---|
 | **Master Roadmap** | [`ROADMAP.md`](ROADMAP.md) | P0 through M9 checklist and dependencies | Active |
-| **M0 — Foundation** | [`m0-foundation/`](m0-foundation/) | [`PLAN-m0-foundation.md`](m0-foundation/PLAN-m0-foundation.md)<br>[`HANDOFF-m0-slice-ab.md`](m0-foundation/HANDOFF-m0-slice-ab.md)<br>[`HANDOFF-m0.1.md`](m0-foundation/HANDOFF-m0.1.md) | In progress on `develop` (`P0.2`, `P0.3`, `M0.1`, `M0.3`, `M0.4`, `M0.6` done; `M0.2`/`M0.5`/`M0.9` next) |
+| **M0 — Foundation** | [`m0-foundation/`](m0-foundation/) | [`PLAN-m0-foundation.md`](m0-foundation/PLAN-m0-foundation.md)<br>[`HANDOFF-m0-slice-ab.md`](m0-foundation/HANDOFF-m0-slice-ab.md)<br>[`HANDOFF-m0.1.md`](m0-foundation/HANDOFF-m0.1.md) | In progress on `develop` (`P0.2`, `P0.3`, `M0.1`, `M0.3`, `M0.4`, `M0.6`, `M0.7`, `M0.9` done; Docker/PG needed for `M0.2`, `M0.5`, `M0.8`) |
 | **M1 — Identity & Directory** | [`m1-identity-directory/`](m1-identity-directory/) | *Create `PLAN-*.md` when starting M1* | Planned |
 | **M2 — Core Messaging & Sync** | [`m2-messaging-sync/`](m2-messaging-sync/) | *Create `PLAN-*.md` when starting M2* | Planned |
 | **M3 — Files** | [`m3-files/`](m3-files/) | *Create `PLAN-*.md` when starting M3* | Planned |

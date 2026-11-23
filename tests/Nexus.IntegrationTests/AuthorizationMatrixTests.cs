@@ -16,7 +16,7 @@ public sealed class AuthorizationMatrixTests
     private static readonly ActorContext VerifiedHrAdmin = new(Guid.NewGuid(), OrgA, AccountStatus.Active, TrustLevel.Verified, OrgRole.HRAdmin);
     private static readonly ActorContext VerifiedSystemAdmin = new(Guid.NewGuid(), OrgA, AccountStatus.Active, TrustLevel.Verified, OrgRole.SystemAdmin);
 
-    private readonly IAuthorizationService _authz = new NexusAuthorizationService();
+    private readonly NexusAuthorizationService _authz = new();
 
     public static IEnumerable<object?[]> MatrixCases()
     {
