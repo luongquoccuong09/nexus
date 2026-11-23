@@ -398,6 +398,15 @@ function App() {
     if (!dryRun) await loadDepartments();
   }
 
+  const handleOpenDirectoryFromChat = useCallback(() => {
+    setWorkspaceTab('directory');
+    void loadDirectory(dirQuery, dirDeptId);
+  }, [dirDeptId, dirQuery, loadDirectory]);
+
+  const handleVersionStale = useCallback(() => {
+    setVersionStale(true);
+  }, []);
+
   if (authLoading) {
     return (
       <div className="nx-empty-stage" style={{ minHeight: '100dvh' }}>
@@ -659,13 +668,10 @@ function App() {
               selectedConversationId={activeConvId}
               directoryUsers={directory}
               onSelectConversation={setActiveConvId}
-              onOpenDirectory={() => {
-                setWorkspaceTab('directory');
-                void loadDirectory(dirQuery, dirDeptId);
-              }}
+              onOpenDirectory={handleOpenDirectoryFromChat}
               onConnectionStateChange={setConnState}
               onUnreadTotalChange={setUnreadTotal}
-              onVersionStale={() => setVersionStale(true)}
+              onVersionStale={handleVersionStale}
             />
           </div>
 

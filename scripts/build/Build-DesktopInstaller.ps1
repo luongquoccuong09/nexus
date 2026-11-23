@@ -66,9 +66,16 @@ function Invoke-Logged {
     )
     Write-NexusStepStatus 'RUN' $StepName
     Add-Content -LiteralPath $logPath -Value "`n=== $StepName ==="
-    $global:LASTEXITCODE = 0
-    $output = & $Action 2>&1
-    $exitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $global:LASTEXITCODE = 0
+        $output = & $Action 2>&1
+        $exitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($output) {
         $output | ForEach-Object { Add-Content -LiteralPath $logPath -Value ($_.ToString()) }
     }
@@ -80,6 +87,20 @@ function Invoke-Logged {
 }
 
 try {
+    # Auto-read NEXUS_SERVER_URL from local .env when -ServerUrl is not explicitly provided
+    if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
+        $dotEnvPath = Join-Path $ws.WorkspaceRoot '.env'
+        if (Test-Path -LiteralPath $dotEnvPath -PathType Leaf) {
+            foreach ($line in Get-Content -LiteralPath $dotEnvPath) {
+                $trimmed = $line.Trim()
+                if ($trimmed -match '^NEXUS_SERVER_URL\s*=\s*(.+)$') {
+                    $ServerUrl = $Matches[1].Trim().Trim('"', "'")
+                    break
+                }
+            }
+        }
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($ServerUrl)) {
         $trimmedUrl = $ServerUrl.Trim().TrimEnd('/')
         if ($trimmedUrl -notmatch '^https://' -and $trimmedUrl -notmatch '^http://(localhost|127\.0\.0\.1)(:\d+)?$') {
@@ -124,8 +145,10 @@ try {
         $configJson + "`n",
         (New-Object System.Text.UTF8Encoding($false)))
 
-    # Remove stray debug symbols and NuGet XML docs so shipping payload stays minimal
-    Get-ChildItem -LiteralPath $payloadDir -Include '*.pdb', 'Microsoft.Web.WebView2.*.xml' -Recurse | Remove-Item -Force
+    # Remove stray debug symbols and NuGet XML docs (avoid -LiteralPath + -Include bug in Windows PowerShell 5.1)
+    Get-ChildItem -LiteralPath $payloadDir -File -Recurse |
+        Where-Object { $_.Extension -eq '.pdb' -or $_.Name -like 'Microsoft.Web.WebView2.*.xml' } |
+        Remove-Item -Force
 
     $stagedExe = Join-Path $payloadDir 'ProjectNexus.exe'
     if (-not (Test-Path -LiteralPath $stagedExe -PathType Leaf)) {
@@ -179,6 +202,12 @@ try {
     if (-not $KeepStaging) {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
+}
+catch {
+    $errMsg = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value "`n[EXCEPTION] $errMsg`n$($_.ScriptStackTrace)"
+    Write-NexusStepStatus 'FAIL' "$errMsg (see $logPath)"
+    throw
 }
 finally {
     if (-not $NoPause) {

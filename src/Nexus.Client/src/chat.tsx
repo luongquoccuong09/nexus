@@ -182,6 +182,12 @@ export function ChatWorkspace({
   const typingTimerRef = useRef<number | null>(null);
   activeConvRef.current = selectedConversationId;
 
+  const loadConversationsRef = useRef<() => Promise<void>>(async () => {});
+  const syncDeltaRef = useRef<(convId: string) => Promise<void>>(async () => {});
+  const reconcileRef = useRef<() => Promise<void>>(async () => {});
+  const connStateCbRef = useRef(onConnectionStateChange);
+  connStateCbRef.current = onConnectionStateChange;
+
   const checkApiVersion = useCallback(async () => {
     if (!initialVersion) return;
     try {
@@ -406,6 +412,10 @@ export function ChatWorkspace({
     }
   }, [checkApiVersion, flushOfflineQueue, loadConversations, syncConversationDelta]);
 
+  loadConversationsRef.current = loadConversations;
+  syncDeltaRef.current = syncConversationDelta;
+  reconcileRef.current = reconcileAll;
+
   useEffect(() => {
     void loadConversations();
   }, [loadConversations]);
@@ -425,6 +435,7 @@ export function ChatWorkspace({
   }, [selectedConversationId, loadMessagesFull]);
 
   useEffect(() => {
+    let disposed = false;
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/hubs/messaging')
       .withAutomaticReconnect({
@@ -433,14 +444,14 @@ export function ChatWorkspace({
       .build();
 
     connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number }) => {
-      void loadConversations();
+      void loadConversationsRef.current();
       if (evt.conversationId === activeConvRef.current) {
-        void syncConversationDelta(evt.conversationId);
+        void syncDeltaRef.current(evt.conversationId);
       }
     });
 
     connection.on('ReadStateUpdated', () => {
-      void loadConversations();
+      void loadConversationsRef.current();
     });
 
     connection.on('TypingIndicator', (evt: { conversationId: string; displayName: string }) => {
@@ -451,32 +462,43 @@ export function ChatWorkspace({
       }
     });
 
-    connection.onreconnecting(() => onConnectionStateChange('reconnecting'));
-    connection.onreconnected(() => {
-      onConnectionStateChange('connected');
-      void reconcileAll();
+    connection.onreconnecting(() => {
+      if (!disposed) connStateCbRef.current('reconnecting');
     });
-    connection.onclose(() => onConnectionStateChange('offline'));
+    connection.onreconnected(() => {
+      if (!disposed) {
+        connStateCbRef.current('connected');
+        void reconcileRef.current();
+      }
+    });
+    connection.onclose(() => {
+      if (!disposed) connStateCbRef.current('offline');
+    });
 
     hubRef.current = connection;
-    onConnectionStateChange('reconnecting');
+    connStateCbRef.current('reconnecting');
     connection.start()
-      .then(() => onConnectionStateChange('connected'))
-      .catch(() => onConnectionStateChange('offline'));
+      .then(() => {
+        if (!disposed) connStateCbRef.current('connected');
+      })
+      .catch(() => {
+        if (!disposed) connStateCbRef.current('offline');
+      });
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        void reconcileAll();
+        void reconcileRef.current();
       }
     };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
+      disposed = true;
       document.removeEventListener('visibilitychange', onVisible);
       if (typingTimerRef.current) window.clearTimeout(typingTimerRef.current);
       void connection.stop();
     };
-  }, [loadConversations, onConnectionStateChange, reconcileAll, syncConversationDelta]);
+  }, []);
 
   async function sendCurrentMessage() {
     if (!selectedConversationId) return;

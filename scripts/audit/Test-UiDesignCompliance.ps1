@@ -53,8 +53,8 @@ if (-not (Test-Path -LiteralPath $tokensFile -PathType Leaf)) {
     }
 }
 
-# 2. Scan client source files
-$clientFiles = @(Get-ChildItem -LiteralPath $clientSrc -Recurse -File -Include '*.css', '*.ts', '*.tsx')
+# 2. Scan client source files (avoid -LiteralPath + -Include bug in Windows PowerShell 5.1)
+$clientFiles = @(Get-ChildItem -LiteralPath $clientSrc -Recurse -File | Where-Object { $_.Extension -in '.css', '.ts', '.tsx' })
 $scanned = 0
 
 foreach ($file in $clientFiles) {

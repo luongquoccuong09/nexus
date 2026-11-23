@@ -57,7 +57,8 @@ if ($SkipDockerTests) {
 if ($LASTEXITCODE -ne 0) { throw 'Integration test suite failed.' }
 Write-NexusStepStatus 'PASS' 'Integration tests passed'
 
-$npmExe = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
+$isWin = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$npmExe = if ($isWin) { 'npm.cmd' } else { 'npm' }
 
 Write-NexusStepStatus 'RUN' 'Client unit tests (SEC-10 Markdown XSS)'
 & $npmExe --prefix $ws.ClientRoot run test
@@ -69,7 +70,7 @@ Write-NexusStepStatus 'RUN' 'Client TypeScript + Vite production build'
 if ($LASTEXITCODE -ne 0) { throw 'Client build failed.' }
 Write-NexusStepStatus 'PASS' 'Client production build passed'
 
-if (-not $SkipDesktopBuild -and ($IsWindows -or $env:OS -eq 'Windows_NT') -and (Test-Path -LiteralPath $ws.DesktopProject)) {
+if (-not $SkipDesktopBuild -and $isWin -and (Test-Path -LiteralPath $ws.DesktopProject)) {
     Write-NexusStepStatus 'RUN' 'Build Nexus.Desktop (Release)'
     & dotnet build $ws.DesktopProject -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Nexus.Desktop build failed.' }
