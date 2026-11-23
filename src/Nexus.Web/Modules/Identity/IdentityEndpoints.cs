@@ -186,8 +186,6 @@ public static class IdentityEndpoints
             UserName = normalizedUsername,
             DisplayName = displayName,
             Status = AccountStatus.Active,
-            TrustLevel = TrustLevel.Unverified,
-            OrgRole = OrgRole.Member,
             TermsVersion = opts.CurrentTermsVersion,
             TermsAcceptedAt = now,
             CreatedAt = now
@@ -276,12 +274,15 @@ public static class IdentityEndpoints
         await SignInSessionAsync(ctx, user, mfaVerified);
         await WriteAuditAsync(db, Guid.Empty, user.Id, "AUTH_PASSWORD_LOGIN", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
 
-        return Results.Ok(ToSummaryDto(user));
+        var requiresMfa = await HasActiveAdminRoleAsync(db, user.Id, ct);
+        return Results.Ok(ToSummaryDto(user, requiresMfa));
     }
 
     private static async Task<IResult> HandleMeAsync(
         HttpContext ctx,
-        UserManager<NexusUser> userManager)
+        [FromServices] NexusDbContext db,
+        UserManager<NexusUser> userManager,
+        CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var userId))
         {
@@ -289,7 +290,13 @@ public static class IdentityEndpoints
         }
 
         var user = await userManager.FindByIdAsync(userId.ToString());
-        return user is null ? Results.Unauthorized() : Results.Ok(ToSummaryDto(user));
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var requiresMfa = await HasActiveAdminRoleAsync(db, user.Id, ct);
+        return Results.Ok(ToSummaryDto(user, requiresMfa));
     }
 
     private static async Task<IResult> HandleChangePasswordAsync(
@@ -835,20 +842,24 @@ public static class IdentityEndpoints
         m.TrustLevel == TrustLevel.Unverified, m.OrgRole.ToString(), m.EmployeeId, false, false, false,
         m.CustomStatus, m.AvatarObjectKey is null ? null : $"/api/organizations/{m.OrganizationId}/people/{m.Id}/avatar");
 
-    private static UserSummaryDto ToSummaryDto(NexusUser u) => new(
+    private static Task<bool> HasActiveAdminRoleAsync(NexusDbContext db, Guid userId, CancellationToken ct) =>
+        db.OrganizationMemberships.AsNoTracking()
+            .AnyAsync(m => m.Id == userId && m.Status == AccountStatus.Active && m.OrgRole != OrgRole.Member, ct);
+
+    private static UserSummaryDto ToSummaryDto(NexusUser u, bool requiresMfa = false) => new(
         u.Id,
         u.UserName ?? string.Empty,
         u.DisplayName,
         u.Status.ToString(),
-        u.TrustLevel.ToString(),
-        u.TrustLevel == TrustLevel.Unverified,
-        u.OrgRole.ToString(),
-        u.EmployeeId,
+        TrustLevel.Unverified.ToString(),
+        true,
+        OrgRole.Member.ToString(),
+        null,
         u.TwoFactorEnabled,
-        u.RequiresMfa,
-        u.RequiresMfa && !u.TwoFactorEnabled,
-        u.CustomStatus,
-        string.IsNullOrEmpty(u.AvatarObjectKey) ? null : $"/api/people/{u.Id}/avatar");
+        requiresMfa,
+        requiresMfa && !u.TwoFactorEnabled,
+        null,
+        null);
 
     private static string ComputeSha256Hex(string input) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)));

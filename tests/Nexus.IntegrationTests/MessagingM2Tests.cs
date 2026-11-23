@@ -564,19 +564,16 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         var user = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = username,
             DisplayName = displayName,
             Status = AccountStatus.Active,
-            TrustLevel = trustLevel,
-            OrgRole = role,
             TermsVersion = opts.CurrentTermsVersion,
             TermsAcceptedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
-        OrganizationFixtureHandler.Add(db, org.Id, user);
+        OrganizationFixtureHandler.Add(db, org.Id, user, role, trustLevel);
         await db.SaveChangesAsync();
         return user;
     }

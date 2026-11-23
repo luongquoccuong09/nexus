@@ -66,12 +66,9 @@ public static class IdentityBootstrapService
         var admin = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = normalizedUsername,
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? normalizedUsername : displayName.Trim(),
             Status = AccountStatus.Active,
-            TrustLevel = TrustLevel.Verified,
-            OrgRole = OrgRole.SystemAdmin,
             TermsVersion = options.CurrentTermsVersion,
             TermsAcceptedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
@@ -84,7 +81,7 @@ public static class IdentityBootstrapService
             throw new InvalidOperationException($"Failed to bootstrap SystemAdmin: {reason}");
         }
 
-        if (!org.LegacyReviewPending && !await db.OrganizationMemberships.AnyAsync(m => m.OrganizationId == org.Id && m.IsOwner, cancellationToken))
+        if (!await db.OrganizationMemberships.AnyAsync(m => m.OrganizationId == org.Id && m.IsOwner, cancellationToken))
         {
             var member = OrganizationMembership.Create(org.Id, admin, admin.CreatedAt);
             member.IsOwner = true;

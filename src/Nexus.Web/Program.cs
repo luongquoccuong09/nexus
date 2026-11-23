@@ -1,7 +1,6 @@
 using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Modules.Identity;
-using Nexus.Web.Modules.Org;
 
 if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -30,18 +29,6 @@ if (args.Contains("--bootstrap-admin", StringComparer.OrdinalIgnoreCase))
     var password = cfg["BootstrapAdmin:Password"] ?? throw new InvalidOperationException("BootstrapAdmin:Password is required.");
     var displayName = cfg["BootstrapAdmin:DisplayName"] ?? "System Administrator";
     await IdentityBootstrapService.BootstrapSystemAdminAsync(bootstrapApp.Services, username, password, displayName);
-    return;
-}
-
-if (args.Contains("--review-legacy-organization", StringComparer.OrdinalIgnoreCase))
-{
-    await using var reviewApp = NexusHost.Build(args);
-    await using var scope = reviewApp.Services.CreateAsyncScope();
-    var manifest = reviewApp.Configuration["LegacyOrganization:Manifest"]
-        ?? throw new InvalidOperationException("LegacyOrganization:Manifest is required.");
-    var apply = args.Contains("--apply-legacy-review", StringComparer.OrdinalIgnoreCase);
-    await LegacyOrganizationReview.ReviewAsync(scope.ServiceProvider.GetRequiredService<NexusDbContext>(), manifest, apply);
-    Console.WriteLine(apply ? "Legacy Organization review applied." : "Legacy Organization review validated without saving changes.");
     return;
 }
 

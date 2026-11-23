@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -22,7 +21,6 @@ public static class MessagingEndpoints
 {
     public const int MaxMessageBodyLength = 4000;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly string[] AttachmentUrlFields = ["downloadUrl", "thumbnailUrl", "previewUrl"];
 
     public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null);
     public sealed record MarkReadRequest(long LastReadSeq);
@@ -434,7 +432,7 @@ public static class MessagingEndpoints
                 changeSeq = e.ChangeSeq,
                 eventType = e.EventType,
                 actorUserId = e.ActorUserId,
-                payload = ScopeLegacyAttachmentUrls(e.EventType, payload, conv.OrganizationId),
+                payload,
                 createdAt = e.CreatedAt
             });
         }
@@ -446,32 +444,6 @@ public static class MessagingEndpoints
             nextAfter,
             latestChangeSeq = conv.ChangeSeq
         });
-    }
-
-    private static JsonElement ScopeLegacyAttachmentUrls(string eventType, JsonElement payload, Guid? organizationId)
-    {
-        const string legacyFilesPath = "/api/files/";
-        if (eventType != "message.created" ||
-            !payload.TryGetProperty("attachments", out var attachments) ||
-            attachments.ValueKind != JsonValueKind.Array ||
-            !attachments.GetRawText().Contains(legacyFilesPath, StringComparison.Ordinal))
-        {
-            return payload;
-        }
-
-        var message = JsonNode.Parse(payload.GetRawText())!.AsObject();
-        foreach (var attachment in message["attachments"]!.AsArray().OfType<JsonObject>())
-        {
-            foreach (var field in AttachmentUrlFields)
-            {
-                if (attachment[field]?.GetValue<string>() is { } url && url.StartsWith(legacyFilesPath, StringComparison.Ordinal))
-                {
-                    attachment[field] = OrganizationScope.ApiPath(organizationId) + url["/api".Length..];
-                }
-            }
-        }
-
-        return JsonSerializer.SerializeToElement(message, WebJsonOptions);
     }
 
     private static async Task<IResult> HandleReconcileAsync(

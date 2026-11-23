@@ -300,6 +300,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
         var bootstrappedAdmin = await IdentityBootstrapService.BootstrapSystemAdminAsync(
             app.Services, adminUser, adminPw, "System Admin");
 
+        var defaultOrgId = await OrganizationFixtureHandler.GetIdAsync(app.Services);
         var empCode = "EMP-" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
         await using (var scope = app.Services.CreateAsyncScope())
         {
@@ -307,7 +308,7 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
             db.Employees.Add(new EmployeeEntity
             {
                 Id = Guid.CreateVersion7(),
-                OrganizationId = bootstrappedAdmin.OrganizationId!.Value,
+                OrganizationId = defaultOrgId,
                 EmployeeCode = empCode,
                 FullName = "Nguyen Van A",
                 IsActive = true,

@@ -59,7 +59,7 @@ public sealed class NexusDbContext
         OrganizationActor is { } actor && actor.Id == userId
             ? Task.FromResult<OrganizationMembership?>(actor)
             : OrganizationPeople.SingleOrDefaultAsync(member => member.Id == userId && member.Status == Security.AccountStatus.Active &&
-                member.Account.Status == Security.AccountStatus.Active && !member.Organization.LegacyReviewPending, ct);
+                member.Account.Status == Security.AccountStatus.Active, ct);
     public DbSet<DepartmentEntity> Departments => Set<DepartmentEntity>();
     public DbSet<BranchEntity> Branches => Set<BranchEntity>();
     public DbSet<EmployeeEntity> Employees => Set<EmployeeEntity>();

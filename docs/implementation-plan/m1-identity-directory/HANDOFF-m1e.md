@@ -6,48 +6,29 @@
 
 ```powershell
 pwsh -File ./scripts/Run-Tests.ps1
-dotnet test tests/Nexus.IntegrationTests --filter 'FullyQualifiedName~LegacyOrganizationCutoverTests|FullyQualifiedName~ChatScopeTests'
+dotnet test tests/Nexus.IntegrationTests --filter 'FullyQualifiedName~ChatScopeTests'
 pwsh -File ./scripts/audit/Build-KnowledgeIndex.ps1
 git diff --check
 ```
 
-- The integration suite uses disposable PostgreSQL 17 Testcontainers. `ChatScopeTests` covers zero-Organization registration, consent by username and private link, Personal DMs and groups, competing invitation redemption, revoked and expired links, independent roles and hubs, and access checks before and after Organization revocation.
-- `LegacyOrganizationCutoverTests` upgrades a disposable M5 database, exercises manifest validation and application, and verifies ownership transfer, access retention for the approved set, account retention, chat history and attachment references. `FilesM3Tests` verifies that retained delta events produce working, authorized scoped links.
+- The integration suite uses disposable PostgreSQL 17 Testcontainers initialized from the consolidated `20261123132240_InitialSchema` baseline migration. `ChatScopeTests` covers zero-Organization registration, consent by username and private link, Personal DMs and groups, competing invitation redemption, revoked and expired links, independent roles and hubs, and access checks before and after Organization revocation.
+- `FilesM3Tests` verifies that delta events produce working, authorized scoped links.
 - The local browser check exercised sign-in with zero memberships, a contact request and acceptance, a delivered Personal message using two accounts, and the authenticator requirement shown by the Organization creation dialog.
 - Two-scope SignalR, unread count and reconciliation tests use concurrent connections for a single account.
 - Two browser tabs used the same account as Owner in Organization A and Member in Organization B. A local proxy dropped message sends for A while B delivered normally. Reopening A after the proxy restored access flushed its queued message. PostgreSQL contained exactly one message in each expected conversation.
 
-## Legacy Organization cutover
+## Fresh database initialization (greenfield)
 
-1. On a staging copy of the existing database, restore a fresh backup and use the same app build as the intended cutover. Preserve private storage and its existing object keys. Keep `NexusOrganizations__AllowCreation=false`.
-2. Obtain the legacy Organization Owner's approved account IDs. Confirm the Owner's account has TOTP enabled. For each Community or group whose Owner is excluded, select an approved existing member as the new Owner. Official Communities require a Verified replacement.
-3. Run the migration and validate the manifest against that staging copy using the configured migration and runtime connection strings. Set `LegacyOrganization__Manifest` to an operator-controlled file path. The first review command validates within a transaction and rolls back.
+Because there has been no production release yet, all pre-release migrations and legacy cutover scaffolding (`LegacyOrganizationReview`, `legacy_review_pending`, legacy Organization columns on `users`, and `ScopeLegacyAttachmentUrls`) have been removed in favor of a single clean baseline migration (`20261123132240_InitialSchema`). `NexusOrganizations:AllowCreation` now defaults to `true` in all environments (still configurable to `false` if an operator chooses to restrict creation).
 
-```powershell
-dotnet Nexus.Web.dll --migrate
-dotnet Nexus.Web.dll --review-legacy-organization
-dotnet Nexus.Web.dll --review-legacy-organization --apply-legacy-review
-```
+- **Local Docker PostgreSQL reset:**
+  ```powershell
+  docker compose -f deploy/docker-compose.dev.yml down -v
+  docker compose -f deploy/docker-compose.dev.yml up --build -d
+  ```
+- **Fresh Supabase database:** run [`deploy/supabase/init-supabase.sql`](../../../deploy/supabase/init-supabase.sql) in SQL Editor, then run `pwsh -File .\scripts\deploy\Invoke-SupabaseMigrate.ps1` (or `dotnet run --project src/Nexus.Web -- --migrate`).
 
-```json
-{
-  "organizationId": "00000000-0000-0000-0000-000000000001",
-  "ownerId": "00000000-0000-0000-0000-000000000002",
-  "approvedAccountIds": ["00000000-0000-0000-0000-000000000002"],
-  "communities": [],
-  "groups": [
-    {
-      "resourceId": "00000000-0000-0000-0000-000000000003",
-      "newOwnerId": "00000000-0000-0000-0000-000000000002"
-    }
-  ]
-}
-```
-
-4. Verify both approved and excluded accounts, historical messages, attachment downloads, revocation, and independent contexts against staging. Notify clients to send or copy any queued messages before cutover. Server-side messages migrate and the previous unscoped local queue is left in the old browser storage namespace.
-5. Pause production writes and take a verified backup before running the same migration and reviewed manifest on production. Upgrade the server and SPA together. The HTTP and SignalR paths changed and `/api/version` reports `2.0.0`. Enable `NexusOrganizations__AllowCreation=true` only after production scope and migration checks pass. Recovery uses the pre-cutover backup or a forward fix once new-scope data exists.
-
-M2.15 stays open pending the Owner's manifest, deployment-specific staging rehearsal and production cutover.
+M2.15 is complete for the greenfield deployment model.
 
 ## Account recovery and specialized roles
 

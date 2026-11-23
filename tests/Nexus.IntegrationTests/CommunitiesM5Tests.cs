@@ -294,6 +294,7 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
         var deptUser2 = await SeedUserAsync(app.Services, $"sdu2_{suffix}", pw, "Dept Mia", OrgRole.Member, TrustLevel.Verified);
 
         // Seed an HR Department and assign deptUser1 & deptUser2 to it
+        var orgId = await OrganizationFixtureHandler.GetIdAsync(app.Services);
         Guid deptId;
         await using (var scope = app.Services.CreateAsyncScope())
         {
@@ -302,7 +303,7 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
             db.Departments.Add(new DepartmentEntity
             {
                 Id = deptId,
-                OrganizationId = owner.OrganizationId!.Value,
+                OrganizationId = orgId,
                 Code = $"ENG-{suffix}",
                 Name = $"Engineering {suffix}",
                 CreatedAt = DateTimeOffset.UtcNow
@@ -310,7 +311,7 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
             await db.SaveChangesAsync();
 
             await db.OrganizationMemberships
-                .Where(u => u.OrganizationId == owner.OrganizationId && (u.Id == deptUser1.Id || u.Id == deptUser2.Id))
+                .Where(u => u.OrganizationId == orgId && (u.Id == deptUser1.Id || u.Id == deptUser2.Id))
                 .ExecuteUpdateAsync(s => s.SetProperty(u => u.DepartmentId, deptId));
         }
 
@@ -447,19 +448,16 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
         var user = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = username,
             DisplayName = displayName,
             Status = AccountStatus.Active,
-            TrustLevel = trustLevel,
-            OrgRole = role,
             TermsVersion = opts.CurrentTermsVersion,
             TermsAcceptedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
-        OrganizationFixtureHandler.Add(db, org.Id, user);
+        OrganizationFixtureHandler.Add(db, org.Id, user, role, trustLevel);
         await db.SaveChangesAsync();
         return user;
     }

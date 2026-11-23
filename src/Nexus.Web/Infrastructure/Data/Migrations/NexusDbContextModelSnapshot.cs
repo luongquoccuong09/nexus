@@ -756,15 +756,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
 
-                    b.Property<string>("AvatarObjectKey")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("avatar_object_key");
-
-                    b.Property<Guid?>("BranchId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("branch_id");
-
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");
@@ -772,15 +763,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
-
-                    b.Property<string>("CustomStatus")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("custom_status");
-
-                    b.Property<Guid?>("DepartmentId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("department_id");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
@@ -795,10 +777,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
-                    b.Property<Guid?>("EmployeeId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("employee_id");
-
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("boolean");
 
@@ -812,16 +790,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<string>("NormalizedUserName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<string>("OrgRole")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("org_role");
-
-                    b.Property<Guid?>("OrganizationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("organization_id");
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
@@ -850,12 +818,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("terms_version");
 
-                    b.Property<string>("TrustLevel")
-                        .IsRequired()
-                        .HasMaxLength(24)
-                        .HasColumnType("character varying(24)")
-                        .HasColumnName("trust_level");
-
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("boolean");
 
@@ -865,24 +827,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BranchId");
-
-                    b.HasIndex("DepartmentId");
-
-                    b.HasIndex("EmployeeId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_users_employee_id")
-                        .HasFilter("employee_id IS NOT NULL");
-
                     b.HasIndex("NormalizedEmail")
                         .HasDatabaseName("EmailIndex");
 
                     b.HasIndex("NormalizedUserName")
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
-
-                    b.HasIndex("OrganizationId")
-                        .HasDatabaseName("ix_users_organization_id");
 
                     b.ToTable("users", (string)null);
                 });
@@ -1368,10 +1318,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<bool>("LegacyReviewPending")
-                        .HasColumnType("boolean")
-                        .HasColumnName("legacy_review_pending");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -1834,29 +1780,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasForeignKey("TargetUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Nexus.Web.Modules.Identity.NexusUser", b =>
-                {
-                    b.HasOne("Nexus.Web.Modules.Org.BranchEntity", null)
-                        .WithMany()
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Nexus.Web.Modules.Org.DepartmentEntity", null)
-                        .WithMany()
-                        .HasForeignKey("DepartmentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Nexus.Web.Modules.Org.EmployeeEntity", null)
-                        .WithMany()
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.AnnouncementAcknowledgmentEntity", b =>

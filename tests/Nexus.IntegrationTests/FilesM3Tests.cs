@@ -145,16 +145,7 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             var sentMsg = JsonDocument.Parse(await sendResp.Content.ReadAsStringAsync()).RootElement;
             Assert.Equal(2, sentMsg.GetProperty("attachments").GetArrayLength());
 
-            // Simulate a retained event written before attachment URLs contained the Organization.
-            await using (var scope = app.Services.CreateAsyncScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
-                var legacyEvent = await db.ConversationEvents.SingleAsync(e => e.ConversationId == dmAB && e.EventType == "message.created");
-                legacyEvent.PayloadJson = legacyEvent.PayloadJson.Replace(
-                    OrganizationScope.ApiPath(userA.OrganizationId) + "/files/", "/api/files/", StringComparison.Ordinal);
-                await db.SaveChangesAsync();
-            }
-
+            // Verify delta sync returns working scoped attachment URLs.
             using var delta = await clientB.GetAsync($"/api/conversations/{dmAB}/changes");
             delta.EnsureSuccessStatusCode();
             using var deltaDoc = JsonDocument.Parse(await delta.Content.ReadAsStringAsync());
@@ -536,19 +527,16 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
         var user = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = username,
             DisplayName = displayName,
             Status = AccountStatus.Active,
-            TrustLevel = TrustLevel.Verified,
-            OrgRole = role,
             TermsVersion = opts.CurrentTermsVersion,
             TermsAcceptedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
-        OrganizationFixtureHandler.Add(db, org.Id, user);
+        OrganizationFixtureHandler.Add(db, org.Id, user, role, TrustLevel.Verified);
         await db.SaveChangesAsync();
         return user;
     }

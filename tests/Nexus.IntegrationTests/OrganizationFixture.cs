@@ -30,14 +30,22 @@ internal sealed class OrganizationFixtureHandler(IServiceProvider services, Http
         return (await IdentityBootstrapService.EnsureDefaultOrganizationAsync(db, options, ct)).Id;
     }
 
-    public static OrganizationMembership Add(NexusDbContext db, Guid organizationId, NexusUser account)
+    public static OrganizationMembership Add(
+        NexusDbContext db,
+        Guid organizationId,
+        NexusUser account,
+        OrgRole role = OrgRole.Member,
+        TrustLevel trustLevel = TrustLevel.Unverified,
+        Guid? departmentId = null,
+        Guid? branchId = null,
+        Guid? employeeId = null)
     {
         var member = OrganizationMembership.Create(organizationId, account, account.CreatedAt);
-        member.DepartmentId = account.DepartmentId;
-        member.BranchId = account.BranchId;
-        member.EmployeeId = account.EmployeeId;
-        member.OrgRole = account.OrgRole;
-        member.TrustLevel = account.TrustLevel;
+        member.DepartmentId = departmentId;
+        member.BranchId = branchId;
+        member.EmployeeId = employeeId;
+        member.OrgRole = role;
+        member.TrustLevel = trustLevel;
         member.Status = account.Status;
         db.OrganizationMemberships.Add(member);
         return member;

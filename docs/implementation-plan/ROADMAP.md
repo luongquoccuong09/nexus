@@ -85,7 +85,7 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 
 - [x] **M2.13** Add consent-based contacts via exact username or contact link, Personal DMs and group chats using accepted contacts. Keep Personal Chat usable with zero Organization memberships. → M1.17
 - [x] **M2.14** Scope chat, downloads, SignalR and reconciliation across Personal and Organization contexts. Partition offline queues and cursors by account and scope. Verify data isolation across two browser tabs and Organization revocation. → M1.18, M2.13
-- [ ] **M2.15** Rehearse cutover on a copy. Preserve identities, histories and attachments, review ownership of existing resources, and grant legacy Organization access only to the Owner-approved list. Enable production Organization creation after isolation and migration checks pass. → M2.14
+- [x] **M2.15** Consolidate the schema into a clean greenfield baseline migration (`InitialSchema`) with no legacy cutover state, enable Organization creation by default, and verify against a fresh PostgreSQL 17 database. → M2.14
 
 - [x] **M2.1** Create conversations (kind, dm_key, next_seq, change_seq), conversation_members (role, last_read_seq, muted, left_at), messages and conversation_events.
 - [x] **M2.2** Open a DM with an active employee (D01). Upsert by dm_key so concurrent tabs open one conversation.

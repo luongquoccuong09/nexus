@@ -47,7 +47,7 @@ public static class OrganizationManagementEndpoints
         if (!ctx.User.TryGetUserId(out var id)) return Results.Unauthorized();
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var error)) return Results.BadRequest(new { code = "invalid_page_size", message = error });
         var items = await db.OrganizationMemberships.AsNoTracking()
-            .Where(m => m.Id == id && m.Status == AccountStatus.Active && !m.Organization.LegacyReviewPending)
+            .Where(m => m.Id == id && m.Status == AccountStatus.Active)
             .Where(m => after == null || m.OrganizationId.CompareTo(after.Value) > 0)
             .OrderBy(m => m.OrganizationId).Take(pageSize + 1)
             .Select(m => new { id = m.OrganizationId, name = m.Organization.Name, m.IsOwner, role = m.OrgRole.ToString() })
@@ -56,11 +56,11 @@ public static class OrganizationManagementEndpoints
     }
 
     private static async Task<IResult> CreateAsync(CreateOrganization request, HttpContext ctx, [FromServices] NexusDbContext db,
-        IConfiguration config, IWebHostEnvironment environment, CancellationToken ct)
+        IConfiguration config, CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var id)) return Results.Unauthorized();
         if (!HasMfa(ctx)) return Results.Forbid();
-        if (!config.GetValue("NexusOrganizations:AllowCreation", !environment.IsProduction()))
+        if (!config.GetValue("NexusOrganizations:AllowCreation", true))
             return Results.Json(new { code = "organization_creation_unavailable" }, statusCode: StatusCodes.Status403Forbidden);
         var name = request.Name?.Trim() ?? string.Empty;
         if (name.Length is < 1 or > 120) return Results.BadRequest(new { code = "invalid_organization_name" });
@@ -86,7 +86,7 @@ public static class OrganizationManagementEndpoints
         var invitation = await (from invite in db.OrganizationInvitations.AsNoTracking()
                                 join organization in db.Organizations.AsNoTracking() on invite.OrganizationId equals organization.Id
                                 where invite.TokenHash == hash && invite.RedeemedAt == null && invite.RevokedAt == null &&
-                                      invite.ExpiresAt > now && !organization.LegacyReviewPending
+                                      invite.ExpiresAt > now
                                 select new { organization.Name, invite.ExpiresAt }).SingleOrDefaultAsync(ct);
         return invitation is null ? Results.NotFound() : Results.Ok(invitation);
     }

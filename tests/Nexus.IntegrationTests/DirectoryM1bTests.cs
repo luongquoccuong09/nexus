@@ -347,20 +347,16 @@ public sealed class DirectoryM1bTests(PostgresContainerFixture pg)
         var user = new NexusUser
         {
             Id = Guid.CreateVersion7(),
-            OrganizationId = org.Id,
             UserName = username,
             DisplayName = displayName,
             Status = status,
-            TrustLevel = TrustLevel.Verified,
-            OrgRole = role,
-            DepartmentId = deptId,
             TermsVersion = opts.CurrentTermsVersion,
             TermsAcceptedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         };
         var res = await userManager.CreateAsync(user, password);
         Assert.True(res.Succeeded, string.Join("; ", res.Errors.Select(e => e.Description)));
-        OrganizationFixtureHandler.Add(db, org.Id, user);
+        OrganizationFixtureHandler.Add(db, org.Id, user, role, TrustLevel.Verified, departmentId: deptId);
         await db.SaveChangesAsync();
         return user;
     }
