@@ -59,7 +59,6 @@ public static class OrganizationManagementEndpoints
         IConfiguration config, CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var id)) return Results.Unauthorized();
-        if (!HasMfa(ctx)) return Results.Forbid();
         if (!config.GetValue("NexusOrganizations:AllowCreation", true))
             return Results.Json(new { code = "organization_creation_unavailable" }, statusCode: StatusCodes.Status403Forbidden);
         var name = request.Name?.Trim() ?? string.Empty;
@@ -72,6 +71,7 @@ public static class OrganizationManagementEndpoints
         var member = OrganizationMembership.Create(organizationId, user, now);
         member.IsOwner = true;
         member.OrgRole = OrgRole.SystemAdmin;
+        member.TrustLevel = TrustLevel.Verified;
         db.OrganizationMemberships.Add(member);
         Audit(db, organizationId, id, "ORGANIZATION_CREATED", organizationId, now);
         await db.SaveChangesAsync(ct);
@@ -236,7 +236,9 @@ public static class OrganizationManagementEndpoints
     internal static async Task LockOrganizationAsync([FromServices] NexusDbContext db, Guid orgId, CancellationToken ct) =>
         _ = await db.Organizations.FromSqlInterpolated($"SELECT * FROM organizations WHERE id = {orgId} FOR UPDATE").AsNoTracking().ToListAsync(ct);
 
-    private static bool CanManage(HttpContext ctx, [FromServices] NexusDbContext db) => HasMfa(ctx) && db.OrganizationActor?.OrgRole == OrgRole.SystemAdmin;
+    private static bool CanManage(HttpContext ctx, [FromServices] NexusDbContext db) =>
+        db.OrganizationActor?.OrgRole == OrgRole.SystemAdmin &&
+        (!ctx.RequestServices.GetRequiredService<IConfiguration>().GetValue("NexusOrganizations:RequireAdminMfa", false) || HasMfa(ctx));
     private static bool HasMfa(HttpContext ctx) => ctx.User.FindFirstValue(ClaimsPrincipalExtensions.MfaVerifiedClaimType) == "true";
     private static string? TokenHash(string? token) => token is { Length: 64 } && token.All(Uri.IsHexDigit)
         ? Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(token))) : null;

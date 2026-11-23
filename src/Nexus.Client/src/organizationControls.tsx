@@ -117,7 +117,6 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
       if (!res.ok) {
         const problem = await res.json().catch(() => null);
         if (problem?.code === 'organization_creation_unavailable') throw new Error('Workspace creation is currently unavailable.');
-        if (res.status === 403) throw new Error('Sign in with your authenticator to create a workspace.');
         throw new Error('Unable to create the workspace.');
       }
       window.location.assign(`/o/${(await res.json()).id}`);
@@ -158,17 +157,16 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
             <h1 id="workspace-home-title">Welcome to Nexus</h1>
             {loadState === 'loading' ? <p role="status">Opening your workspace…</p> : <>
               {loadState === 'error' && <p role="alert">Unable to load your workspaces.</p>}
-              <p>Use your team’s invitation to access its people, chats, and communities.</p>
+              <p>Create a workspace for your team, join with an invitation, or start a personal chat.</p>
               <div className="nx-workspace-home-actions">
                 {loadState === 'error' && <Button onClick={() => { setLoadState('loading'); setLoadAttempt(n => n + 1); }}>Retry</Button>}
-                <Button variant="primary" onClick={() => open('join')}>Join a workspace</Button>
+                <Button variant="primary" onClick={() => open('create')}>Create workspace</Button>
+                <Button onClick={() => open('join')}>Join a workspace</Button>
                 <Button onClick={() => window.location.assign('/personal')}>Start a personal chat</Button>
               </div>
-              <details className="nx-workspace-home-menu">
-                <summary>More options</summary>
-                <Button variant="ghost" onClick={() => open('create')}>Create workspace</Button>
+              <div className="nx-workspace-home-menu">
                 <Button variant="ghost" onClick={onSignOut}>Sign out</Button>
-              </details>
+              </div>
             </>}
           </section>
         </main>
@@ -190,15 +188,12 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
         mode === 'settings' ? 'Workspace settings' : mode === 'join' ? (preview ? `Join ${preview.name}` : 'Join a workspace') : 'Create workspace'
       }>
         {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
-        {mode === 'create' && (mfaEnabled ? <form onSubmit={create}>
+        {mode === 'create' && <form onSubmit={create}>
           <Field label="Workspace name" htmlFor="organization-name">
             <input id="organization-name" required maxLength={120} value={name} onChange={e => setName(e.currentTarget.value)} />
           </Field>
           <Button type="submit" variant="primary" disabled={busy || !name.trim()}>Create workspace</Button>
-        </form> : <>
-          <p>Set up an authenticator to administer a workspace.</p>
-          <Button onClick={() => { open(null); onSecurity(); }}>Open profile &amp; security</Button>
-        </>)}
+        </form>}
         {mode === 'join' && (preview ? <>
           <p>Accept the invitation to access its people, chats, and communities.</p>
           <Button variant="primary" disabled={busy} onClick={() => void submit(join)}>Join {preview.name}</Button>
@@ -209,6 +204,7 @@ export function OrganizationControls({ userId, mfaEnabled, home, onSecurity, onS
           <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Checking invitation…' : 'Review invitation'}</Button>
         </form>)}
         {mode === 'settings' && <>
+          {!mfaEnabled && error && <Button onClick={() => { open(null); onSecurity(); }}>Open profile &amp; security</Button>}
           <Card title="Invitations">
             <p>Anyone with the link can join once. Invitations expire after seven days.</p>
             <Button onClick={() => void submit(invite)} disabled={busy}>Create invitation link</Button>

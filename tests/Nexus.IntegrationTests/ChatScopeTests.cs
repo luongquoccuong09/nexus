@@ -73,9 +73,11 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         var groupId = (await groupResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
         Assert.Equal(2, (await GetAsync(bob, $"/api/personal/conversations/{groupId}/members")).GetProperty("items").GetArrayLength());
 
-        await EnrollAsync(alice);
         var org = (await ProtectedAsync(alice, "/api/organizations", new { name = "Scope fixture" }, HttpStatusCode.Created)).GetProperty("id").GetGuid();
         var orgPath = $"/api/organizations/{org}";
+        var aliceProfile = await GetAsync(alice, $"{orgPath}/me");
+        Assert.True(aliceProfile.GetProperty("isOwner").GetBoolean());
+        Assert.False(aliceProfile.GetProperty("isUnverified").GetBoolean());
         using var missingMembership = await bob.GetAsync($"{orgPath}/people/directory");
         Assert.Equal(HttpStatusCode.Forbidden, missingMembership.StatusCode);
         var token = (await ProtectedAsync(alice, $"{orgPath}/invitations", new { }, HttpStatusCode.OK)).GetProperty("token").GetString()!;
@@ -94,11 +96,12 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         using var crossScope = await bob.GetAsync($"{orgPath}/conversations/{conversation}/messages");
         Assert.Equal(HttpStatusCode.Forbidden, crossScope.StatusCode);
 
-        await EnrollAsync(bob);
         var secondOrg = (await ProtectedAsync(bob, "/api/organizations", new { name = "Independent scope" }, HttpStatusCode.Created)).GetProperty("id").GetGuid();
         var secondPath = $"/api/organizations/{secondOrg}";
         Assert.Equal("Member", (await GetAsync(bob, $"{orgPath}/me")).GetProperty("orgRole").GetString());
-        Assert.True((await GetAsync(bob, $"{secondPath}/me")).GetProperty("isOwner").GetBoolean());
+        var bobSecondProfile = await GetAsync(bob, $"{secondPath}/me");
+        Assert.True(bobSecondProfile.GetProperty("isOwner").GetBoolean());
+        Assert.False(bobSecondProfile.GetProperty("isUnverified").GetBoolean());
         var page = await GetAsync(bob, "/api/organizations?limit=1");
         Assert.Single(page.GetProperty("items").EnumerateArray());
         var next = await GetAsync(bob, $"/api/organizations?limit=1&after={page.GetProperty("nextAfter").GetGuid()}");
@@ -179,14 +182,6 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
     private static async Task<Guid> RegisterAsync(HttpClient client, string username) =>
         (await PostAsync(client, "/api/auth/register", new { username, displayName = username,
             password = "Chat-scope-password-2026!", termsAccepted = true }, HttpStatusCode.Created)).GetProperty("id").GetGuid();
-
-    private static async Task EnrollAsync(HttpClient client)
-    {
-        using var setup = await client.PostAsync("/api/auth/mfa/setup", null);
-        Assert.Equal(HttpStatusCode.OK, setup.StatusCode);
-        var key = (await setup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("sharedKey").GetString()!;
-        await PostAsync(client, "/api/auth/mfa/enable", new { code = IdentityM1aTests.GenerateTotpCode(key) }, HttpStatusCode.OK);
-    }
 
     private static async Task<JsonElement> GetAsync(HttpClient client, string path)
     {

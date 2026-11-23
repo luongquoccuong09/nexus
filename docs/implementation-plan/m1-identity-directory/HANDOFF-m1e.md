@@ -1,6 +1,6 @@
 # M1e and M2 Personal Chat and Organizations handoff
 
-[P0-D14](../../decisions/2026-11-23-p0-d14-personal-chat-and-organizations.md) is implemented in the workspace. The SPA defaults to Personal Chat. A single account can accept contacts, start private DMs and create group chats independently of Organization membership. Each tab uses the scope in its own URL. Organization owners and admins use TOTP-authenticated sessions to manage invitations and membership within their Organization.
+[P0-D14](../../decisions/2026-11-23-p0-d14-personal-chat-and-organizations.md) is implemented in the workspace. The SPA lets any signed-in user create a workspace, join via invitation, or start Personal Chat directly from the home screen without requiring TOTP first. A single account can accept contacts, start private DMs and create group chats independently of Organization membership. Each tab uses the scope in its own URL. Organization owners and admins manage invitations and membership within their Organization, with optional TOTP enforcement configurable via `NexusOrganizations:RequireAdminMfa`.
 
 ## Verification commands
 
