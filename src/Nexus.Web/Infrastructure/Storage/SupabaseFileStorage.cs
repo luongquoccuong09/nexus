@@ -54,11 +54,21 @@ public sealed class SupabaseFileStorage : IFileStorage
     {
         StorageKeyHelper.ValidateObjectKey(objectKey);
 
-        using var request = CreateAuthorizedRequest(
-            HttpMethod.Get,
-            $"/storage/v1/object/authenticated/{Uri.EscapeDataString(_options.SupabaseBucket!)}/{objectKey}");
+        var encodedBucket = Uri.EscapeDataString(_options.SupabaseBucket!);
+        var primaryPath = $"/storage/v1/object/{encodedBucket}/{objectKey}";
+        using var primaryRequest = CreateAuthorizedRequest(HttpMethod.Get, primaryPath);
+        var response = await _httpClient.SendAsync(primaryRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
-        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        // Fallback to /object/authenticated/ for older Supabase gateways that require the authenticated route
+        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            response.Dispose();
+            using var fallbackRequest = CreateAuthorizedRequest(
+                HttpMethod.Get,
+                $"/storage/v1/object/authenticated/{encodedBucket}/{objectKey}");
+            response = await _httpClient.SendAsync(fallbackRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             response.Dispose();
@@ -140,6 +150,7 @@ public sealed class SupabaseFileStorage : IFileStorage
         public override long Position { get => inner.Position; set => inner.Position = value; }
         public override void Flush() => inner.Flush();
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => inner.ReadAsync(buffer, offset, count, cancellationToken);
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => inner.ReadAsync(buffer, cancellationToken);
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
         public override void SetLength(long value) => inner.SetLength(value);

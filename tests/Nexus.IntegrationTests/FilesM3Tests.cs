@@ -112,6 +112,15 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
                 Assert.Equal(200, thumbBmp.Height);
             }
 
+            // Full-resolution inline preview works for verified PNG/JPEG, rejects PDF (SEC-11)
+            using var previewImgResp = await clientA.GetAsync($"/api/files/{imgId}/preview");
+            Assert.Equal(HttpStatusCode.OK, previewImgResp.StatusCode);
+            Assert.Equal("nosniff", Assert.Single(previewImgResp.Headers.GetValues("X-Content-Type-Options")));
+            Assert.Equal("inline", previewImgResp.Content.Headers.ContentDisposition?.DispositionType);
+
+            using var previewPdfResp = await clientA.GetAsync($"/api/files/{pdfId}/preview");
+            Assert.Equal(HttpStatusCode.BadRequest, previewPdfResp.StatusCode);
+
             // Stage 2: Attach both files to an attachment-only message (empty caption allowed!)
             using var sendResp = await clientA.PostAsJsonAsync($"/api/conversations/{dmAB}/messages", new
             {

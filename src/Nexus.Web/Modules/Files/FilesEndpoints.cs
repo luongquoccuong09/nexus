@@ -30,6 +30,7 @@ public sealed record AttachmentDto(
     string ScanStatus,
     string DownloadUrl,
     string? ThumbnailUrl,
+    string? PreviewUrl,
     DateTimeOffset CreatedAt);
 
 public sealed record CreateSignedUrlRequest(int? TtlSeconds);
@@ -77,28 +78,34 @@ public static class FilesEndpoints
         var files = app.MapGroup("/api/files/{attachmentId:guid}");
         files.MapGet("/download", HandleDownloadAttachmentAsync);
         files.MapGet("/thumbnail", HandleGetThumbnailAsync);
+        files.MapGet("/preview", HandleGetImagePreviewAsync);
         files.MapPost("/signed-url", HandleCreateSignedUrlAsync);
 
         return app;
     }
 
-    public static AttachmentDto ToDto(AttachmentEntity a) => new(
-        a.Id,
-        a.ConversationId,
-        a.MessageId,
-        a.UploaderUserId,
-        a.ClientUploadId,
-        a.FileName,
-        a.ContentType,
-        a.SizeBytes,
-        a.Sha256Hex,
-        a.ImageWidth,
-        a.ImageHeight,
-        a.State.ToString().ToLowerInvariant(),
-        a.ScanStatus,
-        $"/api/files/{a.Id}/download",
-        string.IsNullOrEmpty(a.ThumbnailObjectKey) ? null : $"/api/files/{a.Id}/thumbnail",
-        a.CreatedAt);
+    public static AttachmentDto ToDto(AttachmentEntity a)
+    {
+        var hasThumb = !string.IsNullOrEmpty(a.ThumbnailObjectKey);
+        return new AttachmentDto(
+            a.Id,
+            a.ConversationId,
+            a.MessageId,
+            a.UploaderUserId,
+            a.ClientUploadId,
+            a.FileName,
+            a.ContentType,
+            a.SizeBytes,
+            a.Sha256Hex,
+            a.ImageWidth,
+            a.ImageHeight,
+            a.State.ToString().ToLowerInvariant(),
+            a.ScanStatus,
+            $"/api/files/{a.Id}/download",
+            hasThumb ? $"/api/files/{a.Id}/thumbnail" : null,
+            hasThumb ? $"/api/files/{a.Id}/preview" : null,
+            a.CreatedAt);
+    }
 
     private static async Task<IResult> HandleUploadAttachmentAsync(
         HttpContext ctx,
@@ -485,6 +492,47 @@ public static class FilesEndpoints
         }
 
         ctx.Response.ContentType = "image/png";
+        ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        ctx.Response.Headers.CacheControl = "private, max-age=300";
+
+        await using (stream)
+        {
+            await stream.CopyToAsync(ctx.Response.Body, ct);
+        }
+
+        return Results.Empty;
+    }
+
+    private static async Task<IResult> HandleGetImagePreviewAsync(
+        HttpContext ctx,
+        Guid attachmentId,
+        [FromServices] NexusDbContext db,
+        UserManager<NexusUser> userManager,
+        IAuthorizationService authz,
+        IFileStorage storage,
+        CancellationToken ct)
+    {
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, userManager, authz, ct);
+        if (errorResult is not null || attachment is null)
+        {
+            return errorResult ?? Results.Forbid();
+        }
+
+        // Inline preview is strictly restricted to server-reencoded PNG/JPEG images (SEC-11)
+        if (attachment.ContentType is not ("image/png" or "image/jpeg"))
+        {
+            return Results.BadRequest(new { code = "preview_images_only", message = "Inline preview is only supported for re-encoded PNG and JPEG images." });
+        }
+
+        var stream = await storage.OpenReadAsync(attachment.ObjectKey, ct);
+        if (stream is null)
+        {
+            return Results.NotFound(new { code = "file_not_found" });
+        }
+
+        var safeName = StorageKeyHelper.SanitizeFileName(attachment.FileName);
+        ctx.Response.ContentType = attachment.ContentType;
+        ctx.Response.Headers.ContentDisposition = $"inline; filename=\"{safeName}\"";
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
         ctx.Response.Headers.CacheControl = "private, max-age=300";
 

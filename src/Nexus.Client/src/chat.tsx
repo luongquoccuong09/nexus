@@ -51,6 +51,7 @@ export interface AttachmentItem {
   scanStatus: string;
   downloadUrl: string;
   thumbnailUrl?: string | null;
+  previewUrl?: string | null;
   createdAt: string;
 }
 
@@ -170,10 +171,11 @@ export function ChatWorkspace({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // Report modal (DM)
+  // Report modal (DM) & Image lightbox (Teams-style inline viewer)
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('spam');
   const [reportDetails, setReportDetails] = useState('');
+  const [lightboxImage, setLightboxImage] = useState<AttachmentItem | null>(null);
 
   const hubRef = useRef<signalR.HubConnection | null>(null);
   const activeConvRef = useRef<string | null>(selectedConversationId);
@@ -1001,17 +1003,23 @@ export function ChatWorkspace({
                           <div className="nx-msg-attachments">
                             {m.attachments.map(att => (
                               att.thumbnailUrl ? (
-                                <div key={att.id}>
-                                  <a
-                                    href={att.downloadUrl}
-                                    className="nx-att-thumb-link"
-                                    title={`Download ${att.fileName}`}
+                                <div key={att.id} className="nx-att-image-wrap">
+                                  <button
+                                    type="button"
+                                    className="nx-att-thumb-btn"
+                                    aria-label={`Preview ${att.fileName}`}
+                                    onClick={() => setLightboxImage(att)}
                                   >
                                     <img className="nx-att-thumb-img" src={att.thumbnailUrl} alt={att.fileName} />
+                                  </button>
+                                  <a
+                                    href={att.downloadUrl}
+                                    className="nx-att-img-dl"
+                                    aria-label={`Download ${att.fileName}`}
+                                    title={`Download ${att.fileName} (${formatBytes(att.sizeBytes)})`}
+                                  >
+                                    <Download size={14} aria-hidden="true" />
                                   </a>
-                                  <div className="nx-muted" style={{ marginTop: 2 }}>
-                                    {att.fileName} · {formatBytes(att.sizeBytes)}
-                                  </div>
                                 </div>
                               ) : (
                                 <a key={att.id} href={att.downloadUrl} className="nx-att-file-card">
@@ -1338,6 +1346,38 @@ export function ChatWorkspace({
             />
           </Field>
         </form>
+      </Modal>
+      {/* Image Lightbox Modal (Teams-style full-resolution viewer) */}
+      <Modal
+        open={Boolean(lightboxImage)}
+        onOpenChange={open => { if (!open) setLightboxImage(null); }}
+        title={lightboxImage?.fileName ?? 'Image preview'}
+        footer={
+          lightboxImage ? (
+            <>
+              <span className="nx-muted" style={{ marginRight: 'auto', alignSelf: 'center' }}>
+                {lightboxImage.imageWidth && lightboxImage.imageHeight
+                  ? `${lightboxImage.imageWidth}×${lightboxImage.imageHeight} · `
+                  : ''}
+                {formatBytes(lightboxImage.sizeBytes)}
+              </span>
+              <a href={lightboxImage.downloadUrl} className="nx-btn primary sm">
+                <Download size={14} aria-hidden="true" /> Download
+              </a>
+              <Button size="sm" onClick={() => setLightboxImage(null)}>Close</Button>
+            </>
+          ) : undefined
+        }
+      >
+        {lightboxImage && (
+          <div className="nx-lightbox-body">
+            <img
+              className="nx-lightbox-img"
+              src={lightboxImage.previewUrl ?? lightboxImage.thumbnailUrl ?? lightboxImage.downloadUrl}
+              alt={lightboxImage.fileName}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );
