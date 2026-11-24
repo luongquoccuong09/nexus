@@ -24,8 +24,9 @@ public static class CommunityAccessHelper
         Guid conversationId,
         CancellationToken ct)
     {
+        var scopeId = db.IsPersonalScope ? (Guid?)null : actor.OrganizationId;
         var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == actor.OrganizationId, ct);
+            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == scopeId, ct);
 
         if (conv is null)
         {
@@ -69,8 +70,9 @@ public static class CommunityAccessHelper
             if (peerId != Guid.Empty)
             {
                 isBlocked = await db.UserBlocks.AnyAsync(
-                    b => (b.BlockerUserId == actor.Id && b.BlockedUserId == peerId) ||
-                         (b.BlockerUserId == peerId && b.BlockedUserId == actor.Id),
+                    b => b.OrganizationId == actor.OrganizationId &&
+                         ((b.BlockerUserId == actor.Id && b.BlockedUserId == peerId) ||
+                          (b.BlockerUserId == peerId && b.BlockedUserId == actor.Id)),
                     ct);
             }
         }

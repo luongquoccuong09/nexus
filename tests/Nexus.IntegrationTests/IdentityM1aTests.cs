@@ -383,15 +383,47 @@ public sealed class IdentityM1aTests(PostgresContainerFixture pg)
         // M1.5: Admin issues audited one-time reset link & user redeems it once
         using var resetLinkResp = await adminClient.PostAsJsonAsync($"/api/admin/accounts/{trialId}/reset-link", new { });
         Assert.Equal(HttpStatusCode.NotFound, resetLinkResp.StatusCode);
-        var resetToken = await IdentityBootstrapService.IssueAccountRecoveryAsync(app.Services, trialUser);
-
+        using var targetSession = await trialClient.PostAsJsonAsync("/api/auth/login", new { username = trialUser, password = trialPw });
+        Assert.Equal(HttpStatusCode.OK, targetSession.StatusCode);
+        var (_, resetClient) = CreateCookieClient(app);
+        const string resetPath = "/api/auth/reset-password";
         const string resetPw = "Reset-By-Admin-Link-2026!";
-        using var redeem1 = await trialClient.PostAsJsonAsync("/api/auth/reset-password", new { token = resetToken, newPassword = resetPw });
-        Assert.Equal(HttpStatusCode.OK, redeem1.StatusCode);
+        var expiredToken = await IdentityBootstrapService.IssueAccountRecoveryAsync(app.Services, trialUser);
+        await using (var expiration = app.Services.CreateAsyncScope())
+        {
+            var db = expiration.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var hash = Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(expiredToken)));
+            await db.AdminPasswordResetLinks.Where(link => link.TokenHash == hash)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(link => link.ExpiresAt, DateTimeOffset.UtcNow.AddMinutes(-1)));
+        }
+        using var expired = await resetClient.PostAsJsonAsync(resetPath, new { token = expiredToken, newPassword = resetPw });
+        using var invalid = await resetClient.PostAsJsonAsync(resetPath, new { token = "invalid-test-reset-code", newPassword = resetPw });
+        foreach (var failure in new[] { expired, invalid })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, failure.StatusCode);
+            Assert.Equal("invalid_reset_token", (await failure.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        }
+
+        var resetToken = await IdentityBootstrapService.IssueAccountRecoveryAsync(app.Services, trialUser);
+        using var weak = await resetClient.PostAsJsonAsync(resetPath, new { token = resetToken, newPassword = "aaaaaaaaaaaa" });
+        Assert.Equal(HttpStatusCode.BadRequest, weak.StatusCode);
+        Assert.Equal("password_policy_failed", (await weak.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var redemption = new { token = resetToken, newPassword = resetPw };
+        var attempts = await Task.WhenAll(resetClient.PostAsJsonAsync(resetPath, redemption), resetClient.PostAsJsonAsync(resetPath, redemption));
+        using var first = attempts[0];
+        using var second = attempts[1];
+        Assert.Single(attempts, attempt => attempt.StatusCode == HttpStatusCode.OK);
+        Assert.Single(attempts, attempt => attempt.StatusCode == HttpStatusCode.BadRequest);
+        using var oldSession = await trialClient.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldSession.StatusCode);
+        using var oldPassword = await resetClient.PostAsJsonAsync("/api/auth/login", new { username = trialUser, password = trialPw });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldPassword.StatusCode);
 
         // Reusing the one-time token fails
-        using var redeem2 = await trialClient.PostAsJsonAsync("/api/auth/reset-password", new { token = resetToken, newPassword = "Another-Reset-Pass-2026!" });
+        using var redeem2 = await resetClient.PostAsJsonAsync(resetPath, new { token = resetToken, newPassword = "Another-Reset-Pass-2026!" });
         Assert.Equal(HttpStatusCode.BadRequest, redeem2.StatusCode);
+        Assert.Equal("invalid_reset_token", (await redeem2.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
         // Target user logs back in with new password and opens a live SignalR connection
         using var trialRelogin = await trialClient.PostAsJsonAsync("/api/auth/login", new { username = trialUser, password = resetPw });

@@ -81,7 +81,8 @@ public enum ResourceAction
     AdminVerifyAccount,
     AdminDisableOrEnableAccount,
     AdminManageRoles,
-    AdminViewAuditLog
+    AdminViewAuditLog,
+    ManageOwnBlockList
 }
 
 public sealed record ActorContext(

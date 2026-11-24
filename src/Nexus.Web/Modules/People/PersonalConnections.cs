@@ -7,6 +7,7 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Org;
+using Nexus.Web.Modules.Conversations;
 
 namespace Nexus.Web.Modules.People;
 
@@ -93,26 +94,46 @@ public static class PersonalConnections
     public static IQueryable<Guid> AllowedChatPeerIds([FromServices] NexusDbContext db, Guid userId) =>
         AcceptedContactIds(db, userId).Union(SharedWorkspacePeerIds(db, userId));
 
-    private static async Task<IResult> ListChatCandidatesAsync(string? q, [FromServices] NexusDbContext db, int? limit, CancellationToken ct)
+    private static async Task<IResult> ListChatCandidatesAsync(
+        string? q, string? cursor, Guid? excludeConversationId, int? limit,
+        [FromServices] NexusDbContext db, IAuthorizationService authz, CancellationToken ct)
     {
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var error)) return Results.BadRequest(new { code = "invalid_page_size", message = error });
-        var userId = db.OrganizationActor!.Id;
+        if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
+            after is not null && (after.Name is null || after.Id == Guid.Empty)) return PaginationGuard.InvalidCursor();
+        var actor = db.OrganizationActor!;
+        var userId = actor.Id;
         var allowedIds = AllowedChatPeerIds(db, userId);
         var people = db.Users.AsNoTracking().Where(u => allowedIds.Contains(u.Id) && u.Status == AccountStatus.Active);
+        if (excludeConversationId is { } conversationId)
+        {
+            var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
+            if (access is null || access.Conversation.Kind != ConversationKind.Group ||
+                !authz.Can(actor.ToActorContext(), ResourceAction.GroupAddMember, access.Resource)) return Results.Forbid();
+            people = people.Where(u => !db.ConversationMembers.Any(m =>
+                m.ConversationId == conversationId && m.UserId == u.Id && m.LeftAt == null));
+        }
         var search = q?.Trim();
         if (!string.IsNullOrEmpty(search))
         {
             var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
             people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern) || EF.Functions.ILike(u.UserName ?? string.Empty, pattern));
         }
+        if (after is not null)
+        {
+            people = people.Where(u => string.Compare(u.DisplayName, after.Name) > 0 ||
+                u.DisplayName == after.Name && u.Id.CompareTo(after.Id) > 0);
+        }
 
         var rows = await people
-            .OrderBy(u => u.DisplayName)
-            .Take(pageSize)
+            .OrderBy(u => u.DisplayName).ThenBy(u => u.Id)
+            .Take(pageSize + 1)
             .Select(u => new { u.Id, Username = u.UserName ?? string.Empty, u.DisplayName })
             .ToListAsync(ct);
 
-        if (rows.Count == 0) return Results.Ok(new { items = Array.Empty<object>() });
+        if (rows.Count == 0) return Results.Ok(new { items = Array.Empty<object>(), nextCursor = (string?)null });
+        var hasMore = rows.Count > pageSize;
+        if (hasMore) rows.RemoveAt(pageSize);
 
         var rowIds = rows.Select(r => r.Id).ToList();
         var myOrgIds = await db.OrganizationMemberships.AsNoTracking()
@@ -152,7 +173,8 @@ public static class PersonalConnections
             };
         }).ToList();
 
-        return Results.Ok(new { items });
+        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(rows[^1].DisplayName, rows[^1].Id)) : null;
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> ListDirectoryAsync(string? q, [FromServices] NexusDbContext db, Guid? after, int? limit, CancellationToken ct)
@@ -162,7 +184,11 @@ public static class PersonalConnections
         var contacts = AcceptedContactIds(db, userId);
         var people = db.Users.AsNoTracking().Where(u => contacts.Contains(u.Id) && u.Status == AccountStatus.Active);
         var search = q?.Trim();
-        if (!string.IsNullOrEmpty(search)) people = people.Where(u => u.DisplayName.Contains(search) || u.UserName!.Contains(search));
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
+            people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern) || EF.Functions.ILike(u.UserName ?? string.Empty, pattern));
+        }
         var items = await people.Where(u => after == null || u.Id.CompareTo(after.Value) > 0).OrderBy(u => u.Id).Take(pageSize + 1)
             .Select(u => new { u.Id, username = u.UserName, u.DisplayName, isUnverified = true }).ToListAsync(ct);
         return PaginationGuard.CursorPage(items, pageSize, item => item.Id);

@@ -28,6 +28,7 @@ public static class OrgEndpoints
         HttpContext ctx,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        string? cursor,
         int? limit,
         CancellationToken ct)
     {
@@ -52,15 +53,40 @@ public static class OrgEndpoints
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
 
-        var items = await db.Departments
+        if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
+            after is not null && (after.Name is null || after.Id == Guid.Empty))
+        {
+            return PaginationGuard.InvalidCursor();
+        }
+
+        var query = db.Departments
             .AsNoTracking()
-            .Where(d => d.OrganizationId == actor.OrganizationId)
+            .Where(d => d.OrganizationId == actor.OrganizationId);
+
+        if (after is not null)
+        {
+            query = query.Where(d => string.Compare(d.Name, after.Name) > 0 ||
+                (d.Name == after.Name && d.Id.CompareTo(after.Id) > 0));
+        }
+
+        var items = await query
             .OrderBy(d => d.Name)
-            .Take(pageSize)
+            .ThenBy(d => d.Id)
+            .Take(pageSize + 1)
             .Select(d => new { id = d.Id, code = d.Code, name = d.Name })
             .ToListAsync(ct);
 
-        return Results.Ok(new { items });
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+        {
+            items.RemoveAt(pageSize);
+        }
+
+        var nextCursor = hasMore
+            ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(items[^1].name, items[^1].id))
+            : null;
+
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> HandleImportEmployeesAsync(

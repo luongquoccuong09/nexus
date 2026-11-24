@@ -50,8 +50,12 @@ public static class ConversationEndpoints
         HttpContext ctx,
         [FromServices] NexusDbContext db,
         IPresenceTracker presence,
+        DateTimeOffset? beforeAt,
+        Guid? beforeId,
         int? limit,
-        CancellationToken ct)
+        Guid? conversationId,
+        bool unreadOnly = false,
+        CancellationToken ct = default)
     {
         if (!ctx.User.TryGetUserId(out var actorId))
         {
@@ -69,17 +73,45 @@ public static class ConversationEndpoints
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
 
-        var memberships = await db.ConversationMembers
+        if (beforeAt.HasValue != beforeId.HasValue)
+        {
+            return Results.BadRequest(new { code = "invalid_cursor", message = "Both beforeAt and beforeId are required for pagination." });
+        }
+
+        var query = db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
                 db.Conversations.AsNoTracking().Where(c => c.OrganizationId == db.ConversationOrganizationId && c.Kind != ConversationKind.Channel),
                 m => m.ConversationId,
                 c => c.Id,
-                (m, c) => new { Member = m, Conv = c })
+                (m, c) => new { Member = m, Conv = c });
+        if (conversationId is { } requestedId)
+        {
+            query = query.Where(item => item.Conv.Id == requestedId);
+        }
+
+        if (unreadOnly)
+        {
+            query = query.Where(item => item.Conv.NextSeq > item.Member.LastReadSeq &&
+                item.Conv.NextSeq > item.Member.VisibleFromSeq);
+        }
+
+        if (beforeAt is { } at && beforeId is { } id)
+        {
+            var utc = at.ToUniversalTime();
+            query = query.Where(item => item.Conv.UpdatedAt < utc ||
+                (item.Conv.UpdatedAt == utc && item.Conv.Id.CompareTo(id) < 0));
+        }
+
+        var memberships = await query
             .OrderByDescending(x => x.Conv.UpdatedAt)
-            .Take(pageSize)
+            .ThenByDescending(x => x.Conv.Id)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
+
+        var hasMore = memberships.Count > pageSize;
+        if (hasMore) memberships.RemoveAt(pageSize);
 
         var convIds = memberships.Select(x => x.Conv.Id).ToList();
         var activeMembers = convIds.Count == 0
@@ -103,6 +135,61 @@ public static class ConversationEndpoints
                 .ToListAsync(ct);
 
         var membersByConv = activeMembers.GroupBy(x => x.ConversationId).ToDictionary(g => g.Key, g => g.ToList());
+        var dmIds = memberships.Where(x => x.Conv.Kind == ConversationKind.Dm).Select(x => x.Conv.Id).ToHashSet();
+        var dmPeerIds = activeMembers.Where(m => m.UserId != actorId && dmIds.Contains(m.ConversationId))
+            .Select(m => m.UserId).Distinct().ToArray();
+        var blockedPeerIds = dmPeerIds.Length == 0
+            ? []
+            : await db.UserBlocks.AsNoTracking()
+                .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && dmPeerIds.Contains(b.BlockedUserId))
+                .Select(b => b.BlockedUserId)
+                .ToListAsync(ct);
+
+        // Batch-load the latest visible message per conversation (strictly honoring VisibleFromSeq / SEC-18).
+        var latestPreviews = new Dictionary<Guid, object>();
+        if (convIds.Count > 0)
+        {
+            var latestSeqs = await db.Messages.AsNoTracking()
+                .Where(m => convIds.Contains(m.ConversationId) && m.DeletedAt == null &&
+                    db.ConversationMembers.Any(cm =>
+                        cm.ConversationId == m.ConversationId &&
+                        cm.UserId == actorId &&
+                        cm.LeftAt == null &&
+                        m.Seq > cm.VisibleFromSeq))
+                .GroupBy(m => m.ConversationId)
+                .Select(g => new { ConversationId = g.Key, MaxSeq = g.Max(m => m.Seq) })
+                .ToListAsync(ct);
+
+            if (latestSeqs.Count > 0)
+            {
+                var targetConvIds = latestSeqs.Select(x => x.ConversationId).ToList();
+                var maxByConv = latestSeqs.ToDictionary(x => x.ConversationId, x => x.MaxSeq);
+                var minTargetSeq = latestSeqs.Min(x => x.MaxSeq);
+
+                var candidates = await db.Messages.AsNoTracking()
+                    .Where(m => targetConvIds.Contains(m.ConversationId) && m.Seq >= minTargetSeq && m.DeletedAt == null)
+                    .Join(
+                        db.OrganizationPeople.AsNoTracking(),
+                        m => m.SenderId,
+                        u => u.Id,
+                        (m, u) => new { m.ConversationId, m.Seq, m.Body, m.CreatedAt, SenderDisplayName = u.DisplayName })
+                    .ToListAsync(ct);
+
+                foreach (var row in candidates)
+                {
+                    if (maxByConv.TryGetValue(row.ConversationId, out var targetSeq) && row.Seq == targetSeq)
+                    {
+                        latestPreviews[row.ConversationId] = new
+                        {
+                            bodyPreview = FormatPreview(row.Body, "[Attachment]"),
+                            senderDisplayName = row.SenderDisplayName,
+                            createdAt = row.CreatedAt,
+                            seq = row.Seq
+                        };
+                    }
+                }
+            }
+        }
 
         var items = memberships.Select(x =>
         {
@@ -125,6 +212,7 @@ public static class ConversationEndpoints
                 unreadCount,
                 memberCount = members.Count,
                 updatedAt = x.Conv.UpdatedAt,
+                lastMessagePreview = latestPreviews.GetValueOrDefault(x.Conv.Id),
                 peer = peer is null ? null : new
                 {
                     id = peer.UserId,
@@ -132,12 +220,18 @@ public static class ConversationEndpoints
                     displayName = peer.DisplayName,
                     isUnverified = peer.TrustLevel == TrustLevel.Unverified,
                     isOnline = presence.IsOnline(db.OrganizationScopeId, peer.UserId),
+                    isBlockedByMe = blockedPeerIds.Contains(peer.UserId),
                     avatarUrl = string.IsNullOrEmpty(peer.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{peer.UserId}/avatar"
                 }
             };
         }).ToList();
 
-        return Results.Ok(new { items });
+        return Results.Ok(new
+        {
+            items,
+            hasMore,
+            nextBefore = hasMore ? new { updatedAt = memberships[^1].Conv.UpdatedAt, id = memberships[^1].Conv.Id } : null
+        });
     }
 
     private static async Task<IResult> HandleOpenDmAsync(
@@ -392,6 +486,7 @@ public static class ConversationEndpoints
         Guid conversationId,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        string? cursor,
         int? limit,
         CancellationToken ct)
     {
@@ -410,6 +505,8 @@ public static class ConversationEndpoints
             return Results.Forbid();
         }
 
+        if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
+            after is not null && (after.Name is null || after.Id == Guid.Empty)) return PaginationGuard.InvalidCursor();
         var items = await db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.LeftAt == null)
@@ -419,14 +516,20 @@ public static class ConversationEndpoints
                 username = u.UserName ?? string.Empty,
                 displayName = u.DisplayName,
                 isUnverified = u.TrustLevel == TrustLevel.Unverified,
+                isActive = db.ActiveScopePeople.Any(active => active.Id == u.Id),
                 role = m.Role.ToString(),
                 joinedAt = m.JoinedAt
             })
-            .OrderBy(x => x.displayName)
-            .Take(pageSize)
+            .Where(x => after == null || string.Compare(x.displayName, after.Name) > 0 ||
+                x.displayName == after.Name && x.userId.CompareTo(after.Id) > 0)
+            .OrderBy(x => x.displayName).ThenBy(x => x.userId)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
 
-        return Results.Ok(new { items });
+        var hasMore = items.Count > pageSize;
+        if (hasMore) items.RemoveAt(pageSize);
+        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(items[^1].displayName, items[^1].userId)) : null;
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> HandleAddMemberAsync(
@@ -442,7 +545,8 @@ public static class ConversationEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conv = await LockGroupAsync(db, conversationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
         if (conv is null || !authz.Can(actor.ToActorContext(), ResourceAction.GroupAddMember, new ResourceContext(ResourceKind.GroupChat, actor.OrganizationId, MembershipRole: myMembership?.Role)))
@@ -502,6 +606,7 @@ public static class ConversationEndpoints
         });
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 
         return Results.Ok(new { added = true, visibleFromSeq = conv.NextSeq, changeSeq = conv.ChangeSeq });
@@ -520,7 +625,8 @@ public static class ConversationEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conv = await LockGroupAsync(db, conversationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMembership = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == targetUserId && m.LeftAt == null, ct);
 
@@ -548,6 +654,7 @@ public static class ConversationEndpoints
         targetMembership.LeftAt = now;
         conv.ChangeSeq += 1;
         conv.UpdatedAt = now;
+        await SidebarEndpoints.RemoveSidebarItemAsync(db, targetUserId, SidebarEndpoints.ChatSurface, conversationId, ct);
 
         db.ConversationEvents.Add(new ConversationEventEntity
         {
@@ -561,6 +668,8 @@ public static class ConversationEndpoints
         });
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        await fanout.NotifyConversationAccessRevokedAsync(targetUserId, conversationId, ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 
         return Results.NoContent();
@@ -578,7 +687,8 @@ public static class ConversationEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conv = await LockGroupAsync(db, conversationId, ct);
         var myMembership = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         if (conv is null || myMembership is null) return Results.Forbid();
 
@@ -597,6 +707,7 @@ public static class ConversationEndpoints
         myMembership.LeftAt = now;
         conv.ChangeSeq += 1;
         conv.UpdatedAt = now;
+        await SidebarEndpoints.RemoveSidebarItemAsync(db, actorId, SidebarEndpoints.ChatSurface, conversationId, ct);
 
         db.ConversationEvents.Add(new ConversationEventEntity
         {
@@ -610,6 +721,8 @@ public static class ConversationEndpoints
         });
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        await fanout.NotifyConversationAccessRevokedAsync(actorId, conversationId, ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 
         return Results.NoContent();
@@ -628,10 +741,11 @@ public static class ConversationEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conv = await LockGroupAsync(db, conversationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == request.NewOwnerUserId && m.LeftAt == null, ct);
-        var targetUser = await db.OrganizationPeople.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId, ct);
+        var targetUser = await db.ActiveScopePeople.AsNoTracking().SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId, ct);
 
         if (conv is null || myMembership is null || targetMember is null || targetUser is null)
         {
@@ -653,8 +767,6 @@ public static class ConversationEndpoints
             return Results.Forbid();
         }
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
         var transition = await ConditionalTransition.ExecuteAsync(
             token => db.ConversationMembers
                 .Where(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null && m.Role == ResourceRole.Owner)
@@ -675,9 +787,11 @@ public static class ConversationEndpoints
             return Results.Conflict(new { code = "ownership_transfer_conflict" });
         }
 
-        await db.ConversationMembers
-            .Where(m => m.ConversationId == conversationId && m.UserId == request.NewOwnerUserId && m.LeftAt == null)
+        var promoted = await db.ConversationMembers
+            .Where(m => m.ConversationId == conversationId && m.UserId == request.NewOwnerUserId && m.LeftAt == null &&
+                db.ActiveScopePeople.Any(active => active.Id == m.UserId))
             .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.Role, ResourceRole.Owner), ct);
+        if (promoted != 1) return Results.Conflict(new { code = "ownership_transfer_conflict" });
 
         var now = DateTimeOffset.UtcNow;
         conv.ChangeSeq += 1;
@@ -714,7 +828,8 @@ public static class ConversationEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var conv = await db.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId && c.Kind == ConversationKind.Group, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var conv = await LockGroupAsync(db, conversationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.ConversationMembers.SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == targetUserId && m.LeftAt == null, ct);
 
@@ -745,8 +860,25 @@ public static class ConversationEndpoints
         });
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 
         return Results.Ok(new { userId = targetUserId, role = targetMember.Role.ToString(), changeSeq = conv.ChangeSeq });
     }
+
+    internal static string FormatPreview(string? body, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return fallback;
+        var collapsed = string.Join(' ', body.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (collapsed.Length == 0) return fallback;
+        return collapsed.Length <= 120 ? collapsed : string.Concat(collapsed.AsSpan(0, 117), "…");
+    }
+
+    // Serialize role and membership changes with transfers and message sequence allocation.
+    private static Task<ConversationEntity?> LockGroupAsync(NexusDbContext db, Guid id, CancellationToken ct) =>
+        db.Conversations.FromSqlInterpolated($"""
+            SELECT * FROM conversations
+            WHERE id = {id} AND organization_id IS NOT DISTINCT FROM {db.ConversationOrganizationId} AND kind = 'Group'
+            FOR UPDATE
+            """).SingleOrDefaultAsync(ct);
 }

@@ -5,11 +5,13 @@ using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Org;
+using Nexus.Web.Modules.Conversations;
 
 namespace Nexus.Web.Modules.People;
 
 public static class PeopleEndpoints
 {
+    private sealed record DirectoryCursor(string Name, Guid Id, double Score);
     public const int MaxCustomStatusLength = 100;
 
     public sealed record UpdateCustomStatusRequest(string? CustomStatus);
@@ -45,6 +47,8 @@ public static class PeopleEndpoints
         IAuthorizationService authz,
         string? q,
         Guid? departmentId,
+        Guid? excludeCommunityId,
+        string? cursor,
         int? limit,
         CancellationToken ct)
     {
@@ -68,9 +72,26 @@ public static class PeopleEndpoints
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
+        if (!PaginationGuard.TryDecodeCursor<DirectoryCursor>(cursor, out var after) ||
+            after is not null && (after.Name is null || after.Id == Guid.Empty || !double.IsFinite(after.Score)))
+            return PaginationGuard.InvalidCursor();
 
         // Hide Disabled and Former accounts strictly in SQL (M1.10).
         var baseQuery = db.ActiveScopePeople.AsNoTracking();
+
+        if (excludeCommunityId is { } communityId)
+        {
+            var community = await db.Communities.AsNoTracking()
+                .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+            var role = await db.CommunityMembers.AsNoTracking()
+                .Where(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null)
+                .Select(m => (ResourceRole?)m.Role).SingleOrDefaultAsync(ct);
+            if (community is null || !authz.Can(actor.ToActorContext(), ResourceAction.CommunityAddOrRemoveMember,
+                new ResourceContext(ResourceKind.Community, actor.OrganizationId, MembershipRole: role, IsOfficial: community.IsOfficial)))
+                return Results.Forbid();
+            baseQuery = baseQuery.Where(u => (!community.IsOfficial || u.TrustLevel == TrustLevel.Verified) &&
+                !db.CommunityMembers.Any(m => m.CommunityId == communityId && m.UserId == u.Id && m.LeftAt == null));
+        }
 
         if (departmentId.HasValue)
         {
@@ -79,38 +100,47 @@ public static class PeopleEndpoints
 
         var normalizedQuery = HrCsvImportService.NormalizeVietnamese(q ?? string.Empty);
 
-        IQueryable<OrganizationMembership> orderedQuery;
-        if (!string.IsNullOrEmpty(normalizedQuery))
+        var searching = normalizedQuery.Length > 0;
+        var ranked = baseQuery.Select(u => new
+        {
+            User = u,
+            Score = searching
+                ? EF.Functions.TrigramsSimilarity(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), normalizedQuery)
+                : 0d
+        });
+        if (searching)
         {
             var likePattern = $"%{EscapeLike(normalizedQuery)}%";
-            orderedQuery = baseQuery
-                .Where(u =>
-                    EF.Functions.ILike(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), likePattern) ||
-                    EF.Functions.ILike(NexusDbContext.ImmutableUnaccent((u.UserName ?? string.Empty).ToLower()), likePattern) ||
-                    EF.Functions.TrigramsSimilarity(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), normalizedQuery) >= 0.25)
-                .OrderByDescending(u =>
-                    EF.Functions.TrigramsSimilarity(NexusDbContext.ImmutableUnaccent(u.DisplayName.ToLower()), normalizedQuery))
-                .ThenBy(u => u.DisplayName);
+            ranked = ranked.Where(r =>
+                EF.Functions.ILike(NexusDbContext.ImmutableUnaccent(r.User.DisplayName.ToLower()), likePattern) ||
+                EF.Functions.ILike(NexusDbContext.ImmutableUnaccent((r.User.UserName ?? string.Empty).ToLower()), likePattern) ||
+                r.Score >= 0.25);
         }
-        else
+        if (after is not null)
         {
-            orderedQuery = baseQuery.OrderBy(u => u.DisplayName);
+            ranked = ranked.Where(r => r.Score < after.Score || r.Score == after.Score &&
+                (string.Compare(r.User.DisplayName, after.Name) > 0 ||
+                 r.User.DisplayName == after.Name && r.User.Id.CompareTo(after.Id) > 0));
         }
 
-        var rows = await orderedQuery
-            .Take(pageSize)
-            .Select(u => new
+        var rows = await ranked
+            .OrderByDescending(r => r.Score).ThenBy(r => r.User.DisplayName).ThenBy(r => r.User.Id)
+            .Take(pageSize + 1)
+            .Select(r => new
             {
-                u.Id,
-                Username = u.UserName ?? string.Empty,
-                u.DisplayName,
-                u.TrustLevel,
-                u.DepartmentId,
-                u.BranchId,
-                u.CustomStatus,
-                u.AvatarObjectKey
+                r.User.Id,
+                Username = r.User.UserName ?? string.Empty,
+                r.User.DisplayName,
+                r.User.TrustLevel,
+                r.User.DepartmentId,
+                r.User.BranchId,
+                r.User.CustomStatus,
+                r.User.AvatarObjectKey,
+                r.Score
             })
             .ToListAsync(ct);
+        var hasMore = rows.Count > pageSize;
+        if (hasMore) rows.RemoveAt(pageSize);
 
         var deptIds = rows.Where(r => r.DepartmentId.HasValue).Select(r => r.DepartmentId!.Value).Distinct().ToList();
         var branchIds = rows.Where(r => r.BranchId.HasValue).Select(r => r.BranchId!.Value).Distinct().ToList();
@@ -136,7 +166,8 @@ public static class PeopleEndpoints
             string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{r.Id}/avatar"))
             .ToList();
 
-        return Results.Ok(new { items });
+        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new DirectoryCursor(rows[^1].DisplayName, rows[^1].Id, rows[^1].Score)) : null;
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> HandleUpdateCustomStatusAsync(

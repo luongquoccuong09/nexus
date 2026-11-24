@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Files;
@@ -22,7 +23,7 @@ public static class MessagingEndpoints
     public const int MaxMessageBodyLength = 4000;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
 
-    public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null);
+    public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null, bool PreserveReadState = false);
     public sealed record MarkReadRequest(long LastReadSeq);
 
     public sealed record MessageDto(
@@ -58,6 +59,8 @@ public static class MessagingEndpoints
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
+        WebPushTransport push,
+        IEmailDigestTransport digest,
         IOptions<FilePolicyOptions> filePolicy,
         CancellationToken ct)
     {
@@ -121,10 +124,8 @@ public static class MessagingEndpoints
         }
 
         var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        var allowed = conv is not null && authz.Can(
-            actor.ToActorContext(),
-            ResourceAction.MessageSend,
-            new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, IsBlocked: isBlocked));
+        var resource = new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, IsBlocked: isBlocked);
+        var allowed = conv is not null && authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, resource);
 
         if (!allowed)
         {
@@ -215,17 +216,22 @@ public static class MessagingEndpoints
 
         db.Messages.Add(message);
         db.ConversationEvents.Add(evt);
+        await MentionOutbox.EnqueueAsync(db, authz, actor, resource, conversationId, null,
+            MentionOutbox.MessageKind, message.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
 
         try
         {
             await db.SaveChangesAsync(ct);
 
-            // Sender has implicitly read up to their own sent message.
-            await db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE conversation_members
-                SET last_read_seq = GREATEST(last_read_seq, {nextSeq})
-                WHERE conversation_id = {conversationId} AND user_id = {actorId} AND left_at IS NULL
-                """, ct);
+            // Legacy senders advance their own cursor during send. The SPA reports what it displays.
+            if (!request.PreserveReadState)
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE conversation_members
+                    SET last_read_seq = GREATEST(last_read_seq, {nextSeq})
+                    WHERE conversation_id = {conversationId} AND user_id = {actorId} AND left_at IS NULL
+                    """, ct);
+            }
 
             await tx.CommitAsync(ct);
         }
@@ -275,6 +281,8 @@ public static class MessagingEndpoints
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
         long? beforeSeq,
+        long? afterSeq,
+        long? aroundSeq,
         int? limit,
         CancellationToken ct)
     {
@@ -285,6 +293,12 @@ public static class MessagingEndpoints
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
+        }
+
+        var cursorCount = (beforeSeq.HasValue ? 1 : 0) + (afterSeq.HasValue ? 1 : 0) + (aroundSeq.HasValue ? 1 : 0);
+        if (cursorCount > 1)
+        {
+            return PaginationGuard.InvalidCursor();
         }
 
         var conv = await db.Conversations.AsNoTracking()
@@ -298,38 +312,81 @@ public static class MessagingEndpoints
             return Results.Forbid();
         }
 
-        var query = db.Messages
+        var visibleQuery = db.Messages
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.Seq > member.VisibleFromSeq);
 
-        if (beforeSeq.HasValue)
+        bool hasMore;
+        bool hasNewer;
+        List<MessageEntity> selectedMessages;
+
+        if (aroundSeq.HasValue)
         {
-            query = query.Where(m => m.Seq < beforeSeq.Value);
+            var olderBudget = Math.Max(1, (pageSize + 1) / 2);
+            var olderPart = await visibleQuery
+                .Where(m => m.Seq <= aroundSeq.Value)
+                .OrderByDescending(m => m.Seq)
+                .Take(olderBudget + 1)
+                .ToListAsync(ct);
+
+            hasMore = olderPart.Count > olderBudget;
+            if (hasMore) olderPart = olderPart.Take(olderBudget).ToList();
+            olderPart.Reverse();
+
+            var newerBudget = Math.Max(0, pageSize - olderPart.Count);
+            var newerPart = await visibleQuery
+                .Where(m => m.Seq > aroundSeq.Value)
+                .OrderBy(m => m.Seq)
+                .Take(newerBudget + 1)
+                .ToListAsync(ct);
+
+            hasNewer = newerPart.Count > newerBudget;
+            if (hasNewer) newerPart = newerPart.Take(newerBudget).ToList();
+
+            selectedMessages = [.. olderPart, .. newerPart];
+        }
+        else if (afterSeq.HasValue)
+        {
+            var newerRows = await visibleQuery
+                .Where(m => m.Seq > afterSeq.Value)
+                .OrderBy(m => m.Seq)
+                .Take(pageSize + 1)
+                .ToListAsync(ct);
+
+            hasNewer = newerRows.Count > pageSize;
+            if (hasNewer) newerRows = newerRows.Take(pageSize).ToList();
+            hasMore = newerRows.Count > 0 && await visibleQuery.AnyAsync(m => m.Seq < newerRows[0].Seq, ct);
+            selectedMessages = newerRows;
+        }
+        else
+        {
+            var query = beforeSeq.HasValue
+                ? visibleQuery.Where(m => m.Seq < beforeSeq.Value)
+                : visibleQuery;
+
+            var pageRows = await query
+                .OrderByDescending(m => m.Seq)
+                .Take(pageSize + 1)
+                .ToListAsync(ct);
+
+            hasMore = pageRows.Count > pageSize;
+            if (hasMore) pageRows = pageRows.Take(pageSize).ToList();
+            pageRows.Reverse();
+            var newestInPage = pageRows.Count > 0 ? pageRows[^1].Seq : 0;
+            hasNewer = beforeSeq.HasValue && pageRows.Count > 0 && await visibleQuery.AnyAsync(m => m.Seq > newestInPage, ct);
+            selectedMessages = pageRows;
         }
 
-        var rows = await query
-            .OrderByDescending(m => m.Seq)
-            .Take(pageSize + 1)
-            .Join(
-                db.OrganizationPeople.AsNoTracking(),
-                m => m.SenderId,
-                u => u.Id,
-                (m, u) => new
-                {
-                    Message = m,
-                    u.DisplayName,
-                    u.TrustLevel
-                })
-            .ToListAsync(ct);
+        var senderIds = selectedMessages.Select(m => m.SenderId).Distinct().ToList();
+        var senderMap = senderIds.Count == 0
+            ? new Dictionary<Guid, (string DisplayName, TrustLevel TrustLevel)>()
+            : (await db.OrganizationPeople.AsNoTracking()
+                .Where(u => senderIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.DisplayName, u.TrustLevel })
+                .ToListAsync(ct))
+                .ToDictionary(u => u.Id, u => (u.DisplayName, u.TrustLevel));
 
-        var hasMore = rows.Count > pageSize;
-        if (hasMore)
-        {
-            rows = rows.Take(pageSize).ToList();
-        }
-
-        rows.Reverse();
-        var msgIds = rows.Select(r => r.Message.Id).ToList();
+        var msgIds = selectedMessages.Select(m => m.Id).ToList();
         var attachmentsByMsg = msgIds.Count == 0
             ? new Dictionary<Guid, List<AttachmentDto>>()
             : (await db.Attachments.AsNoTracking()
@@ -339,27 +396,33 @@ public static class MessagingEndpoints
                 .GroupBy(a => a.MessageId!.Value)
                 .ToDictionary(g => g.Key, g => g.Select(FilesEndpoints.ToDto).ToList());
 
-        var items = rows.Select(r => new MessageDto(
-            r.Message.Id,
-            r.Message.ConversationId,
-            r.Message.Seq,
-            r.Message.SenderId,
-            r.DisplayName,
-            r.TrustLevel == TrustLevel.Unverified,
-            r.Message.ClientMsgId,
-            r.Message.DeletedAt.HasValue ? string.Empty : r.Message.Body,
-            r.Message.CreatedAt,
-            r.Message.EditedAt,
-            r.Message.DeletedAt,
-            r.Message.DeletedAt.HasValue
-                ? []
-                : attachmentsByMsg.GetValueOrDefault(r.Message.Id) ?? [])).ToList();
+        var items = selectedMessages.Select(m =>
+        {
+            var hasSender = senderMap.TryGetValue(m.SenderId, out var sender);
+            return new MessageDto(
+                m.Id,
+                m.ConversationId,
+                m.Seq,
+                m.SenderId,
+                hasSender ? sender.DisplayName : "Unknown",
+                !hasSender || sender.TrustLevel == TrustLevel.Unverified,
+                m.ClientMsgId,
+                m.DeletedAt.HasValue ? string.Empty : m.Body,
+                m.CreatedAt,
+                m.EditedAt,
+                m.DeletedAt,
+                m.DeletedAt.HasValue
+                    ? []
+                    : attachmentsByMsg.GetValueOrDefault(m.Id) ?? []);
+        }).ToList();
 
         return Results.Ok(new
         {
             items,
             hasMore,
+            hasNewer,
             nextBeforeSeq = items.Count > 0 ? items[0].Seq : (long?)null,
+            nextAfterSeq = hasNewer && items.Count > 0 ? items[^1].Seq : (long?)null,
             changeSeq = conv.ChangeSeq,
             lastReadSeq = member.LastReadSeq
         });

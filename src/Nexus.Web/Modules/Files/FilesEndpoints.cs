@@ -73,6 +73,7 @@ public static class FilesEndpoints
     public static IEndpointRouteBuilder MapFilesEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
         app.MapPost(prefix + "/conversations/{conversationId:guid}/attachments", HandleUploadAttachmentAsync);
+        app.MapGet(prefix + "/conversations/{conversationId:guid}/attachments/pending", HandleCheckPendingAttachmentsAsync);
         app.MapGet(prefix + "/conversations/{conversationId:guid}/files", HandleListConversationFilesAsync);
 
         var files = app.MapGroup(prefix + "/files/{attachmentId:guid}");
@@ -341,6 +342,33 @@ public static class FilesEndpoints
         });
     }
 
+    private static async Task<IResult> HandleCheckPendingAttachmentsAsync(
+        HttpContext ctx,
+        Guid conversationId,
+        [FromQuery(Name = "id")] Guid[] ids,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+
+        if (ids.Length > 50) return Results.BadRequest(new { code = "too_many_attachment_ids" });
+
+        var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
+        if (access is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
+            return Results.Forbid();
+
+        var pending = await db.Attachments.AsNoTracking()
+            .Where(a => a.ConversationId == conversationId && a.UploaderUserId == actorId &&
+                        a.State == AttachmentState.Pending && ids.Contains(a.Id))
+            .Select(a => a.Id)
+            .ToListAsync(ct);
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(new { ids = pending });
+    }
+
     private static async Task<IResult> HandleListConversationFilesAsync(
         HttpContext ctx,
         Guid conversationId,
@@ -348,6 +376,7 @@ public static class FilesEndpoints
         IAuthorizationService authz,
         IOptions<FilePolicyOptions> policyOptions,
         DateTimeOffset? before,
+        Guid? beforeId,
         int? limit,
         CancellationToken ct)
     {
@@ -358,6 +387,11 @@ public static class FilesEndpoints
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
+        }
+
+        if (beforeId.HasValue && !before.HasValue)
+        {
+            return Results.BadRequest(new { code = "invalid_cursor", message = "before is required when beforeId is supplied." });
         }
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
@@ -375,13 +409,18 @@ public static class FilesEndpoints
                 m => (Guid?)m.Id,
                 (a, m) => new { Attachment = a, MessageSeq = m.Seq });
 
-        if (before.HasValue)
+        if (before is { } timestamp)
         {
-            query = query.Where(x => x.Attachment.CreatedAt < before.Value);
+            var utc = timestamp.ToUniversalTime();
+            query = beforeId is { } id
+                ? query.Where(x => x.Attachment.CreatedAt < utc ||
+                    (x.Attachment.CreatedAt == utc && x.Attachment.Id.CompareTo(id) < 0))
+                : query.Where(x => x.Attachment.CreatedAt < utc);
         }
 
         var rows = await query
             .OrderByDescending(x => x.Attachment.CreatedAt)
+            .ThenByDescending(x => x.Attachment.Id)
             .Take(pageSize + 1)
             .ToListAsync(ct);
 
@@ -399,6 +438,7 @@ public static class FilesEndpoints
             items,
             hasMore,
             nextBefore = items.Count > 0 ? items[^1].CreatedAt : (DateTimeOffset?)null,
+            nextBeforeId = items.Count > 0 ? items[^1].Id : (Guid?)null,
             quota
         });
     }

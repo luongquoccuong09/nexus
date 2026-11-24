@@ -75,6 +75,20 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             Assert.Equal("pending", pdfDoc1.GetProperty("state").GetString());
             Assert.Equal("application/pdf", pdfDoc1.GetProperty("contentType").GetString());
 
+            // M6.17: Only the uploader can recover pending attachment references in their chat.
+            var pendingPath = $"/api/conversations/{dmAB}/attachments/pending?id={pdfId}&id={Guid.NewGuid()}";
+            using var ownPending = await clientA.GetAsync(pendingPath);
+            Assert.Equal(HttpStatusCode.OK, ownPending.StatusCode);
+            Assert.True(ownPending.Headers.CacheControl?.NoStore);
+            var ownIds = (await ownPending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ids");
+            Assert.Equal(pdfId, Assert.Single(ownIds.EnumerateArray()).GetGuid());
+            using var otherPending = await clientB.GetAsync(pendingPath);
+            Assert.Equal(HttpStatusCode.OK, otherPending.StatusCode);
+            Assert.Empty((await otherPending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ids").EnumerateArray());
+            using var otherChat = await clientA.GetAsync($"/api/conversations/{dmAC}/attachments/pending?id={pdfId}");
+            Assert.Equal(HttpStatusCode.OK, otherChat.StatusCode);
+            Assert.Empty((await otherChat.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ids").EnumerateArray());
+
             using var pdfRetry = await UploadMultipartAsync(clientA, dmAB, pdfUploadId, "report.pdf", pdfBytes);
             Assert.Equal(HttpStatusCode.OK, pdfRetry.StatusCode);
             Assert.Equal(pdfId, JsonDocument.Parse(await pdfRetry.Content.ReadAsStringAsync()).RootElement.GetProperty("attachment").GetProperty("id").GetGuid());
@@ -135,15 +149,22 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             Assert.Equal(pdfBytes, await unicodeDownload.Content.ReadAsByteArrayAsync());
 
             // Stage 2: Attach both files to an attachment-only message (empty caption allowed!)
-            using var sendResp = await clientA.PostAsJsonAsync($"/api/conversations/{dmAB}/messages", new
+            var attachmentSend = new
             {
                 clientMsgId = $"att-msg-{suffix}",
                 body = "",
                 attachmentIds = new[] { pdfId, imgId }
-            });
+            };
+            using var sendResp = await clientA.PostAsJsonAsync($"/api/conversations/{dmAB}/messages", attachmentSend);
             Assert.Equal(HttpStatusCode.Created, sendResp.StatusCode);
             var sentMsg = JsonDocument.Parse(await sendResp.Content.ReadAsStringAsync()).RootElement;
             Assert.Equal(2, sentMsg.GetProperty("attachments").GetArrayLength());
+            // A reconnect can replay the original send after the server already attached the files.
+            using var sentAgain = await clientA.PostAsJsonAsync($"/api/conversations/{dmAB}/messages", attachmentSend);
+            Assert.Equal(HttpStatusCode.OK, sentAgain.StatusCode);
+            var reloadedMessage = await sentAgain.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(sentMsg.GetProperty("id").GetGuid(), reloadedMessage.GetProperty("id").GetGuid());
+            Assert.Equal(2, reloadedMessage.GetProperty("attachments").GetArrayLength());
 
             // Verify delta sync returns working scoped attachment URLs.
             using var delta = await clientB.GetAsync($"/api/conversations/{dmAB}/changes");
@@ -184,6 +205,9 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
             var cleanup = app.Services.GetRequiredService<OrphanAttachmentCleanupService>();
             var cleanedCount = await cleanup.CleanupOrphansAsync(DateTimeOffset.UtcNow.AddHours(-24));
             Assert.True(cleanedCount >= 1);
+            using var recoveredPending = await clientA.GetAsync($"/api/conversations/{dmAB}/attachments/pending?id={orphanId}&id={pdfId}");
+            Assert.Equal(HttpStatusCode.OK, recoveredPending.StatusCode);
+            Assert.Empty((await recoveredPending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ids").EnumerateArray());
 
             var storage = app.Services.GetRequiredService<IFileStorage>();
             Assert.Null(await storage.OpenReadAsync(orphanKey));
@@ -287,6 +311,8 @@ public sealed class FilesM3Tests(PostgresContainerFixture pg)
 
             using var dlAfterRemove = await memberClient.GetAsync($"/api/files/{attId}/download");
             Assert.Equal(HttpStatusCode.Forbidden, dlAfterRemove.StatusCode);
+            using var validateAfterRemove = await memberClient.GetAsync($"/api/conversations/{groupId}/attachments/pending");
+            Assert.Equal(HttpStatusCode.Forbidden, validateAfterRemove.StatusCode);
 
             using var reAdd = await ownerClient.PostAsJsonAsync($"/api/conversations/{groupId}/members", new { userId = member.Id });
             Assert.Equal(HttpStatusCode.OK, reAdd.StatusCode);

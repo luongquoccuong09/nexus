@@ -8,6 +8,7 @@ using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
+using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 using Serilog.Core;
@@ -31,6 +32,26 @@ public static class NexusHost
         builder.Services.AddIdentityModule(builder.Configuration);
         builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
         builder.Services.AddScoped<MessagingFanoutService>();
+        builder.Services.AddScoped<OutboxProcessor>();
+        builder.Services.AddKeyedScoped<IOutboxHandler, AnnouncementReminderHandler>(AnnouncementReminderHandler.Kind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.MessageKind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.PostKind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.CommentKind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.MessageActivity);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.PostActivity);
+        builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.CommentActivity);
+        builder.Services.AddKeyedScoped<IOutboxHandler, PushOutboxHandler>(PushOutboxHandler.Kind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, EmailDigestHandler>(EmailDigestHandler.Kind);
+        builder.Services.AddHostedService<OutboxBackgroundService>();
+        builder.Services.AddSingleton<WebPushTransport>();
+        builder.Services.AddSingleton<IEmailDigestTransport, EmailDigestTransport>();
+        builder.Services.AddHttpClient(WebPushTransport.ClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                CheckCertificateRevocationList = true,
+                UseCookies = false
+            }).RemoveAllLoggers();
 
         configureBuilder?.Invoke(builder);
 
@@ -57,12 +78,15 @@ public static class NexusHost
 
         app.MapNexusOperationalEndpoints();
         app.MapIdentityEndpoints();
+        app.MapContentLinkEndpoints();
+        app.MapNotificationEndpoints();
         app.MapOrganizations();
         app.MapPersonalConnections();
         app.MapOrgEndpoints();
         app.MapPeopleEndpoints();
         app.MapPeopleSafetyEndpoints();
         app.MapConversationEndpoints();
+        app.MapSidebarEndpoints();
         app.MapCommunityEndpoints();
         app.MapMessagingEndpoints();
         app.MapCommunityFeedEndpoints();

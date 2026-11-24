@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Button, Card, Field, Modal, ToastBar } from './ui';
 import { orgApiPath, personalContactLink, protectedRequest } from './scope';
+import { ListPaging, readCursorPage, useCursorList } from './cursorList';
 
 export interface OrganizationItem {
   id: string;
@@ -24,19 +25,28 @@ async function previewInvitation(token: string, signal?: AbortSignal) {
   return { name: (await res.json()).name as string, token };
 }
 
-async function readItems<T>(url: string): Promise<T[]> {
+async function readItems<T>(url: string, signal?: AbortSignal): Promise<T[]> {
   const items: T[] = [];
   let after: string | null = null;
   do {
     const query = new URLSearchParams({ limit: '50' });
     if (after) query.set('after', after);
-    const res = await window.fetch(`${url}?${query}`, { credentials: 'same-origin' });
+    const res = await window.fetch(`${url}?${query}`, { credentials: 'same-origin', signal });
     if (!res.ok) throw new Error('Unable to load the list.');
     const page: { items: T[]; nextAfter: string | null } = await res.json();
     items.push(...page.items);
     after = page.nextAfter;
   } while (after);
   return items;
+}
+
+const byId = <T extends { id: string }>(item: T) => item.id;
+
+async function readAfterPage<T>(url: string, after: string | null, signal: AbortSignal, message: string) {
+  const query = new URLSearchParams({ limit: '50' });
+  if (after) query.set('after', after);
+  const res = await window.fetch(`${url}?${query}`, { credentials: 'same-origin', signal });
+  return readCursorPage<T>(res, message);
 }
 
 export async function listOrganizations(): Promise<OrganizationItem[]> {
@@ -62,22 +72,31 @@ export function WorkspaceModals({
   const [preview, setPreview] = useState<{ name: string; token: string } | null>(null);
   const [link, setLink] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
-  const [invites, setInvites] = useState<Invitation[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
   const [pendingRemoval, setPendingRemoval] = useState<Member | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const settingsOrg = modal?.mode === 'settings' ? modal.organization : null;
+  const settingsError = 'Unable to load workspace settings. If your workspace enforces 2FA, enable your authenticator in Profile & security.';
+  const invitesPage = useCursorList<Invitation>(
+    settingsOrg ? JSON.stringify(['workspace-invites', settingsOrg.id]) : null,
+    (cursor, signal) => readAfterPage<Invitation>(orgApiPath(settingsOrg!.id, '/api/invitations'), cursor, signal, settingsError),
+    byId
+  );
+  const membersPage = useCursorList<Member>(
+    settingsOrg ? JSON.stringify(['workspace-members', settingsOrg.id]) : null,
+    (cursor, signal) => readAfterPage<Member>(orgApiPath(settingsOrg!.id, '/api/members'), cursor, signal, settingsError),
+    byId
+  );
+  const invites = invitesPage.items;
+  const members = membersPage.items;
+  const activeInvites = invites.filter(i => !i.revokedAt && !i.redeemedAt && Date.parse(i.expiresAt) > Date.now());
+  const { refresh: refreshInvites } = invitesPage;
+  const { refresh: refreshMembers } = membersPage;
 
-  const loadSettings = useCallback(async (orgId: string) => {
-    const [nextInvites, nextMembers] = await Promise.all([
-      readItems<Invitation>(orgApiPath(orgId, '/api/invitations')),
-      readItems<Member>(orgApiPath(orgId, '/api/members'))
-    ]);
-    setInvites(nextInvites);
-    setMembers(nextMembers);
-  }, []);
+  const loadSettings = useCallback(async () => {
+    await Promise.all([refreshInvites(), refreshMembers()]);
+  }, [refreshInvites, refreshMembers]);
 
   useEffect(() => {
     setError('');
@@ -105,14 +124,7 @@ export function WorkspaceModals({
       }
       return;
     }
-    if (modal.mode === 'settings') {
-      setInvites([]);
-      setMembers([]);
-      void loadSettings(modal.organization.id).catch(() =>
-        setError('Unable to load workspace settings. If your workspace enforces 2FA, enable your authenticator in Profile & security.')
-      );
-    }
-  }, [modal, loadSettings]);
+  }, [modal]);
 
   function handleClose() {
     if (window.location.hash.includes('organization-invitation=')) {
@@ -171,7 +183,7 @@ export function WorkspaceModals({
     if (!res.ok) throw new Error('Unable to create an invitation.');
     setCopyStatus('');
     setLink(`${window.location.origin}/#organization-invitation=${(await res.json()).token}`);
-    await loadSettings(settingsOrg.id);
+    await loadSettings();
   }
 
   const title = modal?.mode === 'settings'
@@ -227,7 +239,7 @@ export function WorkspaceModals({
       ))}
       {settingsOrg && (
         <>
-          {!mfaEnabled && error && (
+          {!mfaEnabled && (error || invitesPage.error || membersPage.error) && (
             <Button onClick={() => { handleClose(); onSecurity(); }}>Open profile &amp; security</Button>
           )}
           <Card title="Invitations">
@@ -251,38 +263,66 @@ export function WorkspaceModals({
                 </div>
               </div>
             )}
-            {invites.filter(i => !i.revokedAt && !i.redeemedAt && Date.parse(i.expiresAt) > Date.now()).map(invitation => (
-              <div className="nx-row" key={invitation.id} style={{ marginTop: 8 }}>
-                <span>Expires {new Date(invitation.expiresAt).toLocaleDateString()}</span>
-                <Button size="sm" disabled={busy} onClick={() => void submit(async () => {
-                  const res = await protectedRequest(orgApiPath(settingsOrg.id, `/api/invitations/${invitation.id}`), 'DELETE');
-                  if (!res.ok) throw new Error('Unable to revoke the invitation.');
-                  setLink('');
-                  await loadSettings(settingsOrg.id);
-                })}>Revoke</Button>
-              </div>
-            ))}
+            {invitesPage.loading && invites.length === 0 ? (
+              <p className="nx-muted" role="status" style={{ marginTop: 8 }}>Loading invitations…</p>
+            ) : activeInvites.length === 0 && !invitesPage.error && invitesPage.next === null ? (
+              <p className="nx-muted" style={{ marginTop: 8 }}>No active invitations.</p>
+            ) : (
+              activeInvites.map(invitation => (
+                <div className="nx-row" key={invitation.id} style={{ marginTop: 8 }}>
+                  <span>Expires {new Date(invitation.expiresAt).toLocaleDateString()}</span>
+                  <Button size="sm" disabled={busy} onClick={() => void submit(async () => {
+                    const res = await protectedRequest(orgApiPath(settingsOrg.id, `/api/invitations/${invitation.id}`), 'DELETE');
+                    if (!res.ok) throw new Error('Unable to revoke the invitation.');
+                    setLink('');
+                    await loadSettings();
+                  })}>Revoke</Button>
+                </div>
+              ))
+            )}
+            <ListPaging
+              loading={invitesPage.loading}
+              error={invitesPage.error}
+              hasMore={invitesPage.next !== null}
+              onMore={invitesPage.loadMore}
+              onRetry={invitesPage.retry}
+              moreLabel="Load more invitations"
+            />
           </Card>
           <Card title="Members">
-            {members.map(member => (
-              <div className="nx-row" key={member.id} style={{ marginTop: 6 }}>
-                <span>{member.displayName} · {member.isOwner ? 'Owner' : member.role === 'SystemAdmin' ? 'Admin' : member.role}</span>
-                {!member.isOwner && (settingsOrg.isOwner || member.role === 'Member') && (
-                  <Button size="sm" disabled={busy} onClick={() => setPendingRemoval(member)}>Remove</Button>
-                )}
-                {!member.isOwner && settingsOrg.isOwner && ['Member', 'SystemAdmin'].includes(member.role) && (
-                  <Button size="sm" disabled={busy} onClick={() => void submit(async () => {
-                    const res = await protectedRequest(
-                      orgApiPath(settingsOrg.id, `/api/members/${member.id}/administrator`),
-                      'PUT',
-                      { administrator: member.role === 'Member' }
-                    );
-                    if (!res.ok) throw new Error('Unable to change the member role.');
-                    await loadSettings(settingsOrg.id);
-                  })}>{member.role === 'Member' ? 'Make admin' : 'Remove admin role'}</Button>
-                )}
-              </div>
-            ))}
+            {membersPage.loading && members.length === 0 ? (
+              <p className="nx-muted" role="status">Loading members…</p>
+            ) : members.length === 0 && !membersPage.error ? (
+              <p className="nx-muted">No workspace members found.</p>
+            ) : (
+              members.map(member => (
+                <div className="nx-row" key={member.id} style={{ marginTop: 6 }}>
+                  <span>{member.displayName} · {member.isOwner ? 'Owner' : member.role === 'SystemAdmin' ? 'Admin' : member.role}</span>
+                  {!member.isOwner && (settingsOrg.isOwner || member.role === 'Member') && (
+                    <Button size="sm" disabled={busy} onClick={() => setPendingRemoval(member)}>Remove</Button>
+                  )}
+                  {!member.isOwner && settingsOrg.isOwner && ['Member', 'SystemAdmin'].includes(member.role) && (
+                    <Button size="sm" disabled={busy} onClick={() => void submit(async () => {
+                      const res = await protectedRequest(
+                        orgApiPath(settingsOrg.id, `/api/members/${member.id}/administrator`),
+                        'PUT',
+                        { administrator: member.role === 'Member' }
+                      );
+                      if (!res.ok) throw new Error('Unable to change the member role.');
+                      await loadSettings();
+                    })}>{member.role === 'Member' ? 'Make admin' : 'Remove admin role'}</Button>
+                  )}
+                </div>
+              ))
+            )}
+            <ListPaging
+              loading={membersPage.loading}
+              error={membersPage.error}
+              hasMore={membersPage.next !== null}
+              onMore={membersPage.loadMore}
+              onRetry={membersPage.retry}
+              moreLabel="Load more members"
+            />
             {pendingRemoval && (
               <div className="nx-row" style={{ marginTop: 10 }}>
                 <span>Remove {pendingRemoval.displayName} from {settingsOrg.name}?</span>
@@ -291,7 +331,7 @@ export function WorkspaceModals({
                   const res = await protectedRequest(orgApiPath(settingsOrg.id, `/api/members/${pendingRemoval.id}`), 'DELETE');
                   if (!res.ok) throw new Error(res.status === 409 ? 'Transfer this member’s Community ownership before removing access.' : 'Unable to remove the member.');
                   setPendingRemoval(null);
-                  await loadSettings(settingsOrg.id);
+                  await loadSettings();
                 })}>Confirm removal</Button>
               </div>
             )}
@@ -303,16 +343,18 @@ export function WorkspaceModals({
 }
 
 export function ContactControls({ onChange, usernameRef }: { onChange: () => void; usernameRef?: React.Ref<HTMLInputElement> }) {
-  const [requests, setRequests] = useState<{ id: string; displayName: string; username: string }[]>([]);
+  const requestsPage = useCursorList<{ id: string; displayName: string; username: string }>(
+    'personal-contact-requests',
+    (cursor, signal) => readAfterPage('/api/personal/contacts/requests', cursor, signal, 'Unable to load contact requests.'),
+    byId
+  );
+  const requests = requestsPage.items;
   const [username, setUsername] = useState('');
   const [link, setLink] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const [receivedToken, setReceivedToken] = useState(personalContactLink);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-
-  const readRequests = () => readItems<{ id: string; displayName: string; username: string }>('/api/personal/contacts/requests').then(setRequests);
-  useEffect(() => { void readRequests().catch(() => setMessage('Unable to load contact requests.')); }, []);
 
   async function run(path: string, method: string, body?: unknown) {
     if (busy) return null;
@@ -386,12 +428,20 @@ export function ContactControls({ onChange, usernameRef }: { onChange: () => voi
           {[true, false].map(accept => (
             <Button key={String(accept)} size="sm" disabled={busy} onClick={async () => {
               if (!await run(`requests/${request.id}`, 'PUT', { accept })) return;
-              setRequests(previous => previous.filter(item => item.id !== request.id));
+              await requestsPage.refresh();
               if (accept) onChange();
             }}>{accept ? 'Accept' : 'Decline'}</Button>
           ))}
         </div>
       ))}
+      <ListPaging
+        loading={requestsPage.loading}
+        error={requestsPage.error}
+        hasMore={requestsPage.next !== null}
+        onMore={requestsPage.loadMore}
+        onRetry={requestsPage.retry}
+        moreLabel="Load more requests"
+      />
     </Card>
   );
 }

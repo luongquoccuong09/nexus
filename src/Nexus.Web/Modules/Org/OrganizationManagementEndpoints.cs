@@ -239,6 +239,7 @@ public static class OrganizationManagementEndpoints
             await conversations.AnyAsync(m => m.Role == ResourceRole.Owner && db.Conversations.Any(c => c.Id == m.ConversationId && c.Kind == ConversationKind.Group), ct)) return false;
         await communities.ExecuteUpdateAsync(set => set.SetProperty(m => m.LeftAt, now), ct);
         await conversations.ExecuteUpdateAsync(set => set.SetProperty(m => m.LeftAt, now), ct);
+        await SidebarEndpoints.RemoveOrganizationSidebarItemsAsync(db, orgId, removedIds, ct);
         return true;
     }
 

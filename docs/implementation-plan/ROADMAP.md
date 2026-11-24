@@ -112,12 +112,12 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 
 ## M4 — Notifications and outbox
 
-- [ ] **M4.1** Run the transactional outbox with BackgroundService, SKIP LOCKED, retry/backoff, idempotent handlers and dead-letter handling.
-- [ ] **M4.2** Add @user and authorized @channel/@all mentions with separate unread mention counts.
-- [ ] **M4.3** Provide an in-app notification center backed by the notifications table. Mark-as-read is idempotent.
-- [ ] **M4.4** Set per-conversation all/mentions/mute preferences (UX-07) and scheduled quiet hours.
-- [ ] **M4.5** Web Push using VAPID. Omit message content, recheck read/mute state before delivery and deduplicate by tag. Document iOS PWA installation.
-- [ ] **M4.6** Optional email digest for messages unread after N hours when push fails. Omit private DM content.
+- [x] **M4.1** Run the transactional outbox with BackgroundService, SKIP LOCKED, retry/backoff, idempotent handlers and dead-letter handling.
+- [x] **M4.2** Add @user and authorized @channel/@all mentions with separate unread mention counts.
+- [x] **M4.3** Provide an in-app notification center backed by the notifications table. Mark-as-read is idempotent.
+- [x] **M4.4** Set per-conversation all/mentions/mute preferences (UX-07) and scheduled quiet hours.
+- [x] **M4.5** Web Push using VAPID. Omit message content, recheck read/mute state before delivery and deduplicate by tag. Document iOS PWA installation.
+- [x] **M4.6** Optional email digest for messages unread after N hours when push fails. Omit private DM content.
 
 ## M5 — Communities, channels and announcements
 
@@ -130,7 +130,11 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 - [x] **M5.6** Polls (CM-01) use PUT and uniqueness constraints for votes.
 - **M5 acceptance:** Create a community with its main feed and optional sub-channels. Post, switch and reload, verifying channel isolation. Removed members lose API, file, and realtime access across the community. *(Verified end-to-end in `CommunitiesM5Tests.cs` on PostgreSQL 17; 1,000-recipient load benchmark runs in `M8.2`.)*
 
-## M6 — Rich chat features selected from pilot feedback
+## M6 — Rich chat, calendar and meetings
+
+Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and Meetings plan](m6-calendar-meetings/PLAN-m6-calendar-meetings.md) covers `M6.10`–`M6.15` and `M6.35`–`M6.39`. The [Collaboration UX plan](m6-collaboration-ux/PLAN-m6-collaboration-ux.md) covers `M6.16`–`M6.34` and gives the delivery order and acceptance criteria.
+
+### Rich chat
 
 - [ ] **M6.1** Quick reactions and hover actions (UX-01) with PUT/DELETE and change events.
 - [ ] **M6.2** Threads (UX-02) with parent_message_id, reply counts, following and unread state. ⚑ D05
@@ -141,7 +145,48 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 - [ ] **M6.7** Ctrl+K quick switcher and keyboard navigation (UX-10).
 - [ ] **M6.8** Optional DM read receipts. ⚑ D09
 - [ ] **M6.9** Forward messages after checking file access at the destination.
-- [ ] **M6.10** Create meeting links with Meet/Jitsi.
+
+### Calendar and meeting essentials
+
+- [ ] **M6.10** Evaluate and select approved open-source components. Verify authenticated rooms, participant removal and rejoin, audio/video, screen sharing, WebView2, and corporate network connectivity using a self-hosted media provider. Record the selection and expected operating cost.
+- [ ] **M6.11** Add a Calendar with week, month, and agenda views, event create/edit/cancel, attendee invitations, RSVP, time zones, and reminders. Verify visibility and access after membership revocation. → M4.1, M4.3, M5, M6.10
+- [ ] **M6.12** Add scheduled meetings and Meet now. Reuse the provider for group audio/video and screen sharing. Verify joining from an event or conversation and leaving or ending the meeting. → M6.10, M6.11
+- [ ] **M6.13** Add direct voice and video calls from eligible Personal and Organization chats. Handle ringing, accept, decline, cancel, missed, and end states across signed-in devices. Reuse meeting media and screen sharing. → M2.14, M6.12
+- [ ] **M6.14** Add recurring events, single-occurrence exceptions and cancellations, and authorized `.ics` export. Verify local meeting times across daylight-saving transitions. → M6.10, M6.11
+- [ ] **M6.15** Verify the complete calendar and calling flows in supported browsers and the Windows Desktop client. Exercise permission denial, reconnect, concurrent devices, and authorization changes. Measure media capacity in the target deployment. → M6.12–M6.14, M8.2
+
+### Existing workflows and UI gaps
+
+- [x] **M6.16** Finish cursor pagination in the Chat sidebar and Files drawer. Verify older entries remain reachable and background refresh preserves the user's selection and loaded results. → M2.5, M3.5
+- [x] **M6.17** Keep unsent text and recoverable attachment state per conversation. Show failed sends with retry and dismiss actions and preserve the original destination across a chat switch. → M2.6, M3.1
+- [ ] **M6.18** Advance read state when messages are displayed in the active, visible Chat view. Preserve scroll position while reading history and provide a New messages action. → M2.7
+- [ ] **M6.19** Handle Enter during IME composition without sending. Verify Shift+Enter, the on-screen Send button, and composition on supported clients.
+- [x] **M6.20** Add Blocked users and Unblock to Profile & security using the existing account-level safety endpoints. → M2.11
+- [x] **M6.21** Add authorized ownership transfer to group chat and Community member management using the existing transfer endpoints. → M2.8, M5.2
+- [x] **M6.22** Add the account reset form for operator-issued tokens, including expired, invalid, and used-token states. → M1.5
+- [x] **M6.23** Finish pagination in People, Community lists and feeds, and member pickers with capped lists. Preserve filters, pinned post order, and current membership checks. → M6.16, M5
+- [x] **M6.24** Retest the outstanding UX audit findings and populated role-specific screens. Verify keyboard, screen reader, narrow window, loading, empty, and failure states. → M6.16–M6.23
+
+### Everyday collaboration
+
+- [x] **M6.25** Add authorized links to messages, posts, and channels. Load the target in context and highlight it. Reuse the link route for search hits, activity items, and saved results. → M2.5, M5.5
+- [x] **M6.26** Add Favorites, user-defined sections, hide/show, unread filtering, and message previews for the Chat and Communities sidebars. → M6.16, M6.18, M6.23
+- [ ] **M6.27** Add formatting controls, link insertion, and a searchable Unicode emoji picker with native iPhone rendering. Evaluate a licensed cross-platform style if needed. → M2.9, M6.17, M6.19
+- [ ] **M6.28** Add accessible profile cards and timed availability states such as Busy, Away, and Do not disturb. Keep availability and notification preferences coordinated. → M1.11, M2.10, M4.4
+- [ ] **M6.29** Add a private self chat for notes and files with one conversation per account. → M2.13, M3.3
+- [ ] **M6.30** Add Community and Channel metadata editing and Channel archive/restore. Archived channels remain readable and enforce read-only behavior on the server. → M5.1, M5.2
+- [ ] **M6.31** Attach files to feed posts using the existing upload, scan, and download controls. Add a Channel Files view and links to the source posts. → M3.3, M3.6, M5.5, M6.25
+- [ ] **M6.32** Add a Shared view with Files, Links, and Media filters for chats and channels. Support opening the source message or post. → M6.16, M6.25, M6.31
+- [ ] **M6.33** Add scoped People tags for targeted mentions and authorized tag management. → M4.2, M5.2
+- [ ] **M6.34** Add short voice notes with explicit microphone permission, preview before sending, and accessible playback. Review approved audio formats and limits under D08. → M3.2, M3.6, M6.27
+
+### Calendar and calling enhancements
+
+- [ ] **M6.35** Add Calls history with incoming, outgoing, and missed filters and Call back. → M6.13, M6.16
+- [ ] **M6.36** Add pre-join device selection, camera preview, microphone meter, and speaker test using approved provider or browser capabilities. → M6.10, M6.12
+- [ ] **M6.37** Keep a meeting or call available through a compact view while the user navigates Nexus. Preserve call controls and verify the supported WebView2 behavior. → M6.12, M6.13
+- [ ] **M6.38** Add a Scheduling Assistant with free/busy and tentative time only for authorized invitees. → M6.11, M6.14
+- [ ] **M6.39** Add meeting lobby, organizer and presenter roles, and controls for who can present or share. Enforce permissions through the provider and record role changes. → M6.10, M6.12
 
 ## M7 — Admin & Governance
 
@@ -160,7 +205,7 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 - [ ] **M8.4** Always-on pilot infrastructure per D10: Docker Compose with app, Postgres, Caddy and ClamAV, firewall, non-root processes and VPN/Zero Trust if IT requires it.
 - [ ] **M8.5** Monitor and alert on uptime, errors, p95, sockets, disk/quota, backup status and scan failures.
 - [ ] **M8.6** Document deployment, rollback, restore, key rotation, disabling accounts and incidents. Include the privacy notice and data inventory.
-- [ ] **M8.7** Submit the IT review package (proposal §12) for a go/no-go decision.
+- [ ] **M8.7** Submit the IT review package (proposal §12) for a go/no-go decision. If meetings or calls are included in the pilot, include M6.15 results and the media deployment, access controls, and data handling.
 
 ## M9 — Pilot → Rollout
 
@@ -172,7 +217,9 @@ Start with the [repository guide](../../AGENTS.md), [decisions index](../decisio
 
 ## Post-rollout backlog (uncommitted)
 
-Remind me (UX-11), scheduled send (UX-12), events and RSVP, knowledge base, Former status if D06 defers it, and HRM/CRM/AI integrations from proposal §14.
+- Remind me (UX-11), scheduled send (UX-12), knowledge base, Former status if D06 defers it, and HRM/CRM/AI integrations from proposal §14.
+- Evaluate private or cross-Organization shared Channels and external meeting guests as separate product and authorization decisions. D04 Community membership inheritance and D14 Organization boundaries govern current delivery.
+- Consider meeting chat and recap, live captions, recording and transcription, breakout rooms, and whiteboard or task integrations after validating pilot demand and reviewing data handling. See the [meeting follow-ups](m6-calendar-meetings/PLAN-m6-calendar-meetings.md#deferred-capabilities).
 
 ---
 
@@ -183,7 +230,8 @@ P0 → M0 → M1 → M2 ──► [Release 1: usable chat]
                  ├→ M3 (files)
                  └→ M4 (notifications) → M5 ──► [Release 2: communities, channels and announcements]
 M1a (open password registration) → M1b (directory) → M1c (Google linking, can overlap M2). Start M1d only after the conversion decision.
-Select M6 features using feedback. M1.8 (admin MFA), M3.6 and M8 are required before the pilot or use of real data.
+M6.16 starts the collaboration UX work. Its core fixes and UI gaps can be delivered before Calendar and Meetings.
+Select M6.1–M6.9 and optional collaboration enhancements using feedback. Calendar and meetings can follow Release 2. M1.8 (admin MFA), M3.6 and M8 are required before the pilot or use of real data.
 ```
 
-Rough estimate for one full-time developer with AI: P0 one week, M0 one to two, M1 two, M2 three to four, M3 one to two, M4 two, M5 two to three under the earlier scope (re-estimate after P0.2), M7 and M8 three to four. Allow about **four to five months** to pilot, with M6 driven by demand.
+Earlier estimates for one full-time developer with AI were one week for P0, one to two for M0, two for M1, three to four for M2, one to two for M3, two for M4, two to three for M5 under its earlier scope, and three to four for M7 and M8. The four-to-five-month pilot estimate covers the earlier core scope. Estimate the added collaboration sessions separately and estimate calendar and meetings after M6.10.

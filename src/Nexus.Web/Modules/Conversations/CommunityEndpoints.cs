@@ -13,6 +13,7 @@ namespace Nexus.Web.Modules.Conversations;
 
 public static class CommunityEndpoints
 {
+    private sealed record CommunityCursor(bool IsOfficial, string Name, Guid Id);
     private static readonly JsonSerializerOptions AuditJsonOptions = new(JsonSerializerDefaults.Web);
 
     public sealed record CreateCommunityRequest(string Name, string? Description, string? Visibility);
@@ -51,6 +52,10 @@ public static class CommunityEndpoints
         HttpContext ctx,
         [FromServices] NexusDbContext db,
         bool discover = false,
+        string? q = null,
+        string? cursor = null,
+        Guid? communityId = null,
+        Guid? conversationId = null,
         int? limit = null,
         CancellationToken ct = default)
     {
@@ -62,6 +67,8 @@ public static class CommunityEndpoints
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
+        if (!PaginationGuard.TryDecodeCursor<CommunityCursor>(cursor, out var after) ||
+            after is not null && (after.Id == Guid.Empty || after.Name is null)) return PaginationGuard.InvalidCursor();
 
         var myMemberships = await db.CommunityMembers.AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
@@ -69,6 +76,10 @@ public static class CommunityEndpoints
 
         IQueryable<CommunityEntity> query = db.Communities.AsNoTracking()
             .Where(c => c.OrganizationId == actor.OrganizationId);
+        if (communityId is { } requestedCommunity)
+            query = query.Where(c => c.Id == requestedCommunity);
+        if (conversationId is { } requestedConversation)
+            query = query.Where(c => db.Conversations.Any(ch => ch.CommunityId == c.Id && ch.Id == requestedConversation));
 
         if (discover)
         {
@@ -88,11 +99,31 @@ public static class CommunityEndpoints
             }
         }
 
+        var search = q?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
+            query = query.Where(c => EF.Functions.ILike(c.Name, pattern) ||
+                db.Organizations.Any(o => o.Id == c.OrganizationId && EF.Functions.ILike(o.Name, pattern)) ||
+                (discover && c.Description != null && EF.Functions.ILike(c.Description, pattern)) ||
+                (!discover && db.Conversations.Any(ch => ch.CommunityId == c.Id && !ch.IsCommunityMainFeed &&
+                    ch.Title != null && EF.Functions.ILike(ch.Title, pattern))));
+        }
+        if (after is not null)
+        {
+            query = query.Where(c => (after.IsOfficial && !c.IsOfficial) ||
+                (c.IsOfficial == after.IsOfficial && (string.Compare(c.Name, after.Name) > 0 ||
+                 c.Name == after.Name && c.Id.CompareTo(after.Id) > 0)));
+        }
+
         var communities = await query
             .OrderByDescending(c => c.IsOfficial)
             .ThenBy(c => c.Name)
-            .Take(pageSize)
+            .ThenBy(c => c.Id)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
+        var hasMore = communities.Count > pageSize;
+        if (hasMore) communities.RemoveAt(pageSize);
 
         var commIds = communities.Select(c => c.Id).ToList();
 
@@ -112,6 +143,53 @@ public static class CommunityEndpoints
                 .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
 
         var channelsByComm = channelRows.GroupBy(c => c.CommunityId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+
+        // Batch-load the latest post preview only for communities the actor is authorized to read (never Discover non-members or Unverified Official).
+        var latestPostByComm = new Dictionary<Guid, object>();
+        if (!discover && commIds.Count > 0)
+        {
+            var readableCommIds = communities
+                .Where(c => myMemberships.ContainsKey(c.Id) && (!c.IsOfficial || actor.TrustLevel == TrustLevel.Verified))
+                .Select(c => c.Id)
+                .ToHashSet();
+            var readableChannelIds = channelRows
+                .Where(ch => ch.CommunityId.HasValue && readableCommIds.Contains(ch.CommunityId.Value))
+                .Select(ch => ch.Id)
+                .ToList();
+            var commByChannel = channelRows
+                .Where(ch => ch.CommunityId.HasValue)
+                .ToDictionary(ch => ch.Id, ch => ch.CommunityId!.Value);
+
+            if (readableChannelIds.Count > 0)
+            {
+                var recentPosts = await db.ChannelPosts.AsNoTracking()
+                    .Where(p => readableChannelIds.Contains(p.ConversationId) && p.DeletedAt == null)
+                    .GroupBy(p => p.ConversationId)
+                    .Select(g => g.OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.Id)
+                        .Select(p => new { p.ConversationId, p.Title, p.Body, p.AuthorUserId, p.CreatedAt })
+                        .First())
+                    .ToListAsync(ct);
+
+                var authorIds = recentPosts.Select(p => p.AuthorUserId).Distinct().ToList();
+                var authorNames = authorIds.Count == 0
+                    ? new Dictionary<Guid, string>()
+                    : await db.OrganizationPeople.AsNoTracking()
+                        .Where(u => authorIds.Contains(u.Id))
+                        .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+                foreach (var group in recentPosts.GroupBy(p => commByChannel[p.ConversationId]))
+                {
+                    var latest = group.OrderByDescending(p => p.CreatedAt).First();
+                    var sourceText = string.IsNullOrWhiteSpace(latest.Title) ? latest.Body : latest.Title;
+                    latestPostByComm[group.Key] = new
+                    {
+                        bodyPreview = ConversationEndpoints.FormatPreview(sourceText, "New post"),
+                        authorDisplayName = authorNames.GetValueOrDefault(latest.AuthorUserId, "Member"),
+                        createdAt = latest.CreatedAt
+                    };
+                }
+            }
+        }
 
         var items = communities.Select(c =>
         {
@@ -144,11 +222,15 @@ public static class CommunityEndpoints
                 mainFeedConversationId = mainFeed?.Id,
                 mainFeedPostingPolicy = mainFeed?.PostingPolicy.ToString() ?? PostingPolicy.Members.ToString(),
                 channels = subChannels,
+                latestPostPreview = latestPostByComm.GetValueOrDefault(c.Id),
                 createdAt = c.CreatedAt
             };
         }).ToList();
 
-        return Results.Ok(new { items });
+        var nextCursor = hasMore
+            ? PaginationGuard.EncodeCursor(new CommunityCursor(communities[^1].IsOfficial, communities[^1].Name, communities[^1].Id))
+            : null;
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> HandleCreateCommunityAsync(
@@ -255,8 +337,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
 
         if (community is null) return Results.NotFound(new { code = "community_not_found" });
 
@@ -293,6 +375,7 @@ public static class CommunityEndpoints
             await db.SaveChangesAsync(ct);
         }
 
+        await tx.CommitAsync(ct);
         return Results.Ok(new { joined = true, communityId });
     }
 
@@ -301,6 +384,7 @@ public static class CommunityEndpoints
         Guid communityId,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        string? cursor,
         int? limit,
         CancellationToken ct)
     {
@@ -326,6 +410,8 @@ public static class CommunityEndpoints
             return Results.Forbid();
         }
 
+        if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
+            after is not null && (after.Name is null || after.Id == Guid.Empty)) return PaginationGuard.InvalidCursor();
         var items = await db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == communityId && m.LeftAt == null)
             .Join(db.OrganizationPeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
@@ -334,14 +420,20 @@ public static class CommunityEndpoints
                 username = u.UserName ?? string.Empty,
                 displayName = u.DisplayName,
                 isUnverified = u.TrustLevel == TrustLevel.Unverified,
+                isActive = db.ActiveScopePeople.Any(active => active.Id == u.Id),
                 role = m.Role.ToString(),
                 joinedAt = m.JoinedAt
             })
-            .OrderBy(x => x.displayName)
-            .Take(pageSize)
+            .Where(x => after == null || string.Compare(x.displayName, after.Name) > 0 ||
+                x.displayName == after.Name && x.userId.CompareTo(after.Id) > 0)
+            .OrderBy(x => x.displayName).ThenBy(x => x.userId)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
 
-        return Results.Ok(new { items });
+        var hasMore = items.Count > pageSize;
+        if (hasMore) items.RemoveAt(pageSize);
+        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(items[^1].displayName, items[^1].userId)) : null;
+        return Results.Ok(new { items, nextCursor });
     }
 
     private static async Task<IResult> HandleAddMemberAsync(
@@ -356,8 +448,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var target = await db.OrganizationPeople.AsNoTracking()
@@ -398,6 +490,7 @@ public static class CommunityEndpoints
                 JoinedAt = now
             });
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             return Results.Ok(new { added = true });
         }
 
@@ -407,6 +500,7 @@ public static class CommunityEndpoints
             existing.Role = ResourceRole.Member;
             existing.JoinedAt = now;
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             return Results.Ok(new { added = true });
         }
 
@@ -425,8 +519,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers
@@ -457,6 +551,8 @@ public static class CommunityEndpoints
 
         targetMember.LeftAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
+        await SidebarEndpoints.RemoveSidebarItemAsync(db, targetUserId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
+        await tx.CommitAsync(ct);
         return Results.NoContent();
     }
 
@@ -473,8 +569,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers
@@ -506,6 +602,7 @@ public static class CommunityEndpoints
 
         targetMember.Role = request.IsAdmin ? ResourceRole.Admin : ResourceRole.Member;
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         return Results.Ok(new { userId = targetUserId, role = targetMember.Role.ToString() });
     }
@@ -520,6 +617,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        if (await LockCommunityAsync(db, communityId, ct) is null) return Results.Forbid();
         var myMember = await db.CommunityMembers
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         if (myMember is null) return Results.Forbid();
@@ -535,6 +634,8 @@ public static class CommunityEndpoints
 
         myMember.LeftAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
+        await SidebarEndpoints.RemoveSidebarItemAsync(db, actorId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
+        await tx.CommitAsync(ct);
         return Results.NoContent();
     }
 
@@ -544,20 +645,21 @@ public static class CommunityEndpoints
         TransferCommunityOwnerRequest request,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
         var targetMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == request.NewOwnerUserId && m.LeftAt == null, ct);
-        var targetUser = await db.OrganizationPeople.AsNoTracking()
-            .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId, ct);
+        var targetUser = await db.ActiveScopePeople.AsNoTracking()
+            .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId, ct);
 
         if (community is null || myMember is null || targetMember is null || targetUser is null)
         {
@@ -578,7 +680,6 @@ public static class CommunityEndpoints
 
         if (!allowed) return Results.Forbid();
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
         var transition = await ConditionalTransition.ExecuteAsync(
             token => db.CommunityMembers
                 .Where(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null && m.Role == ResourceRole.Owner)
@@ -599,11 +700,15 @@ public static class CommunityEndpoints
             return Results.Conflict(new { code = "ownership_transfer_conflict" });
         }
 
-        await db.CommunityMembers
-            .Where(m => m.CommunityId == communityId && m.UserId == request.NewOwnerUserId && m.LeftAt == null)
+        var promoted = await db.CommunityMembers
+            .Where(m => m.CommunityId == communityId && m.UserId == request.NewOwnerUserId && m.LeftAt == null &&
+                db.ActiveScopePeople.Any(active => active.Id == m.UserId &&
+                    (!community.IsOfficial || active.TrustLevel == TrustLevel.Verified)))
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.Role, ResourceRole.Owner), ct);
+        if (promoted != 1) return Results.Conflict(new { code = "ownership_transfer_conflict" });
 
         await tx.CommitAsync(ct);
+        await fanout.NotifyCommunityOwnershipChangedAsync(communityId, ct);
         return Results.Ok(new { newOwnerUserId = request.NewOwnerUserId });
     }
 
@@ -661,16 +766,17 @@ public static class CommunityEndpoints
         TransferCommunityOwnerRequest request,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Forbid();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
-        var targetUser = await db.OrganizationPeople.AsNoTracking()
-            .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId && u.OrganizationId == actor.OrganizationId && u.Status == AccountStatus.Active, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
+        var targetUser = await db.ActiveScopePeople.AsNoTracking()
+            .SingleOrDefaultAsync(u => u.Id == request.NewOwnerUserId, ct);
 
         if (community is null || targetUser is null) return Results.NotFound();
 
@@ -686,7 +792,6 @@ public static class CommunityEndpoints
         }
 
         var now = DateTimeOffset.UtcNow;
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         await db.CommunityMembers
             .Where(m => m.CommunityId == communityId && m.LeftAt == null && m.Role == ResourceRole.Owner)
@@ -726,6 +831,7 @@ public static class CommunityEndpoints
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await fanout.NotifyCommunityOwnershipChangedAsync(communityId, ct);
 
         return Results.Ok(new { communityId, newOwnerUserId = request.NewOwnerUserId });
     }
@@ -851,8 +957,8 @@ public static class CommunityEndpoints
         var actor = await db.FindOrganizationActorAsync(actorId, ct);
         if (actor is null) return Results.Unauthorized();
 
-        var community = await db.Communities.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
         var myMember = await db.CommunityMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
 
@@ -920,6 +1026,12 @@ public static class CommunityEndpoints
             await db.SaveChangesAsync(ct);
         }
 
+        await tx.CommitAsync(ct);
         return Results.Ok(new { communityId, departmentId = deptId, addedCount = added, unchangedCount = unchanged });
     }
+
+    private static Task<CommunityEntity?> LockCommunityAsync(NexusDbContext db, Guid id, CancellationToken ct) =>
+        db.Communities.FromSqlInterpolated($"""
+            SELECT * FROM communities WHERE id = {id} AND organization_id = {db.OrganizationScopeId} FOR UPDATE
+            """).AsNoTracking().SingleOrDefaultAsync(ct);
 }

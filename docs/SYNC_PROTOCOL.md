@@ -6,12 +6,12 @@
 
 PostgreSQL stores the authoritative state. SignalR delivers realtime updates and nudges — never the sole source of message persistence.
 
-The single-window SPA routes unified account-level Chat (`dm` and `group`) through `/api/personal` (with IndexedDB queue/cursors keyed by `${userId}:personal`), while Organization-scoped Communities, Channels, Directory, HR, and administration use `/api/organizations/{organizationId}` without page reloads. Scoped `/api/organizations/{organizationId}` conversation and sync routes remain enforced on the backend for explicit multi-scope isolation.
+The single-window SPA routes unified account-level Chat (`dm` and `group`) through `/api/personal` (with IndexedDB drafts, queue, and cursors scoped by `${userId}:personal`), while Organization-scoped Communities, Channels, Directory, HR, and administration use `/api/organizations/{organizationId}` without page reloads. Scoped `/api/organizations/{organizationId}` conversation and sync routes remain enforced on the backend for explicit multi-scope isolation.
 
 ## 1. Message Send & Ordering (`client_msg_id`, `seq`, `change_seq`)
 
 1. **Client-generated idempotency key (`client_msg_id`):**
-   - The client generates a **UUIDv7** `client_msg_id` once per intentional send, persists it in IndexedDB (offline queue), and reuses the exact same `client_msg_id` across every retry and device reconnect.
+   - The SPA generates a `client_msg_id` once per intentional send. It persists the key and original payload in IndexedDB and reuses them across retries and reconnects.
 2. **Single-transaction commit:**
    In one PostgreSQL transaction:
    - Verify account is `Active` and actor is authorized (`IAuthorizationService.Can`) as a current member (and DM not blocked).
@@ -28,6 +28,18 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
    - **`seq`** (monotonic per conversation): chronological message ordering, history cursor pagination (`GET /api/conversations/{id}/messages?beforeSeq=N&limit=50`, max **50**), and monotonic read cursor (`last_read_seq = GREATEST(last_read_seq, @seq)`).
    - **`change_seq`** (monotonic per conversation): captures **every** mutation — new messages, edits, recalls, reactions, pins, thread reply counts, membership changes, and read-cursor updates.
    - Fetch per-conversation deltas via `GET /api/conversations/{id}/changes?after=N&limit=50` (max **50** events per page).
+
+### Local drafts and send recovery (`M6.17`)
+
+- Each chat has its own local draft text and staged attachment references. Drafts survive reloads in the same browser profile. Attachment bytes stay in the existing server upload pipeline. On recovery, the client checks the pending IDs and asks the sender to attach unavailable files again.
+- An IndexedDB transaction moves the submitted draft into the queue with its original conversation, body, attachment IDs, and `client_msg_id`. A later composer edit keeps its own revision. Older text-only queue entries remain replayable. A network interruption queues an automatic retry on reconnect. For an HTTP failure, the sender can retry, move the content back to an empty composer, or dismiss it. A changed payload gets a new key.
+- Sign out clears that account's local chat database. Other tabs of the same account return to sign in. Group removal or leave evicts the conversation's draft, queued work, cursor, and in-memory messages. HTTP history and attachment checks also revoke local access when the realtime notice was missed.
+
+### Visible read state (`M6.18`)
+
+- The SPA evaluates displayed message rows in the selected conversation when the Chat destination and browser document are visible. It advances the read cursor to the highest displayed sequence through the existing read endpoint. Other tabs receive the monotonic cursor through `ReadStateUpdated`.
+- The active scroll position follows the end while the reader stays near it. Away from the end, the client restores the visible message and its offset across inserted history or newly delivered messages. **New messages** jumps to the latest displayed message and moves keyboard focus there.
+- SPA sends opt out of implicit send-time read advancement. Offline replay can commit while Chat is out of view and leaves read advancement to the visible view. Older send clients retain their existing behavior.
 
 ## 2. SignalR Fanout & Crash Recovery
 

@@ -8,6 +8,7 @@ using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
+using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 
@@ -71,6 +72,8 @@ public sealed class NexusDbContext
     public DbSet<ConversationMemberEntity> ConversationMembers => Set<ConversationMemberEntity>();
     public DbSet<CommunityEntity> Communities => Set<CommunityEntity>();
     public DbSet<CommunityMemberEntity> CommunityMembers => Set<CommunityMemberEntity>();
+    public DbSet<UserSidebarSectionEntity> UserSidebarSections => Set<UserSidebarSectionEntity>();
+    public DbSet<UserSidebarItemEntity> UserSidebarItems => Set<UserSidebarItemEntity>();
     public DbSet<MessageEntity> Messages => Set<MessageEntity>();
     public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
     public DbSet<ChannelPostEntity> ChannelPosts => Set<ChannelPostEntity>();
@@ -82,6 +85,12 @@ public sealed class NexusDbContext
     public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
     public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
     public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();
+    public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();
+    public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
+    public DbSet<ConversationNotificationPreference> ConversationNotificationPreferences => Set<ConversationNotificationPreference>();
+    public DbSet<NotificationQuietHours> NotificationQuietHours => Set<NotificationQuietHours>();
+    public DbSet<PushSubscriptionEntity> PushSubscriptions => Set<PushSubscriptionEntity>();
+    public DbSet<EmailDigestOptIn> EmailDigestOptIns => Set<EmailDigestOptIn>();
 
     [DbFunction("immutable_unaccent", Schema = "public")]
     public static string ImmutableUnaccent(string input) =>

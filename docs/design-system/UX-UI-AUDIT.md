@@ -1,9 +1,10 @@
 # Nexus UX/UI Audit
 
-- Latest review on 2026-11-23 after the Communities deployment. [Render](https://project-nexus-pqd8.onrender.com/) reported API `v1.0.0` and served `/assets/index-gXtmKNM2.js`.
+- Latest browser review on 2026-11-23 after the Communities deployment. [Render](https://project-nexus-pqd8.onrender.com/) reported API `v1.0.0` and served `/assets/index-gXtmKNM2.js`.
 - Browser review covered authentication, Chat, Directory, the Communities landing and Discover screens, and the Create community dialog. Viewports included 1440 × 900, 390 × 844, and 320 × 700 CSS pixels.
 - The test account had no Community memberships and Discover returned zero results. A disposable local fixture also stopped at browser sign-in because the local session cookie did not persist. Populated feeds, Channels, and role-specific actions remain pending live review.
 - [Nexus Design System & UX Conventions](README.md) defines the product’s design and accessibility standards.
+- A source review on 2026-11-24 identified follow-up work for Chat and Files pagination, drafts, read and scroll behavior, IME input, and UI entry points for existing operations. The [Collaboration UX plan](../implementation-plan/m6-collaboration-ux/PLAN-m6-collaboration-ux.md) holds the implementation items. `M6.24` covers browser retesting of the findings below and the populated screens that still need live review.
 
 ## Enterprise UX benchmark
 
@@ -27,15 +28,16 @@
 | UXA-01 | P1 | Authentication | Left and Right Arrow did not navigate between the authentication tabs. | Reviewed | Verified fixed |
 | UXA-02 | P1 | Group chat | Dismissing the creation dialog with Escape left keyboard focus on the page body. | Reviewed | Verified fixed |
 | UXA-03 | P2 | Conversation files | The drawer briefly reported zero files while fetching existing files. | Reviewed | Verified fixed |
-| UXA-04 | P1 | Main navigation | Visible and accessible labels disagree, and the current destination is conveyed visually only. | Reviewed | Ready for retest |
-| UXA-05 | P1 | UI copy | `colleague` and `colleagues` appear in core task labels and instructions. | Reviewed | Ready for retest |
-| UXA-06 | P1 | Chat | `New DM` opens Directory without focusing search, and `Group` obscures the create action. | Reviewed | Ready for retest |
-| UXA-07 | P2 | Communities layout | The sidebar title and toolbar sit flush against the rail and use a separate row from the title. | Reviewed | Ready for retest |
-| UXA-08 | P1 | Communities actions | Create and Discover repeat at three entry points on the same desktop screen, and Discover has inconsistent labels. | Reviewed | Ready for retest |
-| UXA-09 | P2 | Directory layout | Search is 31 px tall beside 40 px filters and buttons in the desktop toolbar. | Reviewed | Ready for retest |
-| UXA-10 | P1 | Environment notice | The trial notice clips its text and dismiss control on desktop and is hidden at 390 px. | Reviewed | Ready for retest |
-| UXA-11 | P2 | Narrow Chat | Persistent Files, Report, and Block buttons crowd the conversation header at 320 px. | Reviewed | Ready for retest |
-| UXA-12 | P1 | Community visibility | The default `Public` option describes its audience indirectly and does not explain what people can do with that visibility. | Reviewed | Ready for retest |
+| UXA-04 | P1 | Main navigation | Visible and accessible labels disagree, and the current destination is conveyed visually only. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-05 | P1 | UI copy | `colleague` and `colleagues` appear in core task labels and instructions. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-06 | P1 | Chat | `New DM` opens Directory without focusing search, and `Group` obscures the create action. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-07 | P2 | Communities layout | The sidebar title and toolbar sit flush against the rail and use a separate row from the title. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-08 | P1 | Communities actions | Create and Discover repeat at three entry points on the same desktop screen, and Discover has inconsistent labels. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-09 | P2 | Directory layout | Search is 31 px tall beside 40 px filters and buttons in the desktop toolbar. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-10 | P1 | Environment notice | The trial notice clips its text and dismiss control on desktop and is hidden at 390 px. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-11 | P2 | Narrow Chat | Persistent Files, Report, and Block buttons crowd the conversation header at 320 px. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-12 | P1 | Community visibility | The default `Public` option describes its audience indirectly and does not explain what people can do with that visibility. | Reviewed | Verified fixed (2026-11-24, M6.24 local populated host) |
+| UXA-13 | P1 | Narrow Community feed | The title and membership metadata are clipped when a populated feed header wraps at narrow widths. | Reviewed in the local M4.2 browser fixture on 2026-11-24 | Verified fixed (2026-11-24, M6.24 local populated host) |
 
 `Reviewed` means the finding was reproduced in the browser. Use `Needs review` for a new or unconfirmed report. Use `Open` for a fix still to be made, `Ready for retest` when a fix is available, and `Verified fixed` after repeating the check successfully. Record the retest date and environment on the finding.
 

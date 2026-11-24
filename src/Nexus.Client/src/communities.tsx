@@ -1,5 +1,5 @@
 import { orgApiPath, orgFetch } from './scope';
-import { FormEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, MouseEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BarChart2,
@@ -10,7 +10,10 @@ import {
   ChevronRight,
   Compass,
   Download,
+  Eye,
+  FolderPlus,
   Hash,
+  Link2,
   Lock,
   Megaphone,
   MessageSquare,
@@ -21,13 +24,21 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Star,
   Trash2,
   UserPlus,
   Users
 } from 'lucide-react';
 import { CommunityFeedDelta } from './chat';
+import { CommunityJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
+import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
+import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from './sidebarControls';
 import { OrganizationItem } from './organizationControls';
 import { renderSafeMarkdown } from './markdown';
+import { ConversationNotificationButton } from './notificationPreferences';
+import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
+import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
+import { loadOrganizationDepartments, personKey, searchPeopleScope } from './peopleDirectory';
 import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
 
 export interface CommunityChannelDto {
@@ -52,7 +63,37 @@ export interface CommunityItemDto {
   mainFeedConversationId?: string | null;
   mainFeedPostingPolicy: string;
   channels: CommunityChannelDto[];
+  latestPostPreview?: {
+    bodyPreview: string;
+    authorDisplayName: string;
+    createdAt: string;
+  } | null;
   createdAt: string;
+}
+
+const communityKey = (community: CommunityItemDto) => community.id;
+const communityMemberKey = (member: CommunityMemberDto) => member.userId;
+
+async function readCommunityPage(org: OrganizationItem, params: URLSearchParams, signal?: AbortSignal) {
+  const response = await orgFetch(org.id, `/api/communities?${params}`, { signal });
+  const page = await readCursorPage<Omit<CommunityItemDto, 'organizationId' | 'organizationName'>>(response, 'Unable to load communities.');
+  return {
+    items: page.items.map(item => ({ ...item, organizationId: org.id, organizationName: org.name })),
+    next: page.next
+  };
+}
+
+async function readCommunityPages(organizations: OrganizationItem[], discover: boolean, query: string,
+  after: Record<string, string> | null, signal: AbortSignal): Promise<CursorPage<CommunityItemDto, Record<string, string>>> {
+  const pages = await Promise.all(organizations.filter(org => !after || after[org.id]).map(async org => {
+    const params = new URLSearchParams({ limit: '50' });
+    if (discover) params.set('discover', 'true');
+    if (query) params.set('q', query);
+    if (after?.[org.id]) params.set('cursor', after[org.id]);
+    return { org, ...await readCommunityPage(org, params, signal) };
+  }));
+  const next = Object.fromEntries(pages.filter(page => page.next).map(page => [page.org.id, page.next as string]));
+  return { items: pages.flatMap(page => page.items), next: Object.keys(next).length ? next : null };
 }
 
 interface PostCommentDto {
@@ -119,6 +160,8 @@ interface CommunityMemberDto {
   username: string;
   displayName: string;
   avatarUrl?: string | null;
+  isUnverified: boolean;
+  isActive?: boolean;
   role: string;
   joinedAt: string;
 }
@@ -141,7 +184,10 @@ interface CommunitiesWorkspaceProps {
   currentUserId: string;
   currentDisplayName: string;
   organizations: OrganizationItem[];
+  requestedChannel: { id: string } | null;
+  jumpTarget?: CommunityJumpTarget | null;
   feedListenerRef: RefObject<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>;
+  onOpenContentLink?: (token: string) => void;
   onOpenCreateWorkspace: () => void;
   onOpenJoinWorkspace: () => void;
   onOpenWorkspaceSettings: (org: OrganizationItem) => void;
@@ -178,30 +224,63 @@ export function CommunitiesWorkspace({
   currentUserId,
   currentDisplayName,
   organizations,
+  requestedChannel,
+  jumpTarget,
   feedListenerRef,
+  onOpenContentLink,
   onOpenCreateWorkspace,
   onOpenJoinWorkspace,
   onOpenWorkspaceSettings
 }: CommunitiesWorkspaceProps) {
-  const [communities, setCommunities] = useState<CommunityItemDto[]>([]);
-  const [discoverCommunities, setDiscoverCommunities] = useState<CommunityItemDto[]>([]);
   const [discoverMode, setDiscoverMode] = useState(false);
-  const [loadingDiscover, setLoadingDiscover] = useState(false);
   const [sidebarFilter, setSidebarFilter] = useState('');
+  const normalizedFilter = sidebarFilter.trim().toLowerCase();
+  const workspaceKey = JSON.stringify([currentUserId, organizations.map(org => org.id)]);
+  const memberSearch = discoverMode ? '' : normalizedFilter;
+  const communitiesPage = useCursorList<CommunityItemDto, Record<string, string>>(
+    organizations.length ? JSON.stringify([workspaceKey, memberSearch]) : null,
+    (cursor, signal) => readCommunityPages(organizations, false, memberSearch, cursor, signal),
+    communityKey, memberSearch ? 180 : 0);
+  const discoverPage = useCursorList<CommunityItemDto, Record<string, string>>(
+    discoverMode && organizations.length ? JSON.stringify([workspaceKey, normalizedFilter]) : null,
+    (cursor, signal) => readCommunityPages(organizations, true, normalizedFilter, cursor, signal),
+    communityKey, normalizedFilter ? 180 : 0);
+  const communities = communitiesPage.items;
+  const discoverCommunities = discoverPage.items;
+  const [focusedCommunity, setFocusedCommunity] = useState<CommunityItemDto | null>(null);
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({});
-  const [orgDirectoryByOrg, setOrgDirectoryByOrg] = useState<Record<string, DirectoryUserLite[]>>({});
   const [orgDepartmentsByOrg, setOrgDepartmentsByOrg] = useState<Record<string, DepartmentLite[]>>({});
   const [createOrgId, setCreateOrgId] = useState<string>('');
 
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
+  const activeCommunityRef = useRef(selectedCommunityId);
+  activeCommunityRef.current = selectedCommunityId;
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const openedChannel = useRef<{ id: string } | null>(null);
   const activeFeedRef = useRef(selectedConversationId);
   activeFeedRef.current = selectedConversationId;
   const orgById = useMemo(() => new Map(organizations.map(o => [o.id, o])), [organizations]);
   const communityOrgByConvRef = useRef(new Map<string, string>());
 
   const [posts, setPosts] = useState<ChannelPostDto[]>([]);
-  const postsCacheRef = useRef(new Map<string, { items: ChannelPostDto[]; canPost: boolean; canManage: boolean }>());
+  const [postsNextCursor, setPostsNextCursor] = useState<string | null>(null);
+  const [postsHasNewer, setPostsHasNewer] = useState(false);
+  const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
+  const [highlightedHeader, setHighlightedHeader] = useState(false);
+  const feedContainerRef = useRef<HTMLDivElement | null>(null);
+  const stageHeaderRef = useRef<HTMLElement | null>(null);
+  const handledJumpNonceRef = useRef(0);
+  const pendingJumpRef = useRef<CommunityJumpTarget | null>(null);
+  const [loadingMorePosts, setLoadingMorePosts] = useState(false);
+  const [postsError, setPostsError] = useState<{ message: string; append: boolean } | null>(null);
+  const inFlightPostIdsRef = useRef(new Set<string>());
+  const postsCacheRef = useRef(new Map<string, {
+    items: ChannelPostDto[];
+    nextCursor: string | null;
+    pages: number;
+    canPost: boolean;
+    canManage: boolean;
+  }>());
   const initialCommunitySelectedRef = useRef(false);
   const [pendingReactions, setPendingReactions] = useState<Record<string, ReactionChange>>({});
   const reactionRequests = useRef(new Set<string>());
@@ -216,9 +295,10 @@ export function CommunitiesWorkspace({
   const [loadingPosts, setLoadingPosts] = useState(false);
 
   const [membersOpen, setMembersOpen] = useState(false);
-  const [members, setMembers] = useState<CommunityMemberDto[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [ownershipTransfer, setOwnershipTransfer] = useState<OwnershipTransfer | null>(null);
+  const communityMembersHeading = useRef<HTMLHeadingElement | null>(null);
   const [addMemberUserId, setAddMemberUserId] = useState('');
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [mappedDeptId, setMappedDeptId] = useState('');
 
   // Composer state
@@ -250,14 +330,30 @@ export function CommunitiesWorkspace({
   const [notice, setNotice] = useState('');
 
   const selectedCommunity = useMemo(
-    () => communities.find(c => c.id === selectedCommunityId) ?? null,
-    [communities, selectedCommunityId]
+    () => communities.find(c => c.id === selectedCommunityId) ??
+      (focusedCommunity?.id === selectedCommunityId && orgById.has(focusedCommunity.organizationId) ? focusedCommunity : null),
+    [communities, focusedCommunity, orgById, selectedCommunityId]
   );
+  const selectedSummaryRef = useRef(selectedCommunity);
+  selectedSummaryRef.current = selectedCommunity;
 
   const activeOrgId = selectedCommunity?.organizationId ?? null;
   const activeOrg = activeOrgId ? orgById.get(activeOrgId) ?? null : null;
-  const directoryUsers = activeOrgId ? (orgDirectoryByOrg[activeOrgId] ?? []) : [];
   const departments = activeOrgId ? (orgDepartmentsByOrg[activeOrgId] ?? []) : [];
+  const memberList = useCursorList(membersOpen && activeOrgId && selectedCommunityId
+    ? JSON.stringify([activeOrgId, selectedCommunityId]) : null,
+    async (cursor, signal) => {
+      const params = new URLSearchParams({ limit: '50' });
+      if (cursor) params.set('cursor', cursor);
+      const response = await orgFetch(activeOrgId!, `/api/communities/${selectedCommunityId}/members?${params}`, { signal });
+      return readCursorPage<CommunityMemberDto>(response, 'Unable to load community members.');
+    }, communityMemberKey);
+  const { items: members, loading: loadingMembers, refresh: refreshMemberList } = memberList;
+  const addCandidates = useCursorList(membersOpen && activeOrgId && selectedCommunityId && canManage
+    ? JSON.stringify([activeOrgId, selectedCommunityId, memberSearchQuery]) : null,
+    (cursor, signal) => searchPeopleScope<DirectoryUserLite>(activeOrgId!, memberSearchQuery, '', cursor, signal, selectedCommunityId ?? undefined),
+    personKey, memberSearchQuery.trim() ? 180 : 0);
+  const { items: availableToAdd, refresh: refreshAddCandidates } = addCandidates;
 
   const selectedSubChannel = useMemo(() => {
     if (!selectedCommunity || !selectedConversationId) return null;
@@ -265,67 +361,55 @@ export function CommunitiesWorkspace({
     return selectedCommunity.channels.find(ch => ch.id === selectedConversationId) ?? null;
   }, [selectedCommunity, selectedConversationId]);
 
-  const loadCommunities = useCallback(async () => {
-    if (organizations.length === 0) {
-      setCommunities([]);
-      communityOrgByConvRef.current.clear();
-      return [];
-    }
-    const results = await Promise.all(
-      organizations.map(async org => {
-        const res = await orgFetch(org.id, '/api/communities?limit=50', { credentials: 'same-origin' });
-        if (!res.ok) return [] as CommunityItemDto[];
-        const data = await res.json();
-        return ((data.items ?? []) as Omit<CommunityItemDto, 'organizationId' | 'organizationName'>[]).map(item => ({
-          ...item,
-          organizationId: org.id,
-          organizationName: org.name
-        }));
-      })
-    );
-    const items = results.flat();
+  useEffect(() => {
     const convMap = new Map<string, string>();
-    for (const comm of items) {
+    const accessible = selectedCommunity ? [...communities, selectedCommunity] : communities;
+    for (const comm of accessible) {
       if (comm.mainFeedConversationId) convMap.set(comm.mainFeedConversationId, comm.organizationId);
       for (const ch of comm.channels) convMap.set(ch.id, comm.organizationId);
     }
     communityOrgByConvRef.current = convMap;
-    setCommunities(items);
-    return items;
-  }, [organizations]);
+  }, [communities, selectedCommunity]);
 
-  const loadDiscover = useCallback(async () => {
-    if (organizations.length === 0) {
-      setDiscoverCommunities([]);
-      return;
-    }
-    setLoadingDiscover(true);
-    try {
-      const results = await Promise.all(
-        organizations.map(async org => {
-          const res = await orgFetch(org.id, '/api/communities?discover=true&limit=50', { credentials: 'same-origin' });
-          if (!res.ok) return [] as CommunityItemDto[];
-          const data = await res.json();
-          return ((data.items ?? []) as Omit<CommunityItemDto, 'organizationId' | 'organizationName'>[]).map(item => ({
-            ...item,
-            organizationId: org.id,
-            organizationName: org.name
-          }));
-        })
-      );
-      setDiscoverCommunities(results.flat());
-    } finally {
-      setLoadingDiscover(false);
-    }
-  }, [organizations]);
+  const lookupCommunity = useCallback(async (orgId: string, id: string, signal?: AbortSignal) => {
+    const org = orgById.get(orgId);
+    if (!org) return null;
+    const page = await readCommunityPage(org, new URLSearchParams({ limit: '1', communityId: id }), signal);
+    return page.items[0] ?? null;
+  }, [orgById]);
 
-  const loadPosts = useCallback(async function loadPosts(conversationId: string, background = false, explicitOrgId?: string) {
+  const { refresh: refreshCommunityPage } = communitiesPage;
+  const { refresh: loadDiscover } = discoverPage;
+  const loadCommunities = useCallback(async () => {
+    const visible = await refreshCommunityPage();
+    const selected = selectedSummaryRef.current;
+    if (!selected || activeCommunityRef.current !== selected.id) return;
+    const refreshed = visible?.find(item => item.id === selected.id) ??
+      await lookupCommunity(selected.organizationId, selected.id).catch(() => undefined);
+    if (refreshed === undefined || activeCommunityRef.current !== selected.id) return;
+    setFocusedCommunity(refreshed);
+    if (!refreshed) {
+      setSelectedCommunityId(null);
+      setSelectedConversationId(null);
+      setMembersOpen(false);
+    }
+  }, [lookupCommunity, refreshCommunityPage]);
+
+  const loadPosts = useCallback(async function loadPosts(
+    conversationId: string,
+    background = false,
+    explicitOrgId?: string,
+    append = false
+  ) {
     if (activeFeedRef.current !== conversationId) return;
     const orgId = explicitOrgId ?? communityOrgByConvRef.current.get(conversationId);
     if (!orgId) return;
 
+    const cached = postsCacheRef.current.get(conversationId);
+    if (append && (!cached?.nextCursor || feedRequestRef.current?.conversationId === conversationId)) return;
+
     const previous = feedRequestRef.current;
-    if (background && previous?.conversationId === conversationId) {
+    if (background && !append && previous?.conversationId === conversationId) {
       previous.refreshQueued = true;
       return;
     }
@@ -333,115 +417,219 @@ export function CommunitiesWorkspace({
     previous?.controller.abort();
     const request = { conversationId, controller: new AbortController(), refreshQueued: false, confirmedReactions: [] as ReactionChange[] };
     feedRequestRef.current = request;
-    if (!background) setLoadingPosts(true);
+    setPostsError(null);
+    if (append) setLoadingMorePosts(true);
+    else if (!background) setLoadingPosts(true);
 
     try {
-      const res = await orgFetch(orgId, `/api/channels/${conversationId}/posts?limit=50`, {
-        credentials: 'same-origin',
-        signal: request.controller.signal
-      });
-      const data = await res.json().catch(() => ({}));
+      const merged = new Map<string, ChannelPostDto>(
+        (append ? cached?.items ?? [] : []).map(post => [post.id, post])
+      );
+      const pagesToRead = append ? 1 : Math.max(1, cached?.pages ?? 1);
+      let cursor: string | null = append ? cached?.nextCursor ?? null : null;
+      let pagesRead = 0;
+      let nextCanPost = cached?.canPost ?? false;
+      let nextCanManage = cached?.canManage ?? false;
+
+      do {
+        const params = new URLSearchParams({ limit: '50' });
+        if (cursor) params.set('cursor', cursor);
+        const res = await orgFetch(orgId, `/api/channels/${conversationId}/posts?${params}`, {
+          credentials: 'same-origin',
+          signal: request.controller.signal
+        });
+        const data = await res.json().catch(() => ({}));
+        if (request.controller.signal.aborted || activeFeedRef.current !== conversationId) return;
+
+        if (!res.ok) {
+          const message = data.message || 'Unable to load posts.';
+          const lostAccess = res.status === 401 || res.status === 403 || res.status === 404;
+          if (lostAccess) {
+            postsCacheRef.current.delete(conversationId);
+            setPosts([]);
+            setPostsNextCursor(null);
+            setCanPost(false);
+            setCanManage(false);
+          }
+          setPostsError({ message, append: !lostAccess && append });
+          setError(message);
+          return;
+        }
+
+        const items: ChannelPostDto[] = data.items ?? [];
+        for (const post of items) {
+          const adjusted = request.confirmedReactions.reduce(
+            (current, change) => change.postId === current.id ? applyReaction(current, change) : current,
+            post
+          );
+          merged.set(adjusted.id, adjusted);
+        }
+        nextCanPost = Boolean(data.canPost);
+        nextCanManage = Boolean(data.canManage);
+        cursor = typeof data.nextCursor === 'string' && data.nextCursor.length > 0 ? data.nextCursor : null;
+        pagesRead += 1;
+      } while (cursor !== null && pagesRead < pagesToRead);
+
       if (request.controller.signal.aborted || activeFeedRef.current !== conversationId) return;
 
-      if (res.ok) {
-        const items: ChannelPostDto[] = data.items ?? [];
-        const nextPosts = items.map(post => request.confirmedReactions.reduce(
-          (current, change) => change.postId === current.id ? applyReaction(current, change) : current,
-          post
-        ));
-        const nextCanPost = Boolean(data.canPost);
-        const nextCanManage = Boolean(data.canManage);
-        postsCacheRef.current.set(conversationId, { items: nextPosts, canPost: nextCanPost, canManage: nextCanManage });
-        setPosts(nextPosts);
-        setCanPost(nextCanPost);
-        setCanManage(nextCanManage);
-      } else {
-        if (res.status === 401 || res.status === 403 || res.status === 404) {
-          setPosts([]);
-          setCanPost(false);
-          setCanManage(false);
+      let nextPosts = [...merged.values()];
+      if (!append) {
+        const stillInFlight = (postsCacheRef.current.get(conversationId)?.items ?? [])
+          .filter(post => post.pending && inFlightPostIdsRef.current.has(post.id));
+        if (stillInFlight.length > 0) {
+          const pinned = nextPosts.filter(p => p.isPinned);
+          const regular = nextPosts.filter(p => !p.isPinned);
+          nextPosts = [...pinned, ...stillInFlight, ...regular];
         }
-        setError(data.message || 'Unable to load posts.');
       }
+      const totalPages = append ? (cached?.pages ?? 0) + pagesRead : pagesRead;
+      postsCacheRef.current.set(conversationId, {
+        items: nextPosts,
+        nextCursor: cursor,
+        pages: totalPages,
+        canPost: nextCanPost,
+        canManage: nextCanManage
+      });
+      setPosts(nextPosts);
+      setPostsNextCursor(cursor);
+      if (!append) setPostsHasNewer(false);
+      setCanPost(nextCanPost);
+      setCanManage(nextCanManage);
     } catch {
       if (!request.controller.signal.aborted && activeFeedRef.current === conversationId) {
+        setPostsError({ message: 'Unable to load posts.', append });
         setError('Unable to load posts.');
       }
     } finally {
       if (feedRequestRef.current === request) {
         feedRequestRef.current = null;
         setLoadingPosts(false);
+        setLoadingMorePosts(false);
         if (request.refreshQueued) void loadPosts(conversationId, true, orgId);
       }
     }
   }, []);
 
-  const loadMembers = useCallback(async (orgId: string, communityId: string) => {
-    setLoadingMembers(true);
+  const loadPostsAround = useCallback(async (orgId: string, conversationId: string, postId: string): Promise<boolean> => {
+    feedRequestRef.current?.controller.abort();
+    const request = { conversationId, controller: new AbortController(), refreshQueued: false, confirmedReactions: [] as ReactionChange[] };
+    feedRequestRef.current = request;
+    setPostsError(null);
+    setLoadingPosts(true);
     try {
-      const [membersRes, dirRes, deptRes] = await Promise.all([
-        orgFetch(orgId, `/api/communities/${communityId}/members?limit=50`, { credentials: 'same-origin' }),
-        orgDirectoryByOrg[orgId]
-          ? Promise.resolve(null)
-          : orgFetch(orgId, '/api/people/directory?limit=50', { credentials: 'same-origin' }),
-        orgDepartmentsByOrg[orgId]
-          ? Promise.resolve(null)
-          : orgFetch(orgId, '/api/org/departments?limit=50', { credentials: 'same-origin' })
-      ]);
-      if (membersRes.ok) {
-        const data = await membersRes.json();
-        setMembers(data.items ?? []);
+      const res = await orgFetch(orgId, `/api/channels/${conversationId}/posts?aroundPostId=${encodeURIComponent(postId)}&limit=50`, {
+        credentials: 'same-origin',
+        signal: request.controller.signal
+      });
+      const data = await res.json().catch(() => ({}));
+      if (request.controller.signal.aborted || activeFeedRef.current !== conversationId) return false;
+      if (!res.ok) {
+        const message = data.message || 'Unable to load the linked post.';
+        setPostsError({ message, append: false });
+        setError(message);
+        return false;
       }
-      if (dirRes && dirRes.ok) {
-        const dirData = await dirRes.json();
-        setOrgDirectoryByOrg(prev => ({ ...prev, [orgId]: dirData.items ?? [] }));
+      const items: ChannelPostDto[] = data.items ?? [];
+      const cursor = typeof data.nextCursor === 'string' && data.nextCursor.length > 0 ? data.nextCursor : null;
+      const hasNewer = Boolean(data.hasNewer);
+      const nextCanPost = Boolean(data.canPost);
+      const nextCanManage = Boolean(data.canManage);
+      if (!hasNewer) {
+        postsCacheRef.current.set(conversationId, {
+          items,
+          nextCursor: cursor,
+          pages: 1,
+          canPost: nextCanPost,
+          canManage: nextCanManage
+        });
       }
-      if (deptRes && deptRes.ok) {
-        const deptData = await deptRes.json();
-        setOrgDepartmentsByOrg(prev => ({ ...prev, [orgId]: deptData.items ?? [] }));
+      setPosts(items);
+      setPostsNextCursor(cursor);
+      setPostsHasNewer(hasNewer);
+      setCanPost(nextCanPost);
+      setCanManage(nextCanManage);
+      return true;
+    } catch {
+      if (!request.controller.signal.aborted && activeFeedRef.current === conversationId) {
+        setPostsError({ message: 'Unable to load the linked post.', append: false });
+        setError('Unable to load the linked post.');
       }
+      return false;
     } finally {
-      setLoadingMembers(false);
-    }
-  }, [orgDepartmentsByOrg, orgDirectoryByOrg]);
-
-  useEffect(() => {
-    void loadCommunities().then(items => {
-      if (items.length === 0) {
-        setSelectedCommunityId(null);
-        setSelectedConversationId(null);
-        initialCommunitySelectedRef.current = false;
-        return;
+      if (feedRequestRef.current === request) {
+        feedRequestRef.current = null;
+        setLoadingPosts(false);
       }
-      if (!initialCommunitySelectedRef.current || !items.some(c => c.id === selectedCommunityId)) {
-        initialCommunitySelectedRef.current = true;
-        setSelectedCommunityId(items[0].id);
-        if (items[0].mainFeedConversationId) {
-          setSelectedConversationId(items[0].mainFeedConversationId);
-        }
-      }
-    });
-  }, [loadCommunities]);
-
-  useEffect(() => {
-    if (discoverMode) {
-      void loadDiscover();
     }
-  }, [discoverMode, loadDiscover]);
+  }, []);
+
+  const loadMembers = useCallback(async (communityId: string) => {
+    if (activeCommunityRef.current === communityId) {
+      await Promise.all([refreshMemberList(), refreshAddCandidates()]);
+    }
+  }, [refreshAddCandidates, refreshMemberList]);
 
   useEffect(() => {
+    if (!membersOpen || !activeOrgId || orgDepartmentsByOrg[activeOrgId]) return;
+    const controller = new AbortController();
+    void loadOrganizationDepartments<DepartmentLite>(activeOrgId, controller.signal)
+      .then(items => {
+        if (!controller.signal.aborted) setOrgDepartmentsByOrg(previous => ({ ...previous, [activeOrgId]: items }));
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [membersOpen, activeOrgId, orgDepartmentsByOrg]);
+
+  useEffect(() => {
+    if (discoverMode || memberSearch || communitiesPage.loading || initialCommunitySelectedRef.current || selectedCommunityId) return;
+    const first = communities[0];
+    if (!first) return;
+    initialCommunitySelectedRef.current = true;
+    setFocusedCommunity(first);
+    setSelectedCommunityId(first.id);
+    setSelectedConversationId(first.mainFeedConversationId ?? null);
+  }, [communities, communitiesPage.loading, discoverMode, memberSearch, selectedCommunityId]);
+
+  useEffect(() => {
+    if (!requestedChannel || openedChannel.current === requestedChannel) return;
+    const controller = new AbortController();
+    async function openRequestedChannel(channel: { id: string }) {
+      const cached = communities.find(item => item.mainFeedConversationId === channel.id ||
+        item.channels.some(candidate => candidate.id === channel.id));
+      const community = cached ?? (await Promise.all(organizations.map(async org => {
+        const page = await readCommunityPage(org, new URLSearchParams({ limit: '1', conversationId: channel.id }), controller.signal)
+          .catch(() => null);
+        return page?.items[0];
+      }))).find(item => item);
+      if (!community || controller.signal.aborted) return;
+      openedChannel.current = channel;
+      setDiscoverMode(false);
+      setFocusedCommunity(community);
+      setSelectedCommunityId(community.id);
+      setSelectedConversationId(channel.id);
+    }
+    void openRequestedChannel(requestedChannel);
+    return () => controller.abort();
+  }, [communities, organizations, requestedChannel]);
+
+  useEffect(() => {
+    setPostsError(null);
+    setLoadingMorePosts(false);
+    setPostsHasNewer(false);
     const cached = selectedConversationId ? postsCacheRef.current.get(selectedConversationId) : undefined;
     if (cached) {
       setPosts(cached.items);
+      setPostsNextCursor(cached.nextCursor);
       setCanPost(cached.canPost);
       setCanManage(cached.canManage);
       setLoadingPosts(false);
     } else {
       setPosts([]);
+      setPostsNextCursor(null);
       setCanPost(false);
       setCanManage(false);
     }
-    if (selectedConversationId) {
+    if (selectedConversationId && pendingJumpRef.current?.conversationId !== selectedConversationId) {
       void loadPosts(selectedConversationId, Boolean(cached));
     }
 
@@ -450,6 +638,65 @@ export function CommunitiesWorkspace({
       feedRequestRef.current = null;
     };
   }, [selectedConversationId, loadPosts]);
+
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.nonce === handledJumpNonceRef.current) return;
+    handledJumpNonceRef.current = jumpTarget.nonce;
+    pendingJumpRef.current = jumpTarget;
+    const controller = new AbortController();
+    let highlightTimer: number | null = null;
+
+    async function runJump(target: CommunityJumpTarget) {
+      const cachedComm = communities.find(c => c.id === target.communityId)
+        ?? await lookupCommunity(target.organizationId, target.communityId, controller.signal).catch(() => null);
+      if (!cachedComm || controller.signal.aborted) {
+        if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
+        return;
+      }
+      setDiscoverMode(false);
+      setFocusedCommunity(cachedComm);
+      setSelectedCommunityId(cachedComm.id);
+      activeCommunityRef.current = cachedComm.id;
+      setSelectedConversationId(target.conversationId);
+      activeFeedRef.current = target.conversationId;
+
+      if (target.postId) {
+        const alreadyLoaded = postsCacheRef.current.get(target.conversationId)?.items.some(p => p.id === target.postId);
+        if (!alreadyLoaded) {
+          await loadPostsAround(target.organizationId, target.conversationId, target.postId);
+        }
+        if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
+        if (controller.signal.aborted) return;
+        setHighlightedPostId(target.postId);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const el = feedContainerRef.current?.querySelector<HTMLElement>(`[data-post-id="${target.postId}"]`);
+            if (el) {
+              el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              el.focus({ preventScroll: true });
+            }
+          });
+        });
+        highlightTimer = window.setTimeout(() => {
+          setHighlightedPostId(current => current === target.postId ? null : current);
+        }, 4000);
+      } else {
+        if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
+        void loadPosts(target.conversationId, false, target.organizationId);
+        setHighlightedHeader(true);
+        requestAnimationFrame(() => {
+          stageHeaderRef.current?.focus({ preventScroll: true });
+        });
+        highlightTimer = window.setTimeout(() => setHighlightedHeader(false), 3000);
+      }
+    }
+
+    void runJump(jumpTarget);
+    return () => {
+      controller.abort();
+      if (highlightTimer !== null) window.clearTimeout(highlightTimer);
+    };
+  }, [communities, jumpTarget, loadPosts, loadPostsAround, lookupCommunity]);
 
   const updateFeedPosts = useCallback((conversationId: string, updater: (prev: ChannelPostDto[]) => ChannelPostDto[]) => {
     const cached = postsCacheRef.current.get(conversationId);
@@ -464,10 +711,20 @@ export function CommunitiesWorkspace({
 
   useEffect(() => {
     feedListenerRef.current = (changedConversationId, delta) => {
+      if (!changedConversationId) void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
       const targetId = changedConversationId ?? activeFeedRef.current;
       if (!targetId) return;
 
       if (delta && changedConversationId) {
+        if (delta.type === 'ownership') {
+          void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
+          if (activeCommunityRef.current === delta.communityId && activeFeedRef.current) {
+            void loadPosts(activeFeedRef.current, true);
+            if (delta.communityId) void loadMembers(delta.communityId);
+          }
+          return;
+        }
+
         if (delta.type === 'reaction' && delta.emoji && typeof delta.reacted === 'boolean') {
           if (delta.userId === currentUserId) return;
           updateFeedPosts(changedConversationId, prev => prev.map(post => {
@@ -508,20 +765,55 @@ export function CommunitiesWorkspace({
       }
     };
     return () => { feedListenerRef.current = null; };
-  }, [currentUserId, feedListenerRef, loadPosts, updateFeedPosts]);
+  }, [currentUserId, feedListenerRef, loadCommunities, loadMembers, loadPosts, updateFeedPosts]);
+
+  useEffect(() => {
+    setMemberSearchQuery('');
+    setAddMemberUserId('');
+    setOwnershipTransfer(null);
+  }, [selectedCommunityId]);
 
   useEffect(() => {
     if (selectedCommunity) {
       setMappedDeptId(selectedCommunity.mappedDepartmentId ?? '');
-      if (membersOpen) {
-        void loadMembers(selectedCommunity.organizationId, selectedCommunity.id);
-      }
     }
-  }, [selectedCommunity, membersOpen, loadMembers]);
+  }, [selectedCommunity]);
+
+  function handleInlineContentLinkClick(e: MouseEvent<HTMLElement>) {
+    if (!onOpenContentLink) return;
+    const anchor = (e.target as HTMLElement | null)?.closest('a');
+    if (!anchor?.href) return;
+    const token = extractContentLinkToken(anchor.href);
+    if (!token) return;
+    e.preventDefault();
+    onOpenContentLink(token);
+  }
+
+  async function handleCopyChannelLink() {
+    if (!selectedCommunity || !selectedConversationId) return;
+    const result = await copyContentLink({
+      kind: 'channel',
+      organizationId: selectedCommunity.organizationId,
+      conversationId: selectedConversationId
+    });
+    setNotice(result.ok ? 'Channel link copied.' : 'Unable to copy link automatically.');
+  }
+
+  async function handleCopyPostLink(post: ChannelPostDto) {
+    if (!selectedCommunity) return;
+    const result = await copyContentLink({
+      kind: 'post',
+      organizationId: selectedCommunity.organizationId,
+      conversationId: post.conversationId,
+      postId: post.id
+    });
+    setNotice(result.ok ? 'Post link copied.' : 'Unable to copy link automatically.');
+  }
 
   function selectCommunityMainFeed(comm: CommunityItemDto) {
     setError('');
     setNotice('');
+    setFocusedCommunity(comm);
     setSelectedCommunityId(comm.id);
     setSelectedConversationId(comm.mainFeedConversationId ?? null);
     setDiscoverMode(false);
@@ -530,6 +822,7 @@ export function CommunitiesWorkspace({
   function selectSubChannel(comm: CommunityItemDto, ch: CommunityChannelDto) {
     setError('');
     setNotice('');
+    setFocusedCommunity(comm);
     setSelectedCommunityId(comm.id);
     setSelectedConversationId(ch.id);
   }
@@ -568,11 +861,11 @@ export function CommunitiesWorkspace({
     setNewCommName('');
     setNewCommDesc('');
     setNewCommVisibility('Public');
-    const items = await loadCommunities();
-    const created = items.find(c => c.id === data.id);
+    const created = await lookupCommunity(targetOrgId, data.id).catch(() => null);
     if (created) {
       selectCommunityMainFeed(created);
     }
+    await loadCommunities();
     setNotice(`Community "${data.name}" created.`);
   }
 
@@ -588,19 +881,19 @@ export function CommunitiesWorkspace({
       setError(data.message || 'Unable to join community.');
       return;
     }
-    const items = await loadCommunities();
+    const joined = await lookupCommunity(orgId, communityId).catch(() => null);
     await loadDiscover();
-    const joined = items.find(c => c.id === communityId);
     if (joined) {
       selectCommunityMainFeed(joined);
     }
+    await loadCommunities();
     setNotice('Joined community.');
   }
 
   async function handleCreateChannel(e: FormEvent) {
     e.preventDefault();
     if (!addChannelForId) return;
-    const comm = communities.find(c => c.id === addChannelForId);
+    const comm = communities.find(c => c.id === addChannelForId) ?? (selectedCommunity?.id === addChannelForId ? selectedCommunity : null);
     if (!comm) return;
     setError('');
     setNotice('');
@@ -622,6 +915,8 @@ export function CommunitiesWorkspace({
     setAddChannelForId(null);
     setNewChannelName('');
     setNewChannelPolicy('Members');
+    const updated = await lookupCommunity(comm.organizationId, targetCommId).catch(() => null);
+    if (updated) setFocusedCommunity(updated);
     await loadCommunities();
     setSelectedCommunityId(targetCommId);
     setSelectedConversationId(data.id);
@@ -690,6 +985,7 @@ export function CommunitiesWorkspace({
     };
 
     // Show the new post immediately in dimmed pending state and clear the composer in 0ms.
+    inFlightPostIdsRef.current.add(tempPostId);
     updateFeedPosts(targetConvId, prev => {
       const pinned = prev.filter(p => p.isPinned);
       const regular = prev.filter(p => !p.isPinned);
@@ -721,6 +1017,7 @@ export function CommunitiesWorkspace({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        inFlightPostIdsRef.current.delete(tempPostId);
         updateFeedPosts(targetConvId, prev => prev.filter(p => p.id !== tempPostId));
         setPostTitle(savedTitle);
         setPostBody(savedBody);
@@ -734,16 +1031,22 @@ export function CommunitiesWorkspace({
         return;
       }
 
-      updateFeedPosts(targetConvId, prev => prev.map(p =>
-        p.id === tempPostId
-          ? {
-              ...p,
-              id: data.id ?? p.id,
-              createdAt: data.createdAt ?? p.createdAt,
-              pending: false
-            }
-          : p
-      ));
+      inFlightPostIdsRef.current.delete(tempPostId);
+      updateFeedPosts(targetConvId, prev => {
+        if (data.id && prev.some(p => p.id === data.id)) {
+          return prev.filter(p => p.id !== tempPostId);
+        }
+        return prev.map(p =>
+          p.id === tempPostId
+            ? {
+                ...p,
+                id: data.id ?? p.id,
+                createdAt: data.createdAt ?? p.createdAt,
+                pending: false
+              }
+            : p
+        );
+      });
       if (pollPayload || (canManage && savedIsAnnouncement && savedRequiresAck)) {
         void loadPosts(targetConvId, true);
       }
@@ -759,6 +1062,7 @@ export function CommunitiesWorkspace({
       setPollAllowMultiple(savedPollAllowMultiple);
       setError('Unable to publish post. Check your connection and try again.');
     } finally {
+      inFlightPostIdsRef.current.delete(tempPostId);
       setPosting(false);
     }
   }
@@ -991,7 +1295,7 @@ export function CommunitiesWorkspace({
       return;
     }
     setAddMemberUserId('');
-    await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
+    await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
     setNotice('Member added to community.');
   }
 
@@ -1007,7 +1311,7 @@ export function CommunitiesWorkspace({
       setError(data.message || 'Unable to remove member.');
       return;
     }
-    await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
+    await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
     setNotice('Member removed. Access revoked across all channels.');
   }
 
@@ -1025,7 +1329,7 @@ export function CommunitiesWorkspace({
       setError(data.message || 'Unable to update member role.');
       return;
     }
-    await loadMembers(selectedCommunity.organizationId, selectedCommunity.id);
+    await loadMembers(selectedCommunity.id);
   }
 
   async function handleLeaveCommunity() {
@@ -1041,6 +1345,7 @@ export function CommunitiesWorkspace({
       return;
     }
     setMembersOpen(false);
+    setFocusedCommunity(null);
     setSelectedCommunityId(null);
     setSelectedConversationId(null);
     await loadCommunities();
@@ -1091,7 +1396,7 @@ export function CommunitiesWorkspace({
         setError(data.message || 'Unable to sync department members.');
         return;
       }
-      await Promise.all([loadMembers(selectedCommunity.organizationId, selectedCommunity.id), loadCommunities()]);
+      await Promise.all([loadMembers(selectedCommunity.id), loadCommunities()]);
       setNotice(`Department synced · Added ${data.addedCount ?? 0}, unchanged ${data.unchangedCount ?? 0}.`);
     } else {
       await loadCommunities();
@@ -1099,39 +1404,179 @@ export function CommunitiesWorkspace({
     }
   }
 
-  const availableToAdd = useMemo(() => {
-    const memberIds = new Set(members.map(m => m.userId));
-    return directoryUsers.filter(u => !memberIds.has(u.id));
-  }, [directoryUsers, members]);
 
   const activePolicy = selectedSubChannel
     ? selectedSubChannel.postingPolicy
     : selectedCommunity?.mainFeedPostingPolicy ?? 'Members';
 
-  const normalizedFilter = sidebarFilter.trim().toLowerCase();
+  const filteredDiscover = discoverCommunities;
+  const sidebarPage = discoverMode ? discoverPage : communitiesPage;
+  const [showHiddenComms, setShowHiddenComms] = useState(false);
+  const [sectionModal, setSectionModal] = useState<{ mode: 'create' } | { mode: 'rename'; section: SidebarSectionDto } | null>(null);
+  const [draggedCommId, setDraggedCommId] = useState<string | null>(null);
+  const sidebarOrg = useSidebarOrganization('communities', organizations.length > 0, workspaceKey);
 
-  const filteredDiscover = useMemo(() => {
-    if (!normalizedFilter) return discoverCommunities;
-    return discoverCommunities.filter(comm =>
-      comm.name.toLowerCase().includes(normalizedFilter) ||
-      comm.organizationName.toLowerCase().includes(normalizedFilter) ||
-      (comm.description ?? '').toLowerCase().includes(normalizedFilter)
-    );
-  }, [discoverCommunities, normalizedFilter]);
+  const sortCommunitiesByOrder = useCallback((list: CommunityItemDto[]) => {
+    return [...list].sort((a, b) => {
+      const pa = sidebarOrg.itemByTargetId.get(a.id);
+      const pb = sidebarOrg.itemByTargetId.get(b.id);
+      if (pa && pb && pa.sortOrder !== pb.sortOrder) return pa.sortOrder - pb.sortOrder;
+      return Number(b.isOfficial) - Number(a.isOfficial) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+    });
+  }, [sidebarOrg.itemByTargetId]);
+
+  const hiddenCommunities = useMemo(
+    () => sortCommunitiesByOrder(communities.filter(c => sidebarOrg.itemByTargetId.get(c.id)?.isHidden)),
+    [communities, sidebarOrg.itemByTargetId, sortCommunitiesByOrder]
+  );
+  const visibleCommunities = useMemo(
+    () => communities.filter(c => !sidebarOrg.itemByTargetId.get(c.id)?.isHidden),
+    [communities, sidebarOrg.itemByTargetId]
+  );
+  const favoriteCommunities = useMemo(
+    () => sortCommunitiesByOrder(visibleCommunities.filter(c => sidebarOrg.itemByTargetId.get(c.id)?.isFavorite)),
+    [sidebarOrg.itemByTargetId, sortCommunitiesByOrder, visibleCommunities]
+  );
+  const customSectionGroups = useMemo(() => {
+    return sidebarOrg.sections.map(section => ({
+      section,
+      items: sortCommunitiesByOrder(visibleCommunities.filter(c => {
+        const pref = sidebarOrg.itemByTargetId.get(c.id);
+        return !pref?.isFavorite && pref?.sectionId === section.id;
+      }))
+    }));
+  }, [sidebarOrg.itemByTargetId, sidebarOrg.sections, sortCommunitiesByOrder, visibleCommunities]);
+  const ungroupedCommunities = useMemo(() => {
+    const validSectionIds = new Set(sidebarOrg.sections.map(s => s.id));
+    return visibleCommunities.filter(c => {
+      const pref = sidebarOrg.itemByTargetId.get(c.id);
+      if (pref?.isFavorite) return false;
+      return !pref?.sectionId || !validSectionIds.has(pref.sectionId);
+    });
+  }, [sidebarOrg.itemByTargetId, sidebarOrg.sections, visibleCommunities]);
 
   const workspaceGroups = useMemo(() => {
     return organizations.map(org => {
-      const orgComms = communities.filter(c => c.organizationId === org.id);
-      const matchesOrg = !normalizedFilter || org.name.toLowerCase().includes(normalizedFilter);
-      const visibleComms = matchesOrg
-        ? orgComms
-        : orgComms.filter(comm =>
-            comm.name.toLowerCase().includes(normalizedFilter) ||
-            comm.channels.some(ch => ch.name.toLowerCase().includes(normalizedFilter))
-          );
-      return { org, allCount: orgComms.length, communities: visibleComms };
+      const orgComms = sortCommunitiesByOrder(ungroupedCommunities.filter(c => c.organizationId === org.id));
+      const allCount = communities.filter(c => c.organizationId === org.id).length;
+      return { org, allCount, communities: orgComms };
     }).filter(group => !normalizedFilter || group.communities.length > 0 || group.org.name.toLowerCase().includes(normalizedFilter));
-  }, [organizations, communities, normalizedFilter]);
+  }, [organizations, communities, ungroupedCommunities, normalizedFilter, sortCommunitiesByOrder]);
+
+  const renderCommunityTree = (comm: CommunityItemDto, groupList: CommunityItemDto[]) => {
+    const isMainActive =
+      selectedCommunityId === comm.id &&
+      selectedConversationId === comm.mainFeedConversationId;
+    const isManager = comm.myRole === 'Owner' || comm.myRole === 'Admin';
+    const pref = sidebarOrg.itemByTargetId.get(comm.id);
+    const groupIds = groupList.map(item => item.id);
+    const idx = groupIds.indexOf(comm.id);
+    const preview = comm.latestPostPreview;
+    const subText = preview
+      ? `${preview.authorDisplayName}: ${preview.bodyPreview}`
+      : `${comm.memberCount} ${comm.memberCount === 1 ? 'member' : 'members'}${comm.channels.length > 0 ? ` · ${comm.channels.length} ${comm.channels.length === 1 ? 'channel' : 'channels'}` : ''}`;
+
+    return (
+      <div
+        className={`nx-comm-tree-group ${draggedCommId === comm.id ? 'dragging' : ''}`}
+        key={comm.id}
+        draggable
+        onDragStart={e => {
+          setDraggedCommId(comm.id);
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', comm.id);
+        }}
+        onDragEnd={() => setDraggedCommId(null)}
+        onDragOver={e => {
+          if (draggedCommId && draggedCommId !== comm.id && groupIds.includes(draggedCommId)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }
+        }}
+        onDrop={e => {
+          e.preventDefault();
+          if (!draggedCommId || draggedCommId === comm.id || !groupIds.includes(draggedCommId)) return;
+          const nextOrder = reorderIdList(groupIds, draggedCommId, comm.id);
+          setDraggedCommId(null);
+          void sidebarOrg.persistReorder(nextOrder);
+        }}
+      >
+        <div className="nx-conv-row-wrap">
+          <button
+            type="button"
+            className={`nx-comm-row ${isMainActive ? 'active' : ''}`}
+            onClick={() => selectCommunityMainFeed(comm)}
+          >
+            <span className="nx-comm-emblem" aria-hidden="true">
+              {comm.name.trim().slice(0, 2).toUpperCase()}
+            </span>
+            <div className="nx-conv-meta">
+              <div className="nx-conv-top">
+                <span className="nx-conv-name">
+                  {pref?.isFavorite && <Star size={12} aria-label="Favorite" />}
+                  <span>{comm.name}</span>
+                  {comm.visibility === 'Private' && <Lock size={12} aria-label="Private Community" />}
+                </span>
+                {comm.isOfficial && <Badge variant="role">Official</Badge>}
+              </div>
+              <div className="nx-conv-sub nx-conv-preview" title={subText}>
+                {subText}
+              </div>
+            </div>
+          </button>
+          <SidebarItemActions
+            itemLabel={comm.name}
+            pref={pref}
+            sections={sidebarOrg.sections}
+            canMoveUp={idx > 0}
+            canMoveDown={idx >= 0 && idx < groupIds.length - 1}
+            onToggleFavorite={() => void sidebarOrg.updateItem(comm.id, { isFavorite: !pref?.isFavorite })}
+            onToggleHidden={() => void sidebarOrg.updateItem(comm.id, { isHidden: !pref?.isHidden })}
+            onAssignSection={secId => void sidebarOrg.updateItem(comm.id, secId ? { sectionId: secId, isHidden: false } : { clearSection: true })}
+            onMoveUp={() => void sidebarOrg.persistReorder(moveIdByOffset(groupIds, comm.id, -1))}
+            onMoveDown={() => void sidebarOrg.persistReorder(moveIdByOffset(groupIds, comm.id, 1))}
+          />
+        </div>
+
+        {comm.channels.length > 0 && (
+          <div className="nx-comm-channels">
+            {comm.channels.map(ch => {
+              const isChActive = selectedConversationId === ch.id;
+              return (
+                <button
+                  type="button"
+                  key={ch.id}
+                  className={`nx-channel-row ${isChActive ? 'active' : ''}`}
+                  onClick={() => selectSubChannel(comm, ch)}
+                >
+                  {ch.postingPolicy === 'AdminsOnly' ? (
+                    <Megaphone size={14} aria-hidden="true" />
+                  ) : (
+                    <Hash size={14} aria-hidden="true" />
+                  )}
+                  <span className="nx-channel-name">{ch.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {isManager && (
+          <button
+            type="button"
+            className="nx-add-channel-btn"
+            onClick={() => {
+              setAddChannelForId(comm.id);
+              setNewChannelName('');
+              setNewChannelPolicy('Members');
+            }}
+          >
+            <Plus size={13} aria-hidden="true" /> Add channel
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className={`nx-chat-layout ${selectedConversationId ? 'has-selection' : ''}`}>
@@ -1150,16 +1595,30 @@ export function CommunitiesWorkspace({
               />
             </div>
             {organizations.length > 0 && (
-              <Button
-                variant={discoverMode ? 'primary' : 'default'}
-                size="sm"
-                iconOnly
-                aria-label={discoverMode ? 'Back to my communities' : 'Browse shared communities'}
-                title={discoverMode ? 'My communities' : 'Browse shared communities'}
-                onClick={() => setDiscoverMode(v => !v)}
-              >
-                {discoverMode ? <ArrowLeft size={15} aria-hidden="true" /> : <Compass size={15} aria-hidden="true" />}
-              </Button>
+              <>
+                {!discoverMode && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label="New sidebar section"
+                    title="New section"
+                    onClick={() => setSectionModal({ mode: 'create' })}
+                  >
+                    <FolderPlus size={15} aria-hidden="true" />
+                  </Button>
+                )}
+                <Button
+                  variant={discoverMode ? 'primary' : 'default'}
+                  size="sm"
+                  iconOnly
+                  aria-label={discoverMode ? 'Back to my communities' : 'Browse shared communities'}
+                  title={discoverMode ? 'My communities' : 'Browse shared communities'}
+                  onClick={() => setDiscoverMode(v => !v)}
+                >
+                  {discoverMode ? <ArrowLeft size={15} aria-hidden="true" /> : <Compass size={15} aria-hidden="true" />}
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -1170,9 +1629,9 @@ export function CommunitiesWorkspace({
               <p style={{ margin: 0 }}>Create or join a workspace to organize communities and channels.</p>
             </div>
           ) : discoverMode ? (
-            loadingDiscover ? (
+            discoverPage.loading && filteredDiscover.length === 0 ? (
               <div className="nx-empty-side" role="status">Loading communities…</div>
-            ) : filteredDiscover.length === 0 ? (
+            ) : filteredDiscover.length === 0 && !discoverPage.error ? (
               <div className="nx-empty-side">No shared communities found.</div>
             ) : (
               filteredDiscover.map(comm => (
@@ -1202,10 +1661,38 @@ export function CommunitiesWorkspace({
                 </div>
               ))
             )
-          ) : workspaceGroups.length === 0 ? (
+          ) : communitiesPage.loading && communities.length === 0 ? (
+            <div className="nx-empty-side" role="status">Loading communities…</div>
+          ) : workspaceGroups.length === 0 && favoriteCommunities.length === 0 && hiddenCommunities.length === 0 && !communitiesPage.error ? (
             <div className="nx-empty-side">No matching workspaces or communities.</div>
           ) : (
             <div className="nx-ws-list">
+              {sidebarOrg.error && (
+                <div className="nx-empty-side">
+                  <p className="nx-error" role="alert">{sidebarOrg.error}</p>
+                </div>
+              )}
+              {favoriteCommunities.length > 0 && (
+                <section className="nx-ws-group" aria-label="Favorite communities">
+                  <div className="nx-section-label">Favorites ({favoriteCommunities.length})</div>
+                  {favoriteCommunities.map(comm => renderCommunityTree(comm, favoriteCommunities))}
+                </section>
+              )}
+              {customSectionGroups.map(({ section, items }) => (
+                <section className="nx-ws-group" key={section.id} aria-label={section.name}>
+                  <SidebarSectionHeader
+                    section={section}
+                    count={items.length}
+                    onRename={sec => setSectionModal({ mode: 'rename', section: sec })}
+                    onDelete={sec => void sidebarOrg.deleteSection(sec.id)}
+                  />
+                  {items.length === 0 ? (
+                    <div className="nx-ws-empty">No communities in this section yet.</div>
+                  ) : (
+                    items.map(comm => renderCommunityTree(comm, items))
+                  )}
+                </section>
+              ))}
               {workspaceGroups.map(({ org, allCount, communities: orgComms }) => {
                 const isCollapsed = Boolean(collapsedWorkspaces[org.id]) && !normalizedFilter;
                 const canAdminWorkspace = org.isOwner || org.role === 'SystemAdmin';
@@ -1256,86 +1743,34 @@ export function CommunitiesWorkspace({
                     {!isCollapsed && (
                       orgComms.length === 0 ? (
                         <div className="nx-ws-empty">
-                          {allCount === 0 ? 'No communities yet.' : 'No matches in this workspace.'}
+                          {allCount === 0 ? 'No communities yet.' : 'Organized in Favorites or sections.'}
                         </div>
                       ) : (
-                        orgComms.map(comm => {
-                          const isMainActive =
-                            selectedCommunityId === comm.id &&
-                            selectedConversationId === comm.mainFeedConversationId;
-                          const isManager = comm.myRole === 'Owner' || comm.myRole === 'Admin';
-
-                          return (
-                            <div className="nx-comm-tree-group" key={comm.id}>
-                              <button
-                                type="button"
-                                className={`nx-comm-row ${isMainActive ? 'active' : ''}`}
-                                onClick={() => selectCommunityMainFeed(comm)}
-                              >
-                                <span className="nx-comm-emblem" aria-hidden="true">
-                                  {comm.name.trim().slice(0, 2).toUpperCase()}
-                                </span>
-                                <div className="nx-conv-meta">
-                                  <div className="nx-conv-top">
-                                    <span className="nx-conv-name">
-                                      <span>{comm.name}</span>
-                                      {comm.visibility === 'Private' && <Lock size={12} aria-label="Private Community" />}
-                                    </span>
-                                    {comm.isOfficial && <Badge variant="role">Official</Badge>}
-                                  </div>
-                                  <div className="nx-conv-sub">
-                                    {comm.memberCount} {comm.memberCount === 1 ? 'member' : 'members'}
-                                    {comm.channels.length > 0 ? ` · ${comm.channels.length} ${comm.channels.length === 1 ? 'channel' : 'channels'}` : ''}
-                                  </div>
-                                </div>
-                              </button>
-
-                              {comm.channels.length > 0 && (
-                                <div className="nx-comm-channels">
-                                  {comm.channels.map(ch => {
-                                    const isChActive = selectedConversationId === ch.id;
-                                    return (
-                                      <button
-                                        type="button"
-                                        key={ch.id}
-                                        className={`nx-channel-row ${isChActive ? 'active' : ''}`}
-                                        onClick={() => selectSubChannel(comm, ch)}
-                                      >
-                                        {ch.postingPolicy === 'AdminsOnly' ? (
-                                          <Megaphone size={14} aria-hidden="true" />
-                                        ) : (
-                                          <Hash size={14} aria-hidden="true" />
-                                        )}
-                                        <span className="nx-channel-name">{ch.name}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {isManager && (
-                                <button
-                                  type="button"
-                                  className="nx-add-channel-btn"
-                                  onClick={() => {
-                                    setAddChannelForId(comm.id);
-                                    setNewChannelName('');
-                                    setNewChannelPolicy('Members');
-                                  }}
-                                >
-                                  <Plus size={13} aria-hidden="true" /> Add channel
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })
+                        orgComms.map(comm => renderCommunityTree(comm, orgComms))
                       )
                     )}
                   </section>
                 );
               })}
+              {hiddenCommunities.length > 0 && (
+                <div className="nx-hidden-group">
+                  <button
+                    type="button"
+                    className="nx-hidden-toggle"
+                    aria-expanded={showHiddenComms}
+                    onClick={() => setShowHiddenComms(v => !v)}
+                  >
+                    {showHiddenComms ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+                    <Eye size={13} aria-hidden="true" />
+                    <span>Hidden ({hiddenCommunities.length})</span>
+                  </button>
+                  {showHiddenComms && hiddenCommunities.map(comm => renderCommunityTree(comm, hiddenCommunities))}
+                </div>
+              )}
             </div>
           )}
+          <ListPaging loading={sidebarPage.loading} error={sidebarPage.error} hasMore={sidebarPage.next !== null}
+            onMore={sidebarPage.loadMore} onRetry={sidebarPage.retry} moreLabel="Load more communities" />
         </div>
 
         <div className="nx-ws-footer">
@@ -1405,7 +1840,11 @@ export function CommunitiesWorkspace({
           )
         ) : (
           <>
-            <header className="nx-stage-header">
+            <header
+              ref={stageHeaderRef}
+              tabIndex={-1}
+              className={`nx-stage-header nx-community-stage-header ${highlightedHeader ? 'nx-highlight-target' : ''}`}
+            >
               <div className="nx-stage-title">
                 <Button
                   variant="ghost"
@@ -1450,6 +1889,17 @@ export function CommunitiesWorkspace({
               </div>
 
               <div className="nx-inline-actions">
+                <ConversationNotificationButton key={selectedConversationId} conversationId={selectedConversationId} />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Copy link to channel"
+                  title="Copy link"
+                  onClick={() => void handleCopyChannelLink()}
+                >
+                  <Link2 size={15} aria-hidden="true" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1464,7 +1914,6 @@ export function CommunitiesWorkspace({
                   variant={membersOpen ? 'primary' : 'default'}
                   size="sm"
                   onClick={() => {
-                    if (!membersOpen) setLoadingMembers(true);
                     setMembersOpen(v => !v);
                   }}
                 >
@@ -1474,7 +1923,7 @@ export function CommunitiesWorkspace({
             </header>
 
             <div className="nx-comm-body">
-              <div className="nx-comm-feed">
+              <div className="nx-comm-feed" ref={feedContainerRef}>
                 {/* Post Composer */}
                 {canPost ? (
                   <form className="nx-post-composer" onSubmit={handleCreatePost}>
@@ -1628,10 +2077,19 @@ export function CommunitiesWorkspace({
                 ) : null}
 
                 {/* Posts List */}
+                {postsHasNewer && selectedConversationId && (
+                  <div className="nx-jump-banner" role="region" aria-label="Viewing older posts">
+                    <Button size="sm" variant="primary" onClick={() => void loadPosts(selectedConversationId, false, selectedCommunity.organizationId)}>
+                      Jump to latest posts
+                    </Button>
+                  </div>
+                )}
                 {loadingPosts && posts.length === 0 ? (
-                  <div className="nx-empty-side">Loading posts…</div>
-                ) : posts.length === 0 ? (
-                  <div className="nx-empty-side">No posts yet. Start the first conversation above.</div>
+                  <div className="nx-empty-side" role="status">Loading posts…</div>
+                ) : posts.length === 0 && !postsError ? (
+                  <div className="nx-empty-side">
+                    {canPost ? 'No posts yet. Start the first conversation above.' : 'No posts in this channel yet.'}
+                  </div>
                 ) : (
                   posts.map(post => {
                     const commentsOpen = Boolean(expandedComments[post.id]) || post.comments.length > 0;
@@ -1640,7 +2098,9 @@ export function CommunitiesWorkspace({
                     return (
                       <article
                         key={post.id}
-                        className={`nx-post-card ${post.isAnnouncement ? 'announcement' : ''} ${post.isPinned ? 'pinned' : ''} ${post.pending ? 'pending' : ''}`}
+                        data-post-id={post.id}
+                        tabIndex={-1}
+                        className={`nx-post-card ${post.isAnnouncement ? 'announcement' : ''} ${post.isPinned ? 'pinned' : ''} ${post.pending ? 'pending' : ''} ${highlightedPostId === post.id ? 'nx-highlight-target' : ''}`}
                       >
                         <header className="nx-post-head">
                           <div className="nx-post-author">
@@ -1670,6 +2130,18 @@ export function CommunitiesWorkspace({
                                 <Megaphone size={11} aria-hidden="true" /> Announcement
                               </Badge>
                             )}
+                            {!post.pending && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                aria-label="Copy link to post"
+                                title="Copy link"
+                                onClick={() => void handleCopyPostLink(post)}
+                              >
+                                <Link2 size={14} aria-hidden="true" />
+                              </Button>
+                            )}
                             {canManage && (
                               <Button
                                 variant="ghost"
@@ -1689,6 +2161,7 @@ export function CommunitiesWorkspace({
 
                         <div
                           className="nx-msg-body nx-post-content"
+                          onClick={handleInlineContentLinkClick}
                           dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(post.body) }}
                         />
 
@@ -1817,6 +2290,7 @@ export function CommunitiesWorkspace({
                                 </div>
                                 <div
                                   className="nx-msg-body"
+                                  onClick={handleInlineContentLinkClick}
                                   dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(c.body) }}
                                 />
                               </div>
@@ -1848,13 +2322,21 @@ export function CommunitiesWorkspace({
                     );
                   })
                 )}
+                <ListPaging
+                  loading={loadingPosts || loadingMorePosts}
+                  error={postsError}
+                  hasMore={postsNextCursor !== null}
+                  onMore={() => { if (selectedConversationId) void loadPosts(selectedConversationId, false, undefined, true); }}
+                  onRetry={() => { if (selectedConversationId) void loadPosts(selectedConversationId, false, undefined, Boolean(postsError?.append)); }}
+                  moreLabel="Load older posts"
+                />
               </div>
 
               {/* Members & Governance Drawer */}
               {membersOpen && (
                 <aside className="nx-drawer" aria-label="Community members">
                   <div className="nx-drawer-head">
-                    <h4>{loadingMembers ? 'Members' : `Members (${members.length})`}</h4>
+                    <h4 ref={communityMembersHeading} tabIndex={-1}>{loadingMembers ? 'Members' : `Members (${members.length})`}</h4>
                     <Button variant="ghost" size="sm" onClick={() => setMembersOpen(false)}>
                       Close
                     </Button>
@@ -1899,8 +2381,14 @@ export function CommunitiesWorkspace({
                     )}
 
                     {/* Add member */}
-                    {canManage && availableToAdd.length > 0 && (
+                    {canManage && (
                       <form className="nx-drawer-section" onSubmit={handleAddMember}>
+                        <Field label="Find people to add" htmlFor="comm-add-search" compact>
+                          <input id="comm-add-search" type="search" value={memberSearchQuery} onChange={event => {
+                            setMemberSearchQuery(event.target.value);
+                            setAddMemberUserId('');
+                          }} />
+                        </Field>
                         <Field label="Add member" htmlFor="comm-add-member" compact>
                           <select
                             id="comm-add-member"
@@ -1908,7 +2396,8 @@ export function CommunitiesWorkspace({
                             value={addMemberUserId}
                             onChange={e => setAddMemberUserId(e.target.value)}
                           >
-                            <option value="">Select a person</option>
+                            <option value="">{addCandidates.loading ? 'Loading people…'
+                              : availableToAdd.length ? 'Select a person' : 'No matching people'}</option>
                             {availableToAdd.map(u => (
                               <option key={u.id} value={u.id}>
                                 {u.displayName} (@{u.username})
@@ -1925,17 +2414,19 @@ export function CommunitiesWorkspace({
                         >
                           <UserPlus size={14} aria-hidden="true" /> Add member
                         </Button>
+                        <ListPaging loading={addCandidates.loading} error={addCandidates.error} hasMore={addCandidates.next !== null}
+                          onMore={addCandidates.loadMore} onRetry={addCandidates.retry} moreLabel="Load more people to add" />
                       </form>
                     )}
 
                     {/* Members list */}
                     <div className="nx-drawer-section">
-                      {loadingMembers ? (
+                      {loadingMembers && members.length === 0 ? (
                         <p className="nx-muted" role="status" style={{ textAlign: 'center', margin: '12px 0' }}>
                           Loading members…
                         </p>
                       ) : members.map(m => (
-                        <div className="nx-member-row" key={m.userId}>
+                        <div className="nx-member-row nx-managed-member" key={m.userId}>
                           <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" />
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <strong>{m.displayName}</strong>
@@ -1944,7 +2435,21 @@ export function CommunitiesWorkspace({
                             </div>
                           </div>
                           {canManage && m.userId !== currentUserId && m.role !== 'Owner' && (
-                            <div className="nx-inline-actions">
+                            <div className="nx-member-actions">
+                              {selectedCommunity.myRole === 'Owner' && m.isActive !== false &&
+                                (!selectedCommunity.isOfficial || !m.isUnverified) && (
+                                <Button variant="ghost" size="sm"
+                                  aria-label={`Transfer ownership to ${m.displayName} (@${m.username})`}
+                                  onClick={() => setOwnershipTransfer({
+                                    path: orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/transfer-ownership`),
+                                    resourceLabel: 'Community',
+                                    resourceName: selectedCommunity.name,
+                                    userId: m.userId,
+                                    displayName: m.displayName,
+                                    username: m.username
+                                  })}
+                                >Transfer ownership</Button>
+                              )}
                               {selectedCommunity.myRole === 'Owner' && (
                                 <Button
                                   variant="ghost"
@@ -1965,6 +2470,8 @@ export function CommunitiesWorkspace({
                           )}
                         </div>
                       ))}
+                      <ListPaging loading={loadingMembers} error={memberList.error} hasMore={memberList.next !== null}
+                        onMore={memberList.loadMore} onRetry={memberList.retry} moreLabel="Load more members" />
                     </div>
 
                     {selectedCommunity.myRole !== 'Owner' && (
@@ -1983,6 +2490,21 @@ export function CommunitiesWorkspace({
       </section>
 
       {/* Create Community Modal */}
+      {ownershipTransfer && selectedCommunity && (
+        <TransferOwnershipDialog target={ownershipTransfer} onClose={() => setOwnershipTransfer(null)}
+          onRefresh={() => {
+            void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
+            void loadMembers(selectedCommunity.id);
+          }}
+          onTransferred={() => {
+            setOwnershipTransfer(null);
+            void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
+            void loadMembers(selectedCommunity.id);
+            setNotice(`${ownershipTransfer.displayName} is now Owner of ${ownershipTransfer.resourceName}.`);
+            requestAnimationFrame(() => communityMembersHeading.current?.focus());
+          }} />
+      )}
+
       <Modal
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -2065,6 +2587,22 @@ export function CommunitiesWorkspace({
         </form>
       </Modal>
 
+      <SidebarSectionModal
+        open={sectionModal !== null}
+        mode={sectionModal?.mode === 'rename' ? 'rename' : 'create'}
+        initialName={sectionModal?.mode === 'rename' ? sectionModal.section.name : ''}
+        busy={sidebarOrg.busy}
+        onClose={() => setSectionModal(null)}
+        onSubmit={async name => {
+          if (sectionModal?.mode === 'rename') {
+            const ok = await sidebarOrg.renameSection(sectionModal.section.id, name);
+            if (ok) setSectionModal(null);
+          } else {
+            const created = await sidebarOrg.createSection(name);
+            if (created) setSectionModal(null);
+          }
+        }}
+      />
       {/* Add Channel Modal */}
       <Modal
         open={Boolean(addChannelForId)}

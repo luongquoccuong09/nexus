@@ -364,12 +364,13 @@ public static class IdentityEndpoints
         }
 
         var tokenHash = ComputeSha256Hex(request.Token.Trim());
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var link = await db.AdminPasswordResetLinks.FromSqlInterpolated($"""
+            SELECT * FROM admin_reset_links WHERE token_hash = {tokenHash} FOR UPDATE
+            """).SingleOrDefaultAsync(ct);
         var now = DateTimeOffset.UtcNow;
 
-        var link = await db.AdminPasswordResetLinks
-            .SingleOrDefaultAsync(x => x.TokenHash == tokenHash && x.UsedAt == null && x.ExpiresAt > now, ct);
-
-        if (link is null)
+        if (link is null || link.UsedAt is not null || link.ExpiresAt <= now)
         {
             return Results.BadRequest(new { code = "invalid_reset_token", message = "Reset token is invalid or expired." });
         }
@@ -381,6 +382,8 @@ public static class IdentityEndpoints
         }
 
         // Validate new password against all registered validators before replacing.
+        user.AccessFailedCount = 0;
+        user.LockoutEnd = null;
         var resetToken = await userManager.GeneratePasswordResetTokenAsync(user);
         var resetResult = await userManager.ResetPasswordAsync(user, resetToken, request.NewPassword ?? string.Empty);
         if (!resetResult.Succeeded)
@@ -392,17 +395,13 @@ public static class IdentityEndpoints
         link.UsedAt = now;
         await db.SaveChangesAsync(ct);
 
-        await userManager.UpdateSecurityStampAsync(user);
-        await userManager.ResetAccessFailedCountAsync(user);
-        await userManager.SetLockoutEndDateAsync(user, null);
-
-        // Revoke all sessions and abort SignalR sockets.
+        // Commit the credential, the redeemed token, and session revocation together.
         await db.AppSessions
             .Where(s => s.UserId == user.Id && s.RevokedAt == null)
             .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now), ct);
-        connectionRegistry.AbortUserConnections(user.Id);
-
         await WriteAuditAsync(db, Guid.Empty, user.Id, "PASSWORD_RESET_REDEEMED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await transaction.CommitAsync(ct);
+        connectionRegistry.AbortUserConnections(user.Id);
         return Results.Ok(new { reset = true });
     }
 

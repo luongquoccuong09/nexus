@@ -2,9 +2,22 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
-import { ChatWorkspace, CommunityFeedDelta, DirectoryUserLite } from './chat';
+import { Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
+import { ActivityWorkspace } from './activity';
+import { BlockedUsersSettings } from './blockedUsers';
+import {
+  ChatJumpTarget,
+  clearContentLinkFromUrl,
+  CommunityJumpTarget,
+  readInitialContentLink,
+  resolveContentLink
+} from './contentLinks';
+import { ChatWorkspace, CommunityFeedDelta } from './chat';
 import { CommunitiesWorkspace } from './communities';
+import { clearChatWork } from './offlineQueue';
+import { PasswordResetForm } from './passwordReset';
+import { loadOrganizationDepartments, personKey, searchChatCandidates, searchPeopleScope } from './peopleDirectory';
+import { ListPaging, useCursorList } from './cursorList';
 import { Avatar, Badge, Button, Card, Field, Modal, ToastBar } from './ui';
 import './style.css';
 
@@ -71,64 +84,20 @@ interface HrImportReport {
   }>;
 }
 
-async function searchChatCandidates(query: string, signal?: AbortSignal): Promise<DirectoryUserLite[]> {
-  const params = new URLSearchParams({ limit: '50' });
-  const name = query.trim().replace(/^@/, '');
-  if (name) params.set('q', name);
-  const res = await fetch(`/api/people/chat-candidates?${params}`, { credentials: 'same-origin', signal });
-  if (!res.ok) throw new Error('Unable to load people you can message.');
-  return (await res.json()).items ?? [];
-}
-
-async function searchPeopleScope(
-  scope: 'contacts' | string,
-  query: string,
-  departmentId: string,
-  signal?: AbortSignal
-): Promise<DirectoryProfile[]> {
-  const params = new URLSearchParams({ limit: '50' });
-  const name = query.trim().replace(/^@/, '');
-  if (name) params.set('q', name);
-  if (scope !== 'contacts' && departmentId) params.set('departmentId', departmentId);
-
-  const res = scope === 'contacts'
-    ? await fetch(`/api/people/directory?${params}`, { credentials: 'same-origin', signal })
-    : await orgFetch(scope, `/api/people/directory?${params}`, { credentials: 'same-origin', signal });
-  if (!res.ok) throw new Error(scope === 'contacts' ? 'Unable to load contacts.' : 'Unable to load workspace members.');
-  return (await res.json()).items ?? [];
-}
-
-function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
+function NewChatDialog({ currentUserId, candidateRevision, onClose, onOpenChat, onOpenContacts }: {
   currentUserId: string;
+  candidateRevision: number;
   onClose: () => void;
   onOpenChat: (userId: string) => Promise<void>;
   onOpenContacts: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [people, setPeople] = useState<DirectoryUserLite[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchError, setSearchError] = useState('');
   const [openError, setOpenError] = useState('');
   const [opening, setOpening] = useState(false);
-  const [attempt, setAttempt] = useState(0);
   const searchInput = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      void searchChatCandidates(query, controller.signal).then(items => {
-        if (!controller.signal.aborted) setPeople(items.filter(item => item.id !== currentUserId));
-      }).catch((failure: Error) => {
-        if (!controller.signal.aborted) setSearchError(failure.message);
-      }).finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    }, query.trim() ? 180 : 0);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [attempt, currentUserId, query]);
+  const candidates = useCursorList(JSON.stringify([currentUserId, candidateRevision, query]),
+    (cursor, signal) => searchChatCandidates(query, cursor, signal), personKey, query.trim() ? 180 : 0);
+  const people = candidates.items.filter(item => item.id !== currentUserId);
 
   async function choose(userId: string) {
     setOpenError('');
@@ -154,20 +123,14 @@ function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
           placeholder="Name or username"
           value={query}
           onChange={event => {
-            setLoading(true);
-            setSearchError('');
             setOpenError('');
             setQuery(event.currentTarget.value);
           }}
         />
       </Field>
       {openError && <p className="nx-error" role="alert">{openError}</p>}
-      {loading ? <p className="nx-muted" role="status">Searching…</p> : searchError ? (
-        <div className="nx-row">
-          <p className="nx-error" role="alert">{searchError}</p>
-          <Button size="sm" onClick={() => { setLoading(true); setSearchError(''); setAttempt(n => n + 1); }}>Retry</Button>
-        </div>
-      ) : people.length > 0 ? (
+      {candidates.loading && people.length === 0 && <p className="nx-muted" role="status">Searching…</p>}
+      {people.length > 0 ? (
         <ul className="nx-new-chat-results" aria-label="People you can message">
           {people.map(person => {
             const tag = [
@@ -187,7 +150,9 @@ function NewChatDialog({ currentUserId, onClose, onOpenChat, onOpenContacts }: {
             );
           })}
         </ul>
-      ) : <p className="nx-muted" role="status">No matching people yet.</p>}
+      ) : !candidates.loading && !candidates.error && <p className="nx-muted" role="status">No matching people yet.</p>}
+      <ListPaging loading={candidates.loading} error={candidates.error} hasMore={candidates.next !== null}
+        onMore={candidates.loadMore} onRetry={candidates.retry} moreLabel="Load more people" />
       <Button onClick={onOpenContacts}>Add an external contact</Button>
     </Modal>
   );
@@ -204,17 +169,28 @@ function App() {
 
   const [authLoading, setAuthLoading] = useState(true);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [resetOpen, setResetOpen] = useState(false);
   const loginTabRef = useRef<HTMLButtonElement | null>(null);
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
+  const loginUsernameRef = useRef<HTMLInputElement | null>(null);
 
-  const [workspaceTab, setWorkspaceTab] = useState<'chat' | 'communities' | 'directory' | 'security' | 'hr'>(() => {
+  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'communities' | 'directory' | 'security' | 'hr'>(() => {
     if (personalContactLink) return 'directory';
     if (initialOrganizationId) return 'communities';
-    return new URLSearchParams(window.location.search).get('view') === 'security' ? 'security' : 'chat';
+    const view = new URLSearchParams(window.location.search).get('view');
+    return view === 'security' || view === 'activity' ? view : 'chat';
   });
   const [communitiesVisited, setCommunitiesVisited] = useState(() => workspaceTab === 'communities');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [requestedChannel, setRequestedChannel] = useState<{ id: string } | null>(null);
+  const [pendingLinkToken, setPendingLinkToken] = useState<string | null>(() => readInitialContentLink());
+  const [chatJumpTarget, setChatJumpTarget] = useState<ChatJumpTarget | null>(null);
+  const [communityJumpTarget, setCommunityJumpTarget] = useState<CommunityJumpTarget | null>(null);
+  const jumpNonceRef = useRef(0);
+  const linkRequestRef = useRef<AbortController | null>(null);
+  const [focusBlockedUsers, setFocusBlockedUsers] = useState(false);
+  const blockedUsersRef = useRef<HTMLDivElement | null>(null);
 
   const communityFeedListenerRef = useRef<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>(null);
   const refreshOrgSubscriptionsRef = useRef<(() => Promise<void>) | null>(null);
@@ -222,10 +198,12 @@ function App() {
 
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const [unreadTotal, setUnreadTotal] = useState(0);
+  const [unreadMentionCount, setUnreadMentionCount] = useState(0);
+  const refreshMentionCountRef = useRef<(() => void) | null>(null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('nexus-theme') === 'dark');
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
-  const [chatCandidates, setChatCandidates] = useState<DirectoryUserLite[]>([]);
+  const [candidateRevision, setCandidateRevision] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [avatarBust, setAvatarBust] = useState(0);
@@ -258,10 +236,15 @@ function App() {
   );
   const peopleFilterPickedRef = useRef(Boolean(personalContactLink || initialOrganizationId));
   const [dirQuery, setDirQuery] = useState('');
+  const [appliedDirectoryQuery, setAppliedDirectoryQuery] = useState('');
   const [dirDeptId, setDirDeptId] = useState('');
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
-  const [directory, setDirectory] = useState<DirectoryProfile[]>([]);
-  const [loadingDirectory, setLoadingDirectory] = useState(false);
+  const directoryPage = useCursorList<DirectoryProfile>(
+    user && workspaceTab === 'directory' ? JSON.stringify([user.id, peopleFilter, appliedDirectoryQuery, dirDeptId]) : null,
+    (cursor, signal) => searchPeopleScope<DirectoryProfile>(peopleFilter, appliedDirectoryQuery, dirDeptId, cursor, signal),
+    personKey
+  );
+  const { items: directory, loading: loadingDirectory, refresh: refreshDirectory } = directoryPage;
   const contactUsernameRef = useRef<HTMLInputElement | null>(null);
 
   // HR CSV Import state
@@ -277,6 +260,39 @@ function App() {
     document.body.classList.toggle('dark', darkMode);
     localStorage.setItem('nexus-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    setUnreadMentionCount(0);
+    if (!user?.id) return;
+
+    const controller = new AbortController();
+    let pending = false;
+    const refresh = async () => {
+      if (pending || document.visibilityState !== 'visible') return;
+      pending = true;
+      try {
+        const response = await fetch('/api/notifications/mentions/unread', { signal: controller.signal });
+        if (!response.ok) return;
+        const { unreadMentionCount: count } = await response.json();
+        if (!controller.signal.aborted && typeof count === 'number') setUnreadMentionCount(count);
+      } catch {
+        // Keep the previous count during a temporary connection failure.
+      } finally {
+        pending = false;
+      }
+    };
+
+    void refresh();
+    refreshMentionCountRef.current = () => void refresh();
+    const timer = window.setInterval(() => void refresh(), 15000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      controller.abort();
+      refreshMentionCountRef.current = null;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!notice) return;
@@ -307,36 +323,76 @@ function App() {
     }
   }, []);
 
-  const loadChatCandidates = useCallback(async () => {
-    try {
-      setChatCandidates(await searchChatCandidates(''));
-    } catch {
-      setChatCandidates([]);
-    }
-  }, []);
+  const refreshChatCandidates = useCallback(() => setCandidateRevision(revision => revision + 1), []);
 
-  const loadDirectory = useCallback(async (scope: 'contacts' | string, q: string, deptId: string) => {
-    setLoadingDirectory(true);
+  const refreshSafetyViews = useCallback(() => {
+    refreshChatCandidates();
+    void refreshDirectory();
+    void reloadConversationsRef.current?.();
+  }, [refreshChatCandidates, refreshDirectory]);
+
+  const openContentLink = useCallback(async (token: string) => {
+    linkRequestRef.current?.abort();
+    const controller = new AbortController();
+    linkRequestRef.current = controller;
+    setError('');
     try {
-      setDirectory(await searchPeopleScope(scope, q, deptId));
-    } catch {
-      setDirectory([]);
+      const resolved = await resolveContentLink(token, controller.signal);
+      if (controller.signal.aborted) return;
+      const nonce = ++jumpNonceRef.current;
+      if (resolved.kind === 'message') {
+        setActiveConvId(resolved.conversationId);
+        setChatJumpTarget({
+          conversationId: resolved.conversationId,
+          messageId: resolved.messageId,
+          seq: resolved.seq,
+          nonce
+        });
+        setWorkspaceTab('chat');
+      } else {
+        setCommunitiesVisited(true);
+        setCommunityJumpTarget({
+          organizationId: resolved.organizationId,
+          communityId: resolved.communityId,
+          conversationId: resolved.conversationId,
+          postId: resolved.kind === 'post' ? resolved.postId : null,
+          nonce
+        });
+        setWorkspaceTab('communities');
+      }
+    } catch (failure) {
+      if (!controller.signal.aborted) {
+        setError(failure instanceof Error ? failure.message : 'This link is unavailable or you do not have access to it.');
+      }
     } finally {
-      setLoadingDirectory(false);
+      if (linkRequestRef.current === controller) linkRequestRef.current = null;
     }
   }, []);
 
-  const loadDepartments = useCallback(async (orgId: string) => {
+  useEffect(() => {
+    if (!user || !pendingLinkToken) return;
+    const token = pendingLinkToken;
+    setPendingLinkToken(null);
+    clearContentLinkFromUrl();
+    void openContentLink(token);
+  }, [openContentLink, pendingLinkToken, user]);
+
+  useEffect(() => {
+    if (workspaceTab !== 'security' || !focusBlockedUsers) return;
+    blockedUsersRef.current?.focus();
+    setFocusBlockedUsers(false);
+  }, [focusBlockedUsers, workspaceTab]);
+
+  const loadDepartments = useCallback(async (orgId: string, signal?: AbortSignal) => {
     if (!orgId || orgId === 'contacts') {
       setDepartments([]);
       return;
     }
-    const res = await orgFetch(orgId, '/api/org/departments?limit=50', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      setDepartments(data.items ?? []);
-    } else {
-      setDepartments([]);
+    try {
+      const items = await loadOrganizationDepartments<DepartmentItem>(orgId, signal);
+      if (!signal?.aborted) setDepartments(items);
+    } catch {
+      if (!signal?.aborted) setDepartments([]);
     }
   }, []);
 
@@ -355,8 +411,6 @@ function App() {
       setUser(null);
       setOrganizations([]);
       setSessions([]);
-      setChatCandidates([]);
-      setDirectory([]);
       return false;
     }
 
@@ -390,9 +444,9 @@ function App() {
       setWorkspaceModal({ mode: 'join', initialToken: workspaceInvitation });
     }
 
-    await Promise.all([loadSessions(), loadChatCandidates()]);
+    await loadSessions();
     return true;
-  }, [loadSessions, loadChatCandidates, peopleFilter]);
+  }, [loadSessions, peopleFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -420,9 +474,10 @@ function App() {
 
   useEffect(() => {
     if (!user || workspaceTab !== 'directory') return;
-    void loadDirectory(peopleFilter, dirQuery, dirDeptId);
-    void loadDepartments(peopleFilter);
-  }, [user, workspaceTab, peopleFilter, dirDeptId, loadDirectory, loadDepartments]);
+    const controller = new AbortController();
+    void loadDepartments(peopleFilter, controller.signal);
+    return () => controller.abort();
+  }, [user, workspaceTab, peopleFilter, loadDepartments]);
 
   useEffect(() => {
     if (hrOrganizations.length > 0 && !hrOrganizations.some(o => o.id === hrOrgId)) {
@@ -440,24 +495,39 @@ function App() {
       setNotice('Workspace ready.');
     } else if (peopleFilter !== 'contacts' && !nextOrgs.some(o => o.id === peopleFilter)) {
       setPeopleFilter(nextOrgs[0]?.id ?? 'contacts');
+      setDirDeptId('');
     }
-    await Promise.all([
-      loadChatCandidates(),
-      refreshOrgSubscriptionsRef.current?.() ?? Promise.resolve()
-    ]);
-  }, [loadChatCandidates, peopleFilter]);
+    refreshChatCandidates();
+    await refreshOrgSubscriptionsRef.current?.();
+  }, [refreshChatCandidates, peopleFilter]);
 
   const handleOrganizationAccessRevoked = useCallback((revokedOrgId: string) => {
     setOrganizations(prev => {
       const next = prev.filter(o => o.id !== revokedOrgId);
       if (peopleFilter === revokedOrgId) {
         setPeopleFilter(next[0]?.id ?? 'contacts');
+        setDirDeptId('');
       }
       return next;
     });
-    void loadChatCandidates();
+    refreshChatCandidates();
     setNotice('Your workspace memberships were updated.');
-  }, [loadChatCandidates, peopleFilter]);
+  }, [refreshChatCandidates, peopleFilter]);
+
+  const accountId = user?.id;
+  const signOutChannelRef = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    if (!accountId || typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel(`nexus-sign-out:${accountId}`);
+    signOutChannelRef.current = channel;
+    channel.onmessage = () => {
+      void clearChatWork(`${accountId}:personal`).catch(() => {}).finally(() => window.location.replace('/'));
+    };
+    return () => {
+      signOutChannelRef.current = null;
+      channel.close();
+    };
+  }, [accountId]);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -521,8 +591,11 @@ function App() {
 
   async function handleLogout() {
     const res = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-    if (res.ok || res.status === 401) window.location.replace('/');
-    else setError('Unable to sign out. Try again.');
+    if (res.ok || res.status === 401) {
+      signOutChannelRef.current?.postMessage('signed-out');
+      if (user) await clearChatWork(`${user.id}:personal`).catch(() => {});
+      window.location.replace('/');
+    } else setError('Unable to sign out. Try again.');
   }
 
   async function openDm(targetUserId: string) {
@@ -694,6 +767,13 @@ function App() {
   }
 
   if (!user) {
+    const returnToSignIn = (passwordReset = false) => {
+      setResetOpen(false);
+      setAuthTab('login');
+      setNotice(passwordReset ? 'Password reset. Sign in with your new password.' : '');
+      requestAnimationFrame(() => loginUsernameRef.current?.focus());
+    };
+
     const switchAuthTab = (next: 'login' | 'register', moveFocus = false) => {
       setAuthTab(next);
       setError('');
@@ -739,6 +819,10 @@ function App() {
         <section className="nx-auth-panel">
           <div className="nx-auth-card">
             {workspaceInvitation && <p className="nx-muted">Sign in or create an account to accept your workspace invitation.</p>}
+            {resetOpen ? (
+              <PasswordResetForm onBack={() => returnToSignIn()} onReset={() => returnToSignIn(true)} />
+            ) : (
+            <>
             <div
               className="nx-auth-switcher"
               role="tablist"
@@ -784,7 +868,7 @@ function App() {
               {authTab === 'login' ? (
                 <form onSubmit={handleLogin}>
                   <Field label="Username" htmlFor="login-username">
-                    <input id="login-username" type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
+                    <input ref={loginUsernameRef} id="login-username" type="text" autoComplete="username" required value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
                   </Field>
                   <Field label="Password" htmlFor="login-password">
                     <input id="login-password" type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
@@ -797,6 +881,14 @@ function App() {
                   <Button type="submit" variant="primary" fullWidth>
                     Sign in to Nexus
                   </Button>
+                  <Button className="nx-auth-secondary" variant="ghost" fullWidth onClick={() => {
+                    setResetOpen(true);
+                    setLoginPassword('');
+                    setLoginTotp('');
+                    setMfaChallenge(false);
+                    setError('');
+                    setNotice('');
+                  }}>Reset password</Button>
                 </form>
               ) : (
                 <form onSubmit={handleRegister}>
@@ -830,6 +922,8 @@ function App() {
                 </form>
               )}
             </div>
+            </>
+            )}
           </div>
         </section>
       </main>
@@ -840,6 +934,7 @@ function App() {
   const activePeopleOrg = peopleFilter === 'contacts' ? null : (organizations.find(o => o.id === peopleFilter) ?? null);
 
   const pageTitle =
+    workspaceTab === 'activity' ? 'Activity' :
     workspaceTab === 'chat' ? 'Chat' :
     workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'People' :
@@ -855,6 +950,15 @@ function App() {
         </div>
 
         <div className="nx-rail-nav">
+          <button
+            type="button"
+            className={`nx-rail-btn ${workspaceTab === 'activity' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'activity' ? 'page' : undefined}
+            onClick={() => setWorkspaceTab('activity')}
+          >
+            <Bell size={20} aria-hidden="true" />
+            <span>Activity</span>
+          </button>
           <button
             type="button"
             className={`nx-rail-btn ${workspaceTab === 'chat' ? 'active' : ''}`}
@@ -963,6 +1067,13 @@ function App() {
           </div>
 
           <div className="nx-topbar-right">
+            {unreadMentionCount > 0 && (
+              <span role="status">
+                <Badge variant="role" ariaLabel={`${unreadMentionCount} unread mentions`}>
+                  @{unreadMentionCount > 99 ? '99+' : unreadMentionCount}
+                </Badge>
+              </span>
+            )}
             {versionStale && (
               <Button variant="primary" size="sm" onClick={() => window.location.reload()}>
                 Update available · Reload
@@ -980,18 +1091,41 @@ function App() {
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         <main className="nx-main-area">
+          {workspaceTab === 'activity' && (
+            <ActivityWorkspace
+              onOpenChat={id => {
+                setActiveConvId(id);
+                setWorkspaceTab('chat');
+              }}
+              onOpenChannel={id => {
+                setRequestedChannel({ id });
+                setCommunitiesVisited(true);
+                setWorkspaceTab('communities');
+              }}
+              onOpenContentLink={token => void openContentLink(token)}
+              onRead={() => refreshMentionCountRef.current?.()}
+            />
+          )}
           <div className={`nx-tab-keepalive ${workspaceTab === 'chat' ? '' : 'hidden'}`}>
             <ChatWorkspace
+              key={user.id}
               currentUserId={user.id}
-              currentDisplayName={user.displayName}
               initialVersion={apiVersion}
               selectedConversationId={activeConvId}
-              directoryUsers={chatCandidates}
+              jumpTarget={chatJumpTarget}
+              visible={workspaceTab === 'chat'}
+              candidateRevision={candidateRevision}
               refreshOrgSubscriptionsRef={refreshOrgSubscriptionsRef}
               onReloadConversationsRef={reloadConversationsRef}
               onOrganizationAccessRevoked={handleOrganizationAccessRevoked}
+              onBlockListChanged={refreshSafetyViews}
+              onManageBlockedUsers={() => {
+                setFocusBlockedUsers(true);
+                setWorkspaceTab('security');
+              }}
               onSelectConversation={setActiveConvId}
               onNewChat={() => setNewChatOpen(true)}
+              onOpenContentLink={token => void openContentLink(token)}
               onConnectionStateChange={setConnState}
               onUnreadTotalChange={setUnreadTotal}
               onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
@@ -1001,6 +1135,7 @@ function App() {
           {newChatOpen && (
             <NewChatDialog
               currentUserId={user.id}
+              candidateRevision={candidateRevision}
               onClose={() => setNewChatOpen(false)}
               onOpenChat={openDm}
               onOpenContacts={openContactsFromChat}
@@ -1013,7 +1148,10 @@ function App() {
                 currentUserId={user.id}
                 currentDisplayName={user.displayName}
                 organizations={organizations}
+                requestedChannel={requestedChannel}
+                jumpTarget={communityJumpTarget}
                 feedListenerRef={communityFeedListenerRef}
+                onOpenContentLink={token => void openContentLink(token)}
                 onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
                 onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
                 onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}
@@ -1070,8 +1208,8 @@ function App() {
                     <ContactControls
                       usernameRef={contactUsernameRef}
                       onChange={() => {
-                        void loadDirectory('contacts', dirQuery, '');
-                        void loadChatCandidates();
+                        void refreshDirectory();
+                        refreshChatCandidates();
                       }}
                     />
                   </div>
@@ -1081,7 +1219,8 @@ function App() {
                   className="nx-filter-bar"
                   onSubmit={e => {
                     e.preventDefault();
-                    void loadDirectory(peopleFilter, dirQuery, dirDeptId);
+                    if (dirQuery === appliedDirectoryQuery) void refreshDirectory();
+                    else setAppliedDirectoryQuery(dirQuery);
                   }}
                 >
                   <div className="nx-search-input-wrap" style={{ flex: 2, minWidth: 220 }}>
@@ -1117,17 +1256,17 @@ function App() {
                       Loading people…
                     </p>
                   </Card>
-                ) : directory.length === 0 ? (
+                ) : directory.length === 0 && !directoryPage.error ? (
                   <Card>
                     <p className="nx-muted" style={{ margin: 0, textAlign: 'center' }}>
                       {activePeopleOrg
                         ? 'No matching workspace members.'
-                        : dirQuery.trim()
+                        : appliedDirectoryQuery.trim()
                           ? 'No matching contacts.'
                           : 'No external contacts yet. Send a connection request or share a contact link above.'}
                     </p>
                   </Card>
-                ) : (
+                ) : directory.length > 0 && (
                   <div className="nx-dir-grid">
                     {directory.map(p => (
                       <article className="nx-person-card" key={p.id}>
@@ -1157,6 +1296,8 @@ function App() {
                     ))}
                   </div>
                 )}
+                <ListPaging loading={loadingDirectory} error={directoryPage.error} hasMore={directoryPage.next !== null}
+                  onMore={directoryPage.loadMore} onRetry={directoryPage.retry} moreLabel="Load more people" />
               </div>
             </div>
           )}
@@ -1167,7 +1308,7 @@ function App() {
                 <div className="nx-page-head">
                   <div>
                     <h2>Profile &amp; security</h2>
-                    <p>Manage your avatar, custom status, password, authenticator MFA, and signed-in devices.</p>
+                    <p>Manage your profile, account security, and blocked users.</p>
                   </div>
                   <Button variant="danger" onClick={handleLogout}>
                     <LogOut size={15} aria-hidden="true" /> Sign out
@@ -1234,6 +1375,10 @@ function App() {
                       </Field>
                     </Card>
                   )}
+
+                  <div ref={blockedUsersRef} tabIndex={-1} role="region" aria-label="Blocked user settings">
+                    <BlockedUsersSettings onChanged={refreshSafetyViews} />
+                  </div>
 
                   <Card title="Change password">
                     <form onSubmit={handleChangePassword}>

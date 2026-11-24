@@ -74,6 +74,20 @@ public sealed class MessagingFanoutService(
             .SendAsync("ReadStateUpdated", payload, cancellationToken);
     }
 
+    public async Task NotifyCommunityOwnershipChangedAsync(Guid communityId, CancellationToken ct)
+    {
+        var mainFeed = await db.Conversations.AsNoTracking()
+            .Where(c => c.CommunityId == communityId && c.IsCommunityMainFeed && c.OrganizationId == db.ConversationOrganizationId)
+            .Select(c => (Guid?)c.Id)
+            .SingleOrDefaultAsync(ct);
+        if (mainFeed is { } id)
+            await NotifyCommunityFeedChangedAsync(communityId, id, new { type = "ownership", communityId }, ct);
+    }
+
+    public Task NotifyConversationAccessRevokedAsync(Guid userId, Guid conversationId, CancellationToken ct) =>
+        hubContext.Clients.Group(MessagingHub.UserGroupName(db.OrganizationScopeId, userId))
+            .SendAsync("ConversationAccessRevoked", new { conversationId, organizationId = db.ConversationOrganizationId }, ct);
+
     private async Task<List<Guid>> ResolveAuthorizedRecipientsAsync(
         Guid conversationId,
         ConversationKind? knownKind,

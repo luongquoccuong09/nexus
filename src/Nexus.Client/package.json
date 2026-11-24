@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/markdown.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@microsoft/signalr": "^11.0.0",

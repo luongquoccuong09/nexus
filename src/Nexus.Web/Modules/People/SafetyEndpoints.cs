@@ -30,7 +30,10 @@ public static class SafetyEndpoints
     private static async Task<IResult> HandleListBlocksAsync(
         HttpContext ctx,
         [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
         int? limit,
+        DateTimeOffset? beforeAt,
+        Guid? beforeId,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId))
@@ -38,20 +41,43 @@ public static class SafetyEndpoints
             return Results.Unauthorized();
         }
 
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+        if (!authz.Can(actor.ToActorContext(), ResourceAction.ManageOwnBlockList,
+            new ResourceContext(ResourceKind.UserAccount, db.OrganizationScopeId, TargetIsSelf: true))) return Results.Forbid();
+
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var pageError))
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
 
-        var items = await db.UserBlocks
-            .AsNoTracking()
-            .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId)
-            .OrderByDescending(b => b.CreatedAt)
-            .Take(pageSize)
-            .Select(b => new { blockedUserId = b.BlockedUserId, createdAt = b.CreatedAt })
-            .ToListAsync(ct);
+        if (beforeAt.HasValue != beforeId.HasValue)
+        {
+            return Results.BadRequest(new { code = "invalid_cursor", message = "Both beforeAt and beforeId are required for pagination." });
+        }
 
-        return Results.Ok(new { items });
+        var blocks = db.UserBlocks
+            .AsNoTracking()
+            .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId);
+        if (beforeAt is { } before && beforeId is { } id)
+        {
+            var utc = before.ToUniversalTime();
+            blocks = blocks.Where(b => b.CreatedAt < utc || (b.CreatedAt == utc && b.BlockedUserId.CompareTo(id) < 0));
+        }
+
+        var items = await (
+            from b in blocks
+            join target in db.ActiveScopePeople.AsNoTracking() on b.BlockedUserId equals target.Id into matches
+            from target in matches.DefaultIfEmpty()
+            orderby b.CreatedAt descending, b.BlockedUserId descending
+            select new { b.BlockedUserId, b.CreatedAt, target.DisplayName, Username = target.UserName })
+            .Take(pageSize + 1)
+            .ToListAsync(ct);
+        var hasMore = items.Count > pageSize;
+        if (hasMore) items.RemoveAt(pageSize);
+        var nextBefore = hasMore ? new { items[^1].CreatedAt, Id = items[^1].BlockedUserId } : null;
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(new { items, nextBefore });
     }
 
     private static async Task<IResult> HandleBlockUserAsync(
@@ -114,12 +140,18 @@ public static class SafetyEndpoints
         HttpContext ctx,
         Guid targetUserId,
         [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId))
         {
             return Results.Unauthorized();
         }
+
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+        if (!authz.Can(actor.ToActorContext(), ResourceAction.ManageOwnBlockList,
+            new ResourceContext(ResourceKind.UserAccount, db.OrganizationScopeId, TargetIsSelf: true))) return Results.Forbid();
 
         await db.UserBlocks
             .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && b.BlockedUserId == targetUserId)

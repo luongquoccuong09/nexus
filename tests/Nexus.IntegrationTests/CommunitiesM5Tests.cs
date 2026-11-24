@@ -15,6 +15,7 @@ using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Org;
 
 namespace Nexus.IntegrationTests;
@@ -142,6 +143,30 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
             Assert.Equal(HttpStatusCode.Forbidden, (await memberClient.GetAsync($"/api/channels/{mainFeedId}/posts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await memberClient.GetAsync($"/api/channels/{subChannelId}/posts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await memberClient.GetAsync($"/api/files/{attachmentId}/download")).StatusCode);
+
+            var transferPath = $"/api/communities/{communityId}/transfer-ownership";
+            var transferRequest = new { newOwnerUserId = member.Id };
+            using var revokedTarget = await ownerClient.PostAsJsonAsync(transferPath, transferRequest);
+            Assert.Equal(HttpStatusCode.Forbidden, revokedTarget.StatusCode);
+            using var rejoin = await ownerClient.PostAsJsonAsync($"/api/communities/{communityId}/members", new { userId = member.Id });
+            Assert.Equal(HttpStatusCode.OK, rejoin.StatusCode);
+            using var unauthorized = await outsiderClient.PostAsJsonAsync(transferPath, transferRequest);
+            Assert.Equal(HttpStatusCode.Forbidden, unauthorized.StatusCode);
+
+            var transfers = await Task.WhenAll(
+                ownerClient.PostAsJsonAsync(transferPath, transferRequest),
+                ownerClient.PostAsJsonAsync(transferPath, transferRequest));
+            using var firstTransfer = transfers[0];
+            using var secondTransfer = transfers[1];
+            Assert.Single(transfers, result => result.StatusCode == HttpStatusCode.OK);
+            Assert.Single(transfers, result => result.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict);
+            var roles = (await memberClient.GetFromJsonAsync<JsonElement>($"/api/communities/{communityId}/members"))
+                .GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("userId").GetGuid(),
+                    item => item.GetProperty("role").GetString());
+            Assert.Equal("Admin", roles[owner.Id]);
+            Assert.Equal("Owner", roles[member.Id]);
+            using var staleRemove = await ownerClient.DeleteAsync($"/api/communities/{communityId}/members/{member.Id}");
+            Assert.Equal(HttpStatusCode.Forbidden, staleRemove.StatusCode);
         }
         finally
         {
@@ -260,6 +285,18 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
         Assert.Equal(HttpStatusCode.OK, remindResp.StatusCode);
         Assert.Equal(1, JsonDocument.Parse(await remindResp.Content.ReadAsStringAsync()).RootElement.GetProperty("remindedCount").GetInt32());
 
+        var mainFeedId = JsonDocument.Parse(await createResp.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("mainFeedConversationId").GetGuid();
+        using var memberMention = await verifiedClient.PostAsJsonAsync($"/api/channels/{mainFeedId}/posts", new { body = "Text with @all" });
+        Assert.Equal(HttpStatusCode.Created, memberMention.StatusCode);
+        var memberMentionId = (await memberMention.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        using var ownerMention = await ownerClient.PostAsJsonAsync($"/api/channels/{annChannelId}/posts", new
+        {
+            body = $"@channel @all @{verifiedMember.UserName} @{unverifiedUser.UserName}"
+        });
+        Assert.Equal(HttpStatusCode.Created, ownerMention.StatusCode);
+        var ownerMentionId = (await ownerMention.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
         // SystemAdmin (with MFA) performs emergency ownership transfer -> 200 & audited
         using var transferResp = await sysAdminClient.PostAsJsonAsync($"/api/communities/{communityId}/emergency-transfer-ownership", new
         {
@@ -278,6 +315,68 @@ public sealed class CommunitiesM5Tests(PostgresContainerFixture pg)
         Assert.Contains("COMMUNITY_OFFICIAL_CHANGED", auditActions);
         Assert.Contains("ANNOUNCEMENT_REMINDER_SENT", auditActions);
         Assert.Contains("COMMUNITY_EMERGENCY_OWNERSHIP_TRANSFER", auditActions);
+
+        // The hosted worker delivers only to the outstanding member of the Official community.
+        using var dispatchTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!await db.OutboxMessages.AnyAsync(
+                   message => message.ResourceId == postId && message.CompletedAt != null, dispatchTimeout.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), dispatchTimeout.Token);
+        }
+
+        var notification = Assert.Single(await db.Notifications.AsNoTracking()
+            .Where(item => item.ResourceId == postId).ToListAsync(dispatchTimeout.Token));
+        Assert.Equal(owner.Id, notification.RecipientId);
+
+        // Replaying the original event does not deliver a second notification.
+        await db.OutboxMessages.Where(message => message.Id == notification.OutboxMessageId)
+            .ExecuteUpdateAsync(updates => updates.SetProperty(message => message.CompletedAt, (DateTimeOffset?)null),
+                dispatchTimeout.Token);
+        while (!await db.OutboxMessages.AnyAsync(message => message.Id == notification.OutboxMessageId &&
+                   message.CompletedAt != null && message.Attempts == 2, dispatchTimeout.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), dispatchTimeout.Token);
+        }
+
+        Assert.Equal(1, await db.Notifications.CountAsync(item => item.ResourceId == postId, dispatchTimeout.Token));
+
+        while (!await db.OutboxMessages.AnyAsync(
+                   item => item.ResourceId == ownerMentionId && item.CompletedAt != null, dispatchTimeout.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), dispatchTimeout.Token);
+        }
+
+        Assert.False(await db.OutboxMessages.AnyAsync(item => item.ResourceId == memberMentionId, dispatchTimeout.Token));
+        var broadcast = Assert.Single(await db.Notifications.Where(item => item.ResourceId == ownerMentionId).ToListAsync(dispatchTimeout.Token));
+        Assert.Equal(verifiedMember.Id, broadcast.RecipientId);
+        var mentionsPath = $"/api/notifications/mentions/unread?conversationId={annChannelId}";
+        Assert.Equal(1, (await verifiedClient.GetFromJsonAsync<JsonElement>(mentionsPath, dispatchTimeout.Token))
+            .GetProperty("unreadMentionCount").GetInt32());
+        Assert.Equal(0, (await unverifiedClient.GetFromJsonAsync<JsonElement>(mentionsPath, dispatchTimeout.Token))
+            .GetProperty("unreadMentionCount").GetInt32());
+
+        db.Notifications.AddRange(Enumerable.Range(0, 50).Select(_ => new NotificationEntity
+        {
+            Id = Guid.NewGuid(), OutboxMessageId = Guid.NewGuid(), RecipientId = verifiedMember.Id,
+            OrganizationId = broadcast.OrganizationId, ConversationId = annChannelId,
+            ResourceId = ownerMentionId, Kind = broadcast.Kind, CreatedAt = broadcast.CreatedAt
+        }));
+        await db.SaveChangesAsync(dispatchTimeout.Token);
+        var firstPage = await verifiedClient.GetFromJsonAsync<JsonElement>("/api/notifications?limit=50", dispatchTimeout.Token);
+        var before = firstPage.GetProperty("nextBefore");
+        Assert.Equal(50, firstPage.GetProperty("items").GetArrayLength());
+        var beforeAt = Uri.EscapeDataString(before.GetProperty("createdAt").GetString()!);
+        var secondPage = await verifiedClient.GetFromJsonAsync<JsonElement>(
+            $"/api/notifications?limit=50&beforeAt={beforeAt}&beforeId={before.GetProperty("id").GetGuid()}", dispatchTimeout.Token);
+        var lastId = Assert.Single(secondPage.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid();
+        Assert.DoesNotContain(firstPage.GetProperty("items").EnumerateArray(), item => item.GetProperty("id").GetGuid() == lastId);
+
+        await db.CommunityMembers.Where(item => item.CommunityId == communityId && item.UserId == verifiedMember.Id)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.LeftAt, DateTimeOffset.UtcNow), dispatchTimeout.Token);
+        var afterRevocation = await verifiedClient.GetFromJsonAsync<JsonElement>("/api/notifications", dispatchTimeout.Token);
+        Assert.Empty(afterRevocation.GetProperty("items").EnumerateArray());
+        using var revokedSource = await verifiedClient.GetAsync($"/api/notifications/{broadcast.Id}/source", dispatchTimeout.Token);
+        Assert.Equal(HttpStatusCode.NotFound, revokedSource.StatusCode);
     }
 
     [Fact]

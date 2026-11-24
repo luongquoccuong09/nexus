@@ -9,11 +9,13 @@ using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Notifications;
 
 namespace Nexus.Web.Modules.Messaging;
 
 public static class CommunityFeedEndpoints
 {
+    private sealed record PostCursor(bool IsPinned, DateTimeOffset CreatedAt, Guid Id);
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     public sealed record CreatePollInput(string Question, string[] Options, bool AllowMultiple = false, DateTimeOffset? ClosesAt = null);
@@ -48,6 +50,8 @@ public static class CommunityFeedEndpoints
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
         DateTimeOffset? before,
+        string? cursor,
+        Guid? aroundPostId,
         int? limit,
         CancellationToken ct)
     {
@@ -59,6 +63,10 @@ public static class CommunityFeedEndpoints
         {
             return Results.BadRequest(new { code = "invalid_page_size", message = pageError });
         }
+        if (!PaginationGuard.TryDecodeCursor<PostCursor>(cursor, out var after) ||
+            after is not null && (before.HasValue || aroundPostId.HasValue || after.Id == Guid.Empty || after.CreatedAt == default) ||
+            aroundPostId.HasValue && (before.HasValue || aroundPostId.Value == Guid.Empty))
+            return PaginationGuard.InvalidCursor();
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
         if (access is null || access.Community is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
@@ -66,22 +74,76 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
-        var query = db.ChannelPosts.AsNoTracking()
+        var baseQuery = db.ChannelPosts.AsNoTracking()
             .Where(p => p.ConversationId == conversationId && p.DeletedAt == null);
 
-        if (before.HasValue)
+        List<ChannelPostEntity> posts;
+        bool hasMore;
+        bool hasNewer = false;
+
+        if (aroundPostId is { } targetId)
         {
-            query = query.Where(p => !p.IsPinned && p.CreatedAt < before.Value);
+            var targetPost = await baseQuery.SingleOrDefaultAsync(p => p.Id == targetId, ct);
+            if (targetPost is null)
+            {
+                return Results.NotFound(new { code = "post_not_found", message = "Post not found." });
+            }
+
+            var aboveBudget = pageSize / 2;
+            var above = await baseQuery
+                .Where(p => (!targetPost.IsPinned && p.IsPinned) ||
+                    (p.IsPinned == targetPost.IsPinned &&
+                     (p.CreatedAt > targetPost.CreatedAt || (p.CreatedAt == targetPost.CreatedAt && p.Id.CompareTo(targetPost.Id) > 0))))
+                .OrderBy(p => p.IsPinned)
+                .ThenBy(p => p.CreatedAt)
+                .ThenBy(p => p.Id)
+                .Take(aboveBudget + 1)
+                .ToListAsync(ct);
+
+            hasNewer = above.Count > aboveBudget;
+            if (hasNewer) above = above.Take(aboveBudget).ToList();
+            above.Reverse();
+
+            var belowBudget = Math.Max(0, pageSize - above.Count - 1);
+            var below = await baseQuery
+                .Where(p => (targetPost.IsPinned && !p.IsPinned) ||
+                    (p.IsPinned == targetPost.IsPinned &&
+                     (p.CreatedAt < targetPost.CreatedAt || (p.CreatedAt == targetPost.CreatedAt && p.Id.CompareTo(targetPost.Id) < 0))))
+                .OrderByDescending(p => p.IsPinned)
+                .ThenByDescending(p => p.CreatedAt)
+                .ThenByDescending(p => p.Id)
+                .Take(belowBudget + 1)
+                .ToListAsync(ct);
+
+            hasMore = below.Count > belowBudget;
+            if (hasMore) below = below.Take(belowBudget).ToList();
+
+            posts = [.. above, targetPost, .. below];
         }
+        else
+        {
+            var query = baseQuery;
+            if (after is not null)
+            {
+                var createdAt = after.CreatedAt.ToUniversalTime();
+                query = query.Where(p => (after.IsPinned && !p.IsPinned) || p.IsPinned == after.IsPinned &&
+                    (p.CreatedAt < createdAt || p.CreatedAt == createdAt && p.Id.CompareTo(after.Id) < 0));
+            }
+            else if (before.HasValue)
+            {
+                query = query.Where(p => !p.IsPinned && p.CreatedAt < before.Value);
+            }
 
-        var posts = await query
-            .OrderByDescending(p => p.IsPinned)
-            .ThenByDescending(p => p.CreatedAt)
-            .Take(pageSize + 1)
-            .ToListAsync(ct);
+            posts = await query
+                .OrderByDescending(p => p.IsPinned)
+                .ThenByDescending(p => p.CreatedAt)
+                .ThenByDescending(p => p.Id)
+                .Take(pageSize + 1)
+                .ToListAsync(ct);
 
-        var hasMore = posts.Count > pageSize;
-        if (hasMore) posts = posts.Take(pageSize).ToList();
+            hasMore = posts.Count > pageSize;
+            if (hasMore) posts = posts.Take(pageSize).ToList();
+        }
 
         var postIds = posts.Select(p => p.Id).ToList();
 
@@ -223,6 +285,8 @@ public static class CommunityFeedEndpoints
         {
             items,
             hasMore,
+            hasNewer,
+            nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PostCursor(posts[^1].IsPinned, posts[^1].CreatedAt, posts[^1].Id)) : null,
             canPost = authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, access.Resource),
             canManage = access.Resource.MembershipRole is ResourceRole.Owner or ResourceRole.Admin
         });
@@ -235,6 +299,8 @@ public static class CommunityFeedEndpoints
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
+        WebPushTransport push,
+        IEmailDigestTransport digest,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
@@ -311,6 +377,8 @@ public static class CommunityFeedEndpoints
         }
 
         db.ChannelPosts.Add(post);
+        await MentionOutbox.EnqueueAsync(db, authz, actor, access.Resource, conversationId, access.Community,
+            MentionOutbox.PostKind, post.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
         if (poll is not null)
         {
             db.Polls.Add(poll);
@@ -376,6 +444,8 @@ public static class CommunityFeedEndpoints
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
         MessagingFanoutService fanout,
+        WebPushTransport push,
+        IEmailDigestTransport digest,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
@@ -406,6 +476,8 @@ public static class CommunityFeedEndpoints
             CreatedAt = DateTimeOffset.UtcNow
         };
         db.PostComments.Add(comment);
+        await MentionOutbox.EnqueueAsync(db, authz, actor, access.Resource, post.ConversationId, access.Community,
+            MentionOutbox.CommentKind, comment.Id, body, comment.CreatedAt, push.PublicKey is not null || digest.IsEnabled, ct);
         await db.SaveChangesAsync(ct);
 
         var commentDto = new
@@ -574,18 +646,13 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
-        var recipientsQuery = db.CommunityMembers.AsNoTracking()
-            .Where(m => m.CommunityId == access.Community.Id && m.LeftAt == null)
-            .Join(
-                db.OrganizationPeople.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
-                m => m.UserId,
-                u => u.Id,
-                (m, u) => new { u.Id, Username = u.UserName ?? string.Empty, u.DisplayName, u.TrustLevel });
-
-        if (access.Community.IsOfficial)
-        {
-            recipientsQuery = recipientsQuery.Where(x => x.TrustLevel == TrustLevel.Verified);
-        }
+        var recipientsQuery = AnnouncementRecipients.Eligible(db, access.Community)
+            .Select(recipient => new
+            {
+                recipient.Membership.Id,
+                Username = recipient.Membership.UserName ?? string.Empty,
+                recipient.Membership.DisplayName
+            });
 
         var recipients = await recipientsQuery.OrderBy(x => x.DisplayName).ToListAsync(ct);
         var ackMap = await db.AnnouncementAcknowledgments.AsNoTracking()
@@ -654,9 +721,20 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
-        var total = await CountEligibleRecipientsAsync(db, access.Community, ct);
-        var acked = await db.AnnouncementAcknowledgments.CountAsync(a => a.PostId == postId, ct);
-        var outstandingCount = Math.Max(0, total - acked);
+        var now = DateTimeOffset.UtcNow;
+        var outstandingCount = await AnnouncementRecipients.Outstanding(db, access.Community, postId, now).CountAsync(ct);
+        if (outstandingCount > 0)
+        {
+            db.OutboxMessages.Add(new OutboxMessageEntity
+            {
+                Id = Guid.CreateVersion7(),
+                Kind = AnnouncementReminderHandler.Kind,
+                OrganizationId = actor.OrganizationId,
+                ResourceId = postId,
+                CreatedAt = now,
+                AvailableAt = now
+            });
+        }
 
         db.AuditLogs.Add(new AuditLogEntity
         {
@@ -669,7 +747,7 @@ public static class CommunityFeedEndpoints
             Result = "Allowed",
             DetailJson = JsonSerializer.Serialize(new { outstandingCount }, WebJson),
             IpAddress = ctx.Connection.RemoteIpAddress?.ToString(),
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = now
         });
         await db.SaveChangesAsync(ct);
 
@@ -755,23 +833,8 @@ public static class CommunityFeedEndpoints
         });
     }
 
-    private static async Task<int> CountEligibleRecipientsAsync(NexusDbContext db, CommunityEntity community, CancellationToken ct)
-    {
-        var query = db.CommunityMembers.AsNoTracking()
-            .Where(m => m.CommunityId == community.Id && m.LeftAt == null)
-            .Join(
-                db.OrganizationPeople.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
-                m => m.UserId,
-                u => u.Id,
-                (m, u) => u.TrustLevel);
-
-        if (community.IsOfficial)
-        {
-            query = query.Where(tl => tl == TrustLevel.Verified);
-        }
-
-        return await query.CountAsync(ct);
-    }
+    private static Task<int> CountEligibleRecipientsAsync(NexusDbContext db, CommunityEntity community, CancellationToken ct) =>
+        AnnouncementRecipients.Eligible(db, community).CountAsync(ct);
 
     private static string CsvEscape(string value)
     {

@@ -28,6 +28,7 @@ Personal Chat directory results include accepted contacts. Opening a Personal DM
 | `DirectorySearch` (view active colleagues) | **Allow** (hides `Disabled`) | **Allow** (trial minimal profile, hides `Disabled`) | N/A | N/A |
 | `DmOpen` (`P0-D01`) | **Allow** if target is `Active` & not blocked | **Allow** if target is `Active`, not blocked, & under daily new-DM limit (`SEC-20b`) | N/A | N/A |
 | `DmBlockOrReport` | **Allow** against another active user | **Allow** against another active user | N/A | N/A |
+| `ManageOwnBlockList` | **Allow** for the caller's own records in the requested scope | **Allow** for the caller's own records in the requested scope | N/A | N/A |
 | `GroupCreate` | **Allow** | **Allow** | N/A | N/A |
 | `ConversationRead` / `MessageSearch` / `FileDownload` / `DeltaSync` | **Allow** if current member (within authorized history range) | **Allow** if current member | **Deny** (`SEC-03`, `SEC-15`) | **Deny** further delivery (`SEC-18`) |
 | `MessageSend` / `FileUpload` | **Allow** if current member (and DM not blocked) | **Allow** if current member (and DM not blocked) | **Deny** (`SEC-05`) | **Deny** (`SEC-18`) |

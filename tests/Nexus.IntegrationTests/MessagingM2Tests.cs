@@ -328,6 +328,27 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         var readStaleDoc = JsonDocument.Parse(await readStale.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal(3L, readStaleDoc.GetProperty("lastReadSeq").GetInt64());
 
+        // M6.18: A background replay from the SPA preserves earlier unread messages.
+        using var unseen = await clientA.PostAsJsonAsync($"/api/conversations/{dmId}/messages", new
+        {
+            clientMsgId = $"sync-unseen-{suffix}", body = "Arrived before a queued send"
+        });
+        Assert.Equal(HttpStatusCode.Created, unseen.StatusCode);
+        using var queued = await clientB.PostAsJsonAsync($"/api/conversations/{dmId}/messages", new
+        {
+            clientMsgId = $"sync-replayed-{suffix}", body = "Replayed in the background", preserveReadState = true
+        });
+        Assert.Equal(HttpStatusCode.Created, queued.StatusCode);
+        using var history = await clientB.GetAsync($"/api/conversations/{dmId}/messages");
+        history.EnsureSuccessStatusCode();
+        var historyDoc = await history.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3L, historyDoc.GetProperty("lastReadSeq").GetInt64());
+
+        using var legacyHistory = await clientA.GetAsync($"/api/conversations/{dmId}/messages");
+        legacyHistory.EnsureSuccessStatusCode();
+        var legacyDoc = await legacyHistory.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(4L, legacyDoc.GetProperty("lastReadSeq").GetInt64());
+
         // M2.5 / SEC-17: Cursor older than min_available_change_seq - 1 returns 410 Gone (resync_required)
         await using (var scope = app.Services.CreateAsyncScope())
         {
@@ -403,6 +424,9 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
 
         using var remove = await ownerClient.DeleteAsync($"/api/conversations/{groupId}/members/{member.Id}");
         Assert.Equal(HttpStatusCode.NoContent, remove.StatusCode);
+        var transferPath = $"/api/conversations/{groupId}/transfer-ownership";
+        using var removedTarget = await ownerClient.PostAsJsonAsync(transferPath, new { newOwnerUserId = member.Id });
+        Assert.Equal(HttpStatusCode.Forbidden, removedTarget.StatusCode);
 
         // SEC-18: Removed member immediately loses history, delta sync, read-state, and offline-queued send access
         using var removedMsgs = await memberClient.GetAsync($"/api/conversations/{groupId}/messages");
@@ -460,8 +484,24 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         using var ownerLeaveBlocked = await ownerClient.PostAsync($"/api/conversations/{groupId}/leave", null);
         Assert.Equal(HttpStatusCode.BadRequest, ownerLeaveBlocked.StatusCode);
 
-        using var transfer = await ownerClient.PostAsJsonAsync($"/api/conversations/{groupId}/transfer-ownership", new { newOwnerUserId = member.Id });
-        Assert.Equal(HttpStatusCode.OK, transfer.StatusCode);
+        using var forbiddenTransfer = await memberClient.PostAsJsonAsync(transferPath, new { newOwnerUserId = owner.Id });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenTransfer.StatusCode);
+
+        var request = new { newOwnerUserId = member.Id };
+        var transfers = await Task.WhenAll(
+            ownerClient.PostAsJsonAsync(transferPath, request),
+            ownerClient.PostAsJsonAsync(transferPath, request));
+        using var firstTransfer = transfers[0];
+        using var secondTransfer = transfers[1];
+        Assert.Single(transfers, result => result.StatusCode == HttpStatusCode.OK);
+        Assert.Single(transfers, result => result.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict);
+        var roles = (await memberClient.GetFromJsonAsync<JsonElement>($"/api/conversations/{groupId}/members"))
+            .GetProperty("items").EnumerateArray().ToDictionary(item => item.GetProperty("userId").GetGuid(),
+                item => item.GetProperty("role").GetString());
+        Assert.Equal("Admin", roles[owner.Id]);
+        Assert.Equal("Owner", roles[member.Id]);
+        using var staleRemove = await ownerClient.DeleteAsync($"/api/conversations/{groupId}/members/{member.Id}");
+        Assert.Equal(HttpStatusCode.Forbidden, staleRemove.StatusCode);
 
         using var ownerLeaveAllowed = await ownerClient.PostAsync($"/api/conversations/{groupId}/leave", null);
         Assert.Equal(HttpStatusCode.NoContent, ownerLeaveAllowed.StatusCode);

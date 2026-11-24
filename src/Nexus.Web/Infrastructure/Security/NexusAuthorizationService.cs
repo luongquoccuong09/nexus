@@ -35,6 +35,9 @@ public sealed class NexusAuthorizationService : IAuthorizationService
                 resource.TargetIsActive &&
                 !resource.TargetIsSelf,
 
+            ResourceAction.ManageOwnBlockList =>
+                resource.Kind == ResourceKind.UserAccount && resource.TargetIsSelf,
+
             ResourceAction.GroupCreate =>
                 resource.Kind == ResourceKind.GroupChat,
 
