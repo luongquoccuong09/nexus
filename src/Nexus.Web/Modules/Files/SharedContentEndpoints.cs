@@ -172,13 +172,12 @@ public static class SharedContentEndpoints
         }
         else
         {
-            var visibleFrom = access.VisibleFromSeq;
             var rows = await (
                 from a in baseAttachments
-                join m in db.Messages.AsNoTracking() on a.MessageId equals m.Id
+                join m in MessageHistory.VisibleAfter(db, access.VisibleFromSeq) on a.MessageId equals m.Id
                 join u in db.OrganizationPeople.AsNoTracking() on a.UploaderUserId equals u.Id into uploaderJoin
                 from uploader in uploaderJoin.DefaultIfEmpty()
-                where a.MessageId != null && m.ConversationId == conversationId && m.Seq > visibleFrom && m.DeletedAt == null
+                where a.MessageId != null && m.ConversationId == conversationId && m.DeletedAt == null
                 orderby a.CreatedAt descending, a.Id descending
                 select new
                 {
@@ -306,13 +305,12 @@ public static class SharedContentEndpoints
         }
         else
         {
-            var visibleFrom = access.VisibleFromSeq;
             var rows = await (
                 from l in baseLinks
-                join m in db.Messages.AsNoTracking() on l.MessageId equals m.Id
+                join m in MessageHistory.VisibleAfter(db, access.VisibleFromSeq) on l.MessageId equals m.Id
                 join u in db.OrganizationPeople.AsNoTracking() on l.SenderUserId equals u.Id into senderJoin
                 from sender in senderJoin.DefaultIfEmpty()
-                where l.MessageId != null && m.ConversationId == conversationId && m.Seq > visibleFrom && m.DeletedAt == null
+                where l.MessageId != null && m.ConversationId == conversationId && m.DeletedAt == null
                 orderby l.CreatedAt descending, l.Id descending
                 select new
                 {

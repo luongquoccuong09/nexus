@@ -9,6 +9,7 @@ public sealed class MessageEntity
 {
     public Guid Id { get; set; }
     public Guid ConversationId { get; set; }
+    public Guid? ParentMessageId { get; set; }
     public long Seq { get; set; }
     public Guid SenderId { get; set; }
     public required string ClientMsgId { get; set; }
@@ -17,6 +18,18 @@ public sealed class MessageEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? EditedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
+    public int ReplyCount { get; set; }
+    public DateTimeOffset? LastReplyAt { get; set; }
+    public long? LastReplySeq { get; set; }
+}
+
+public sealed class ThreadSubscriptionEntity
+{
+    public Guid ParentMessageId { get; set; }
+    public Guid UserId { get; set; }
+    public bool IsFollowing { get; set; }
+    public long LastReadReplySeq { get; set; }
+    public long Version { get; set; }
 }
 
 public sealed class ConversationEventEntity
@@ -42,11 +55,16 @@ public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<Messag
 {
     public void Configure(EntityTypeBuilder<MessageEntity> builder)
     {
-        builder.ToTable("messages");
+        builder.ToTable("messages", table => table.HasCheckConstraint(
+            "ck_messages_thread_metadata",
+            "(parent_message_id IS NULL OR (parent_message_id <> id AND reply_count = 0)) AND " +
+            "((reply_count = 0 AND last_reply_at IS NULL AND last_reply_seq IS NULL) OR " +
+            "(reply_count > 0 AND last_reply_at IS NOT NULL AND last_reply_seq IS NOT NULL AND last_reply_seq > seq))"));
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id").IsRequired();
+        builder.Property(x => x.ParentMessageId).HasColumnName("parent_message_id");
         builder.Property(x => x.Seq).HasColumnName("seq").IsRequired();
         builder.Property(x => x.SenderId).HasColumnName("sender_id").IsRequired();
         builder.Property(x => x.ClientMsgId).HasColumnName("client_msg_id").HasMaxLength(128).IsRequired();
@@ -55,9 +73,19 @@ public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<Messag
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(x => x.EditedAt).HasColumnName("edited_at");
         builder.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+        builder.Property(x => x.ReplyCount).HasColumnName("reply_count");
+        builder.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
+        builder.Property(x => x.LastReplySeq).HasColumnName("last_reply_seq");
 
         builder.HasOne<ConversationEntity>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.SenderId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<MessageEntity>().WithMany()
+            .HasForeignKey(x => new { x.ConversationId, x.ParentMessageId })
+            .HasPrincipalKey(x => new { x.ConversationId, x.Id })
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(x => new { x.ConversationId, x.ParentMessageId, x.Seq })
+            .HasDatabaseName("ix_messages_conversation_parent_seq");
 
         builder.HasIndex(x => new { x.ConversationId, x.Seq })
             .IsUnique()
@@ -66,6 +94,24 @@ public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<Messag
         builder.HasIndex(x => new { x.SenderId, x.ClientMsgId })
             .IsUnique()
             .HasDatabaseName("ux_messages_sender_client_msg_id");
+    }
+}
+
+public sealed class ThreadSubscriptionEntityConfiguration : IEntityTypeConfiguration<ThreadSubscriptionEntity>
+{
+    public void Configure(EntityTypeBuilder<ThreadSubscriptionEntity> builder)
+    {
+        builder.ToTable("thread_subscriptions", table => table.HasCheckConstraint(
+            "ck_thread_subscriptions_cursor", "last_read_reply_seq >= 0 AND version >= 0"));
+        builder.HasKey(x => new { x.ParentMessageId, x.UserId });
+        builder.Property(x => x.ParentMessageId).HasColumnName("parent_message_id");
+        builder.Property(x => x.UserId).HasColumnName("user_id");
+        builder.Property(x => x.IsFollowing).HasColumnName("is_following");
+        builder.Property(x => x.LastReadReplySeq).HasColumnName("last_read_reply_seq");
+        builder.Property(x => x.Version).HasColumnName("version").HasDefaultValue(0L);
+        builder.HasOne<MessageEntity>().WithMany().HasForeignKey(x => x.ParentMessageId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => x.UserId).HasDatabaseName("ix_thread_subscriptions_user_id");
     }
 }
 

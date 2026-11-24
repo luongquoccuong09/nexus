@@ -26,7 +26,9 @@ internal static class NotificationQueries
                 member.UserId == recipientId && member.LeftAt == null &&
                 ((notification.Kind != MentionOutbox.MessageKind && notification.Kind != MentionOutbox.MessageActivity) || db.Messages.Any(message =>
                     message.Id == notification.ResourceId && message.ConversationId == conversation.Id &&
-                    message.DeletedAt == null && message.Seq > member.VisibleFromSeq)))
+                    message.DeletedAt == null && message.Seq > member.VisibleFromSeq &&
+                    (message.ParentMessageId == null || db.Messages.Any(root => root.Id == message.ParentMessageId &&
+                        root.ConversationId == conversation.Id && root.Seq > member.VisibleFromSeq)))))
         where notification.Kind == MentionOutbox.MessageKind || notification.Kind == MentionOutbox.MessageActivity ||
               (notification.Kind == MentionOutbox.CommentKind || notification.Kind == MentionOutbox.CommentActivity
                   ? db.PostComments.Any(comment => comment.Id == notification.ResourceId && comment.DeletedAt == null &&
@@ -40,7 +42,10 @@ internal static class NotificationQueries
             ((notification.Kind != MentionOutbox.MessageKind && notification.Kind != MentionOutbox.MessageActivity) || db.Messages.Any(message =>
                 message.Id == notification.ResourceId && db.ConversationMembers.Any(member =>
                     member.UserId == recipientId && member.ConversationId == notification.ConversationId &&
-                    member.LeftAt == null && member.LastReadSeq < message.Seq))) &&
+                    member.LeftAt == null && (message.ParentMessageId == null
+                        ? member.LastReadSeq < message.Seq
+                        : !db.ThreadSubscriptions.Any(subscription => subscription.ParentMessageId == message.ParentMessageId &&
+                            subscription.UserId == recipientId && subscription.LastReadReplySeq >= message.Seq))))) &&
             (notification.Kind != AnnouncementReminderHandler.Kind || !db.AnnouncementAcknowledgments.Any(ack =>
                 ack.PostId == notification.ResourceId && ack.UserId == recipientId)));
 

@@ -80,7 +80,7 @@ public static class MessageReactionsEndpoints
             .AsNoTracking()
             .SingleOrDefaultAsync(ct);
 
-        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        var actor = await db.ActiveScopePeople.AsNoTracking().SingleOrDefaultAsync(a => a.Id == actorId, ct);
         if (actor is null) return Results.Unauthorized();
         if (conv is null) return Results.Forbid();
 
@@ -130,6 +130,21 @@ public static class MessageReactionsEndpoints
             return Results.NotFound(new { code = "message_not_found", message = "Message not found." });
         }
 
+        var visibilitySeq = message.Seq;
+        if (message.ParentMessageId is { } parentMessageId)
+        {
+            var parentSeq = await db.Messages.AsNoTracking()
+                .Where(parent => parent.Id == parentMessageId && parent.ConversationId == conversationId &&
+                    parent.Seq > member.VisibleFromSeq)
+                .Select(parent => (long?)parent.Seq)
+                .SingleOrDefaultAsync(ct);
+            if (parentSeq is null)
+            {
+                return Results.NotFound(new { code = "message_not_found", message = "Message not found." });
+            }
+            visibilitySeq = parentSeq.Value;
+        }
+
         if (message.DeletedAt.HasValue)
         {
             return Results.Conflict(new { code = "message_recalled", message = "Cannot react to a recalled message." });
@@ -157,6 +172,8 @@ public static class MessageReactionsEndpoints
             {
                 messageId,
                 seq = message.Seq,
+                visibilitySeq,
+                parentMessageId = message.ParentMessageId,
                 emoji = decodedEmoji,
                 userId = actorId,
                 reacted = isAdd
@@ -186,12 +203,13 @@ public static class MessageReactionsEndpoints
             await fanout.NotifyChatDeltaAsync(
                 conversationId,
                 changeSeq,
-                message.Seq,
+                visibilitySeq,
                 new
                 {
                     type = "reaction",
                     messageId,
                     seq = message.Seq,
+                    parentMessageId = message.ParentMessageId,
                     emoji = decodedEmoji,
                     userId = actorId,
                     reacted = isAdd

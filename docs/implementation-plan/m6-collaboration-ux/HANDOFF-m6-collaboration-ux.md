@@ -27,6 +27,25 @@ node (Join-Path $qaRoot 'quick-react.mjs')
 
 At `1440×900`, `390×844`, and `320×700` in Light and Dark, click-to-render took 1.8–2.9 ms locally and 35.7–92.7 ms for the peer. Tab, Enter, Space and Escape worked with visible focus. There was no horizontal overflow, duplicate count, flicker, or unexpected console or network error. The peer applied reactions without reloading history or requesting `/changes` in the sequential case. A held request verified that the local change rendered before the server received it and repeat activation sent a single PUT. The picker applied a ZWJ emoji, and history preserved it across reload.
 
+## M6.2 Message threads
+
+**Verified on November 24, 2026.** The `ChatMessageThreads` migration adds same-conversation parent references, root reply summaries, independent main and thread cursors, and per-user following. Replies commit with the root summary and an authorized live delta. In chat, **Reply in thread** and each root's reply count open the Thread pane. Reply links jump to the target in the pane. Follow state syncs across the user's sessions, and the pane advances the thread cursor when replies are displayed. Main chat unread counts ignore replies.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-ef-10\dotnet-ef.exe'
+& $efCommand migrations add ChatMessageThreads --configuration Release --no-build --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter 'FullyQualifiedName~RichChatThreadTests|FullyQualifiedName~MessagingM2Tests|FullyQualifiedName~PersonalMentionsDeduplicateAndFollowTheConversationReadCursor|FullyQualifiedName~RichChatM61Tests'
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter 'FullyQualifiedName~ContentLinksResolveAcrossPersonalAndTwoOrganizationsWithContextAndNonDisclosure|FullyQualifiedName~RichChatM61Tests|FullyQualifiedName~PersonalChatAndFilesPagePastFifty' --verbosity minimal
+pwsh -File ./scripts/Run-Tests.ps1
+node (Join-Path $env:TEMP 'nexus-m62-qa\thread.mjs')
+git diff --check
+git diff --cached --check
+```
+
+The PostgreSQL 17 integration checks exercised concurrent replies and retries, membership revocation and rejoin boundaries, isolated Personal and Organization scopes, reply pages over 50 items, authorized links and files, and independent main, thread and mention unread state. The full pipeline passed 180 integration tests, 47 client tests, the Release builds with zero warnings and errors, and all three repository audits. The standard run skipped the opt-in Docker Monitor smoke test.
+
+The isolated `Nexus.Web` fixture at `127.0.0.1:5191` served the production client to two Edge contexts. Across `1440×900`, `390×844`, and `320×700` in Light and Dark, replies rendered in 3.2–6.4 ms locally and 39.7–59.9 ms for the peer. The browser verified visible keyboard focus and Escape restoration, follow and unread state, 50-reply paging, copied reply links, optimistic rendering before commit, deduplication on repeat activation, and retry after a simulated failure. Sequential replies caused no timeline reload, duplicate, flicker, overflow, or unexpected console or network error.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

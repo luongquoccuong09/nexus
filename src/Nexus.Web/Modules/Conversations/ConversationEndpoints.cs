@@ -105,8 +105,8 @@ public static class ConversationEndpoints
 
         if (unreadOnly)
         {
-            query = query.Where(item => item.Conv.NextSeq > item.Member.LastReadSeq &&
-                item.Conv.NextSeq > item.Member.VisibleFromSeq);
+            query = query.Where(item => item.Conv.LatestMainSeq > item.Member.LastReadSeq &&
+                item.Conv.LatestMainSeq > item.Member.VisibleFromSeq);
         }
 
         if (beforeAt is { } at && beforeId is { } id)
@@ -172,12 +172,22 @@ public static class ConversationEndpoints
                 .Select(b => b.BlockedUserId)
                 .ToListAsync(ct);
 
+        var unreadByConversation = convIds.Count == 0
+            ? new Dictionary<Guid, long>()
+            : await (from member in db.ConversationMembers.AsNoTracking()
+                     where member.UserId == actorId && member.LeftAt == null && convIds.Contains(member.ConversationId)
+                     join message in db.Messages.AsNoTracking() on member.ConversationId equals message.ConversationId
+                     where message.ParentMessageId == null && message.Seq > member.LastReadSeq && message.Seq > member.VisibleFromSeq
+                     group message by message.ConversationId into messages
+                     select new { ConversationId = messages.Key, Count = messages.LongCount() })
+                .ToDictionaryAsync(x => x.ConversationId, x => x.Count, ct);
+
         // Batch-load the latest visible message per conversation (strictly honoring VisibleFromSeq / SEC-18).
         var latestPreviews = new Dictionary<Guid, object>();
         if (convIds.Count > 0)
         {
             var latestSeqs = await db.Messages.AsNoTracking()
-                .Where(m => convIds.Contains(m.ConversationId) && m.DeletedAt == null &&
+                .Where(m => convIds.Contains(m.ConversationId) && m.ParentMessageId == null && m.DeletedAt == null &&
                     db.ConversationMembers.Any(cm =>
                         cm.ConversationId == m.ConversationId &&
                         cm.UserId == actorId &&
@@ -226,8 +236,6 @@ public static class ConversationEndpoints
                 ? members.FirstOrDefault(m => m.UserId != actorId)
                 : null;
 
-            var unreadCount = Math.Max(0L, x.Conv.NextSeq - Math.Max(x.Member.LastReadSeq, x.Member.VisibleFromSeq));
-
             return new
             {
                 id = x.Conv.Id,
@@ -239,9 +247,10 @@ public static class ConversationEndpoints
                         : (x.Conv.Title ?? "Group"),
                 role = x.Member.Role.ToString(),
                 nextSeq = x.Conv.NextSeq,
+                latestMainSeq = x.Conv.LatestMainSeq,
                 changeSeq = x.Conv.ChangeSeq,
                 lastReadSeq = x.Member.LastReadSeq,
-                unreadCount,
+                unreadCount = unreadByConversation.GetValueOrDefault(x.Conv.Id),
                 memberCount = members.Count,
                 updatedAt = x.Conv.UpdatedAt,
                 lastMessagePreview = latestPreviews.GetValueOrDefault(x.Conv.Id),
@@ -345,6 +354,7 @@ public static class ConversationEndpoints
                 kind = "dm",
                 dmKey = existing.DmKey,
                 nextSeq = existing.NextSeq,
+                latestMainSeq = existing.LatestMainSeq,
                 changeSeq = existing.ChangeSeq,
                 created = false
             });
@@ -400,6 +410,7 @@ public static class ConversationEndpoints
             kind = "dm",
             dmKey = conv.DmKey,
             nextSeq = conv.NextSeq,
+            latestMainSeq = conv.LatestMainSeq,
             changeSeq = conv.ChangeSeq,
             created = inserted > 0
         });
@@ -455,6 +466,7 @@ public static class ConversationEndpoints
                 kind = "self",
                 title = existing.Title ?? SelfChatDefaultTitle,
                 nextSeq = existing.NextSeq,
+                latestMainSeq = existing.LatestMainSeq,
                 changeSeq = existing.ChangeSeq,
                 created = false
             });
@@ -508,6 +520,7 @@ public static class ConversationEndpoints
             kind = "self",
             title = conv.Title ?? SelfChatDefaultTitle,
             nextSeq = conv.NextSeq,
+            latestMainSeq = conv.LatestMainSeq,
             changeSeq = conv.ChangeSeq,
             created = inserted > 0
         });

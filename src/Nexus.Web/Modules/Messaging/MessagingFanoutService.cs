@@ -39,6 +39,16 @@ public sealed class MessagingFanoutService(
         await SendConversationChangedAsync(recipients, new { conversationId, changeSeq, message = (object?)null, delta }, ct);
     }
 
+    public async Task NotifyMessageCreatedAsync(
+        Guid conversationId, long changeSeq, ConversationKind kind, Guid? communityId,
+        MessagingEndpoints.MessageDto message, CancellationToken ct)
+    {
+        var recipients = kind == ConversationKind.Channel
+            ? await ResolveAuthorizedRecipientsAsync(conversationId, kind, communityId, ct)
+            : await ResolveChatRecipientsAsync(conversationId, message.Seq, ct);
+        await SendConversationChangedAsync(recipients, new { conversationId, changeSeq, message }, ct);
+    }
+
     private async Task NotifyConversationChangedInternalAsync(
         Guid conversationId,
         long changeSeq,
@@ -82,9 +92,10 @@ public sealed class MessagingFanoutService(
         Guid userId,
         Guid conversationId,
         long lastReadSeq,
+        long unreadCount,
         CancellationToken cancellationToken = default)
     {
-        var payload = new { conversationId, lastReadSeq };
+        var payload = new { conversationId, lastReadSeq, unreadCount };
         await hubContext.Clients
             .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, userId))
             .SendAsync("ReadStateUpdated", payload, cancellationToken);

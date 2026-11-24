@@ -390,6 +390,8 @@ function App() {
           conversationId: resolved.conversationId,
           messageId: resolved.messageId,
           seq: resolved.seq,
+          parentMessageId: resolved.parentMessageId,
+          parentSeq: resolved.parentSeq,
           nonce
         });
         setWorkspaceTab('chat');

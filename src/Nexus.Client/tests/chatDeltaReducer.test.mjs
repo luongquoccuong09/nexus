@@ -4,8 +4,33 @@ import {
   QUICK_CHAT_REACTIONS,
   applyChatDelta,
   applyReactionToMessage,
+  applyThreadStateToMessage,
   deltaFromConversationEvent
 } from '../src/chat/chatDeltaReducer.ts';
+
+test('M6.2: thread reply deltas update the loaded root once without inserting the reply into the timeline', () => {
+  const reply = { id: 'reply', parentMessageId: 'root', seq: 6 };
+  const delta = deltaFromConversationEvent('message.thread_reply.created', {
+    type: 'thread_reply_created', messageId: 'root', seq: 2, message: reply,
+    replyCount: 2, lastReplyAt: '2026-11-24T10:00:00Z', lastReplySeq: 6
+  });
+  assert.ok(delta);
+  const root = { id: 'root', replyCount: 1, lastReplySeq: 5 };
+  const other = { id: 'other' };
+  const result = applyChatDelta([root, other], delta, 'person', 9);
+  assert.deepEqual(result, [{ ...root, replyCount: 2, lastReplySeq: 6, lastReplyAt: '2026-11-24T10:00:00Z' }, other]);
+  assert.equal(applyChatDelta(result, delta, 'person', 9), result);
+  assert.equal(applyChatDelta(result, { ...delta, lastReplySeq: 5, replyCount: 1 }, 'person', 8), result);
+});
+
+test('M6.2: stale thread state events cannot rewind following or the read cursor', () => {
+  const root = { id: 'root', threadStateVersion: 3, lastReadReplySeq: 5, isFollowing: true };
+  const stale = { parentMessageId: 'root', version: 2, lastReadReplySeq: 3, isFollowing: false };
+  assert.equal(applyThreadStateToMessage(root, stale), root);
+  assert.deepEqual(applyThreadStateToMessage(root, { ...stale, version: 4, lastReadReplySeq: 6 }), {
+    id: 'root', threadStateVersion: 4, lastReadReplySeq: 6, isFollowing: false
+  });
+});
 
 function makeMessage(overrides = {}) {
   return {

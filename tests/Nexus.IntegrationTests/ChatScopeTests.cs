@@ -62,6 +62,7 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
 
         var fileConversation = conversations[0];
         fileConversation.NextSeq = 1;
+        fileConversation.LatestMainSeq = 1;
         var message = new MessageEntity
         {
             Id = Guid.NewGuid(), ConversationId = fileConversation.Id, Seq = 1, SenderId = aliceId,
@@ -356,6 +357,26 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         await ProtectedAsync(bob, readPath, null, HttpStatusCode.NoContent, HttpMethod.Put);
         Assert.Equal(firstReadAt, await db.Notifications.Where(item => item.Id == effect.Id).Select(item => item.ReadAt).SingleAsync());
         Assert.Empty((await GetAsync(bob, "/api/notifications?unreadOnly=true")).GetProperty("items").EnumerateArray());
+
+        var reply = await ProtectedAsync(alice, $"{path}/messages", new
+        {
+            body = $"Thread mention @{bobName}", clientMsgId = "mention-thread", parentMessageId = messageId
+        }, HttpStatusCode.Created);
+        var replyId = reply.GetProperty("id").GetGuid();
+        var laterMain = await PostAsync(alice, $"{path}/messages", new
+        {
+            body = "A later main message", clientMsgId = "mention-later-main"
+        }, HttpStatusCode.Created);
+        await ProtectedAsync(bob, $"{path}/read", new { lastReadSeq = laterMain.GetProperty("seq").GetInt64() },
+            HttpStatusCode.OK, HttpMethod.Put);
+        while (!await db.OutboxMessages.AnyAsync(item => item.ResourceId == replyId && item.CompletedAt != null, timeout.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+        }
+        Assert.Equal(1, (await GetAsync(bob, counts)).GetProperty("unreadMentionCount").GetInt32());
+        await ProtectedAsync(bob, $"{path}/messages/{messageId}/thread/read",
+            new { lastReadReplySeq = reply.GetProperty("seq").GetInt64() }, HttpStatusCode.OK, HttpMethod.Put);
+        Assert.Equal(0, (await GetAsync(bob, counts)).GetProperty("unreadMentionCount").GetInt32());
 
         var preferencePath = $"/api/notifications/conversations/{conversationId}/preference";
         Assert.Equal("all", (await GetAsync(bob, preferencePath)).GetProperty("mode").GetString());
@@ -1037,6 +1058,9 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         Guid oldMsgId;
         Guid hiddenMsgId;
         Guid deletedMsgId;
+        Guid visibleReplyId;
+        Guid hiddenReplyId;
+        Guid hiddenAttachmentId;
         Guid standardCommId;
         Guid standardFeedId;
         Guid oldPostId;
@@ -1056,8 +1080,9 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
                 Kind = ConversationKind.Group,
                 Title = "Deep Link Group " + suffix,
                 CreatedByUserId = aliceId,
-                NextSeq = 80,
-                ChangeSeq = 80,
+                NextSeq = 82,
+                LatestMainSeq = 80,
+                ChangeSeq = 82,
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -1082,6 +1107,33 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
             oldMsgId = msgs[19].Id;    // seq = 20 (well outside latest 50!)
             deletedMsgId = msgs[24].Id; // seq = 25 (deleted)
             db.Messages.AddRange(msgs);
+
+            MessageEntity Reply(MessageEntity parent, long seq)
+            {
+                parent.ReplyCount = 1;
+                parent.LastReplyAt = now;
+                parent.LastReplySeq = seq;
+                return new MessageEntity
+                {
+                    Id = Guid.NewGuid(), ConversationId = groupId, ParentMessageId = parent.Id,
+                    Seq = seq, SenderId = aliceId, ClientMsgId = $"link-reply-{suffix}-{seq}",
+                    PayloadSha256 = new string('b', 64), Body = "Thread reply", CreatedAt = now
+                };
+            }
+
+            var visibleReply = Reply(msgs[19], 81);
+            var hiddenReply = Reply(msgs[4], 82);
+            visibleReplyId = visibleReply.Id;
+            hiddenReplyId = hiddenReply.Id;
+            db.Messages.AddRange(visibleReply, hiddenReply);
+            hiddenAttachmentId = Guid.NewGuid();
+            db.Attachments.Add(new AttachmentEntity
+            {
+                Id = hiddenAttachmentId, ConversationId = groupId, MessageId = hiddenReplyId, UploaderUserId = aliceId,
+                ClientUploadId = "hidden-reply-" + suffix, FileName = "thread.pdf", ContentType = "application/pdf",
+                SizeBytes = 100, Sha256Hex = new string('0', 64), ObjectKey = "fixture/thread.pdf", State = AttachmentState.Attached,
+                ScanStatus = "clean", CreatedAt = now, AttachedAt = now
+            });
 
             // Standard community in Org Alpha with 75 posts (1 pinned + 74 regular, 1 deleted).
             var stdComm = new CommunityEntity
@@ -1194,6 +1246,21 @@ public sealed class ChatScopeTests(PostgresContainerFixture pg, ITestOutputHelpe
         Assert.Equal(groupId, resolvedMsg.GetProperty("conversationId").GetGuid());
         Assert.Equal(oldMsgId, resolvedMsg.GetProperty("messageId").GetGuid());
         Assert.Equal(20L, resolvedMsg.GetProperty("seq").GetInt64());
+
+        var visibleReplyLink = ContentLinkCodec.Encode("m", null, groupId, visibleReplyId);
+        var resolvedReply = await GetAsync(bob, $"/api/links/resolve?target={Uri.EscapeDataString(visibleReplyLink)}");
+        Assert.Equal(visibleReplyId, resolvedReply.GetProperty("messageId").GetGuid());
+        Assert.Equal(oldMsgId, resolvedReply.GetProperty("parentMessageId").GetGuid());
+        Assert.Equal(20L, resolvedReply.GetProperty("parentSeq").GetInt64());
+
+        var hiddenReplyLink = ContentLinkCodec.Encode("m", null, groupId, hiddenReplyId);
+        using var hiddenReplyResponse = await bob.GetAsync($"/api/links/resolve?target={Uri.EscapeDataString(hiddenReplyLink)}");
+        Assert.Equal(HttpStatusCode.NotFound, hiddenReplyResponse.StatusCode);
+
+        var sharedFiles = await GetAsync(bob, $"/api/personal/conversations/{groupId}/shared?tab=files");
+        Assert.Empty(sharedFiles.GetProperty("items").EnumerateArray());
+        using var download = await bob.GetAsync($"/api/personal/files/{hiddenAttachmentId}/download");
+        Assert.Equal(HttpStatusCode.Forbidden, download.StatusCode);
 
         var aroundMsgPage = await GetAsync(bob, $"/api/personal/conversations/{groupId}/messages?aroundSeq=20&limit=50");
         var aroundMsgs = aroundMsgPage.GetProperty("items").EnumerateArray().ToList();

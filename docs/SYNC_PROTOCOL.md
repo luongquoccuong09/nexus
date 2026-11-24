@@ -64,6 +64,12 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 - SignalR sends the same transition as a chat delta with `type: "reaction"`. Live fanout and `/changes` enforce `seq > visible_from_seq` for the target message. The server aggregates history summaries in one query per page and returns them with a cursor from the same snapshot.
 - The SPA displays the pending reaction on the target message immediately and allows one request per message and emoji at a time. SignalR and replay update the confirmed state. A failed request clears the pending change. Replay skips deltas already included in the target message's history snapshot so a live update or delayed history response cannot double-count reactions.
 
+### Chat threads (`M6.2`)
+
+- A reply increments `next_seq` and `change_seq` and updates the root's reply summary in the same transaction. Only root messages advance `latest_main_seq` or move the main read cursor at send time. The idempotency fingerprint includes the root ID for a reply, and existing root-message fingerprints remain valid.
+- The durable `message.thread_reply.created` event contains the root summary and reply DTO. Live `ConversationChanged` sends the same payload to members whose history includes the root. The root visibility floor also applies to later reply reaction events and reply links and attachments. Clients apply the summary to the root and add the reply to an open thread without inserting it in the main timeline.
+- A thread page snapshots its root, replies, and conversation cursor together. The cursor supports catch-up through `/changes`. Follow and read state are per user and are delivered through `ThreadStateUpdated` with a monotonically increasing state version. The thread's read cursor does not advance the main chat cursor.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |

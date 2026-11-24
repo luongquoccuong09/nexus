@@ -10,6 +10,7 @@ export interface ConversationListItem {
   title: string;
   role: string;
   nextSeq: number;
+  latestMainSeq?: number;
   changeSeq: number;
   lastReadSeq: number;
   unreadCount: number;
@@ -38,14 +39,37 @@ export interface ReactionSummary {
   reactedByMe: boolean;
 }
 
-export type ChatDelta = {
+export interface ChatReactionDelta {
   type: 'reaction';
   messageId: string;
   seq?: number;
+  parentMessageId?: string | null;
   emoji: string;
   userId: string;
   reacted: boolean;
-};
+}
+
+export interface ThreadReplyDelta {
+  type: 'thread_reply_created';
+  messageId: string;
+  seq: number;
+  message: ChatMessageItem;
+  replyCount: number;
+  lastReplyAt: string;
+  lastReplySeq: number;
+}
+
+export interface ThreadState {
+  conversationId: string;
+  parentMessageId: string;
+  isFollowing: boolean;
+  lastReadReplySeq: number;
+  lastReplySeq?: number | null;
+  hasUnread: boolean;
+  version: number;
+}
+
+export type ChatDelta = ChatReactionDelta | ThreadReplyDelta;
 
 export interface ChatMessageItem {
   id: string;
@@ -62,6 +86,14 @@ export interface ChatMessageItem {
   attachments?: AttachmentItem[];
   reactions?: ReactionSummary[];
   reactionSnapshotSeq?: number;
+  parentMessageId?: string | null;
+  replyCount?: number;
+  lastReplyAt?: string | null;
+  lastReplySeq?: number | null;
+  isFollowing?: boolean;
+  lastReadReplySeq?: number;
+  threadStateVersion?: number;
+  hasUnread?: boolean;
 }
 
 export interface DirectoryUserLite {

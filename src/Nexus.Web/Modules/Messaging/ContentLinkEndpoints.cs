@@ -205,9 +205,16 @@ public static class ContentLinkEndpoints
         }
 
         var messageId = payload.T!.Value;
-        var message = await db.Messages.AsNoTracking()
-            .Where(m => m.Id == messageId && m.ConversationId == conv.Id && m.Seq > member.VisibleFromSeq && m.DeletedAt == null)
-            .Select(m => new { m.Id, m.Seq })
+        var message = await MessageHistory.VisibleAfter(db, member.VisibleFromSeq)
+            .Where(m => m.Id == messageId && m.ConversationId == conv.Id && m.DeletedAt == null)
+            .Select(m => new
+            {
+                m.Id,
+                m.Seq,
+                m.ParentMessageId,
+                ParentSeq = db.Messages.Where(parent => parent.Id == m.ParentMessageId)
+                    .Select(parent => (long?)parent.Seq).FirstOrDefault()
+            })
             .SingleOrDefaultAsync(ct);
         if (message is null)
         {
@@ -220,7 +227,9 @@ public static class ContentLinkEndpoints
             organizationId = payload.O,
             conversationId = conv.Id,
             messageId = message.Id,
-            seq = message.Seq
+            seq = message.Seq,
+            parentMessageId = message.ParentMessageId,
+            parentSeq = message.ParentSeq
         });
     }
 }

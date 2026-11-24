@@ -507,6 +507,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("kind");
 
+                    b.Property<long>("LatestMainSeq")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("latest_main_seq");
+
                     b.Property<long>("MinAvailableChangeSeq")
                         .HasColumnType("bigint")
                         .HasColumnName("min_available_change_seq");
@@ -1244,11 +1250,27 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("edited_at");
 
+                    b.Property<DateTimeOffset?>("LastReplyAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_reply_at");
+
+                    b.Property<long?>("LastReplySeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_reply_seq");
+
+                    b.Property<Guid?>("ParentMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_message_id");
+
                     b.Property<string>("PayloadSha256")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("payload_sha256");
+
+                    b.Property<int>("ReplyCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("reply_count");
 
                     b.Property<Guid>("SenderId")
                         .HasColumnType("uuid")
@@ -1268,7 +1290,13 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_messages_sender_client_msg_id");
 
-                    b.ToTable("messages", (string)null);
+                    b.HasIndex("ConversationId", "ParentMessageId", "Seq")
+                        .HasDatabaseName("ix_messages_conversation_parent_seq");
+
+                    b.ToTable("messages", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_messages_thread_metadata", "(parent_message_id IS NULL OR (parent_message_id <> id AND reply_count = 0)) AND ((reply_count = 0 AND last_reply_at IS NULL AND last_reply_seq IS NULL) OR (reply_count > 0 AND last_reply_at IS NOT NULL AND last_reply_seq IS NOT NULL AND last_reply_seq > seq))");
+                        });
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
@@ -1433,6 +1461,41 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("post_reactions", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.ThreadSubscriptionEntity", b =>
+                {
+                    b.Property<Guid>("ParentMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_message_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<bool>("IsFollowing")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_following");
+
+                    b.Property<long>("LastReadReplySeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_read_reply_seq");
+
+                    b.Property<long>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("version");
+
+                    b.HasKey("ParentMessageId", "UserId");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_thread_subscriptions_user_id");
+
+                    b.ToTable("thread_subscriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_thread_subscriptions_cursor", "last_read_reply_seq >= 0 AND version >= 0");
+                        });
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Monitor.MonitorAudit", b =>
@@ -2573,6 +2636,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasForeignKey("SenderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId", "ParentMessageId")
+                        .HasPrincipalKey("ConversationId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
@@ -2641,6 +2710,21 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.ThreadSubscriptionEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ParentMessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

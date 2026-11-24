@@ -506,7 +506,7 @@ public static class FilesEndpoints
             .AsNoTracking()
             .Where(a => a.ConversationId == conversationId && a.State == AttachmentState.Attached && a.MessageId != null)
             .Join(
-                db.Messages.AsNoTracking().Where(m => m.ConversationId == conversationId && m.Seq > access.VisibleFromSeq && m.DeletedAt == null),
+                MessageHistory.VisibleAfter(db, access.VisibleFromSeq).Where(m => m.ConversationId == conversationId && m.DeletedAt == null),
                 a => a.MessageId,
                 m => (Guid?)m.Id,
                 (a, m) => new { Attachment = a, MessageSeq = m.Seq });
@@ -793,14 +793,12 @@ public static class FilesEndpoints
         // Enforce soft-delete & visible_from_seq on attached message files (SEC-04 / SEC-18)
         if (attachment.MessageId.HasValue)
         {
-            var msgSeq = await db.Messages.AsNoTracking()
-                .Where(m => m.Id == attachment.MessageId.Value &&
-                            m.ConversationId == attachment.ConversationId &&
-                            m.DeletedAt == null)
-                .Select(m => (long?)m.Seq)
-                .SingleOrDefaultAsync(ct);
+            var canReadMessage = await MessageHistory.VisibleAfter(db, access!.VisibleFromSeq)
+                .AnyAsync(m => m.Id == attachment.MessageId.Value &&
+                               m.ConversationId == attachment.ConversationId &&
+                               m.DeletedAt == null, ct);
 
-            if (!msgSeq.HasValue || (access!.VisibleFromSeq > 0 && msgSeq.Value <= access.VisibleFromSeq))
+            if (!canReadMessage)
             {
                 return (null, Results.Forbid());
             }

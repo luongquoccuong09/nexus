@@ -4,7 +4,7 @@ export type ContentLinkInput =
   | { kind: 'channel'; organizationId: string; conversationId: string };
 
 export type ResolvedContentLink =
-  | { kind: 'message'; organizationId: string | null; conversationId: string; messageId: string; seq: number }
+  | { kind: 'message'; organizationId: string | null; conversationId: string; messageId: string; seq: number; parentMessageId?: string | null; parentSeq?: number | null }
   | { kind: 'post'; organizationId: string; communityId: string; conversationId: string; postId: string }
   | { kind: 'channel'; organizationId: string; communityId: string; conversationId: string };
 
@@ -12,6 +12,8 @@ export interface ChatJumpTarget {
   conversationId: string;
   messageId: string;
   seq: number;
+  parentMessageId?: string | null;
+  parentSeq?: number | null;
   nonce: number;
 }
 

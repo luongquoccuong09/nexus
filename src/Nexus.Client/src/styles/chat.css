@@ -452,7 +452,7 @@
 }
 
 .nx-msg-bubble:has(~ .nx-msg-hover-bar) {
-  max-width: min(620px, calc(100% - 224px));
+  max-width: min(620px, calc(100% - 240px));
 }
 
 .nx-msg-hover-bar {
@@ -1320,6 +1320,106 @@
   margin-top: auto;
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-soft);
+}
+
+.nx-thread-pane .nx-drawer-head {
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+
+.nx-thread-pane .nx-drawer-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.nx-thread-feed {
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+.nx-thread-summary {
+  max-width: 100%;
+  color: var(--text-primary);
+}
+
+.nx-thread-parent,
+.nx-thread-reply {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.nx-thread-parent {
+  background: var(--bg-active);
+}
+
+.nx-thread-reply {
+  background: var(--bg-surface);
+}
+
+.nx-thread-message-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.nx-thread-message-head .nx-thread-copy {
+  margin-inline-start: auto;
+}
+
+.nx-thread-message-head time {
+  font-size: 11px;
+}
+
+.nx-thread-composer,
+.nx-thread-new {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.nx-thread-composer textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+}
+
+@media (min-width: 861px) and (max-width: 1120px) {
+  .nx-chat-layout.has-thread .nx-msg-bubble-line {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .nx-chat-layout.has-thread .nx-msg-row.own .nx-msg-bubble-line {
+    align-items: flex-end;
+  }
+
+  .nx-chat-layout.has-thread .nx-msg-bubble-line .nx-msg-bubble {
+    max-width: 100%;
+  }
+
+  .nx-chat-layout.has-thread .nx-msg-hover-bar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 860px) {
+  .nx-drawer.nx-thread-pane {
+    width: 100%;
+  }
+
+  .nx-chat-layout.has-thread .nx-chat-stage {
+    visibility: hidden;
+  }
+
+  .nx-thread-composer textarea {
+    font-size: 16px;
+  }
 }
 
 .nx-member-picker {

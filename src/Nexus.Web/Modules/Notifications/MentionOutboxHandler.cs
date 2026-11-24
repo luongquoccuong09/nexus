@@ -67,16 +67,19 @@ internal sealed class MentionOutboxHandler(
     {
         MentionOutbox.MessageKind or MentionOutbox.MessageActivity => db.Messages.AsNoTracking()
             .Where(item => item.Id == message.ResourceId && item.DeletedAt == null)
-            .Select(item => new MentionSource(item.ConversationId, item.Seq, item.SenderId)).SingleOrDefaultAsync(ct),
+            .Select(item => new MentionSource(item.ConversationId, item.Seq, item.SenderId, item.ParentMessageId,
+                item.ParentMessageId == null ? item.Seq : db.Messages.Where(root => root.Id == item.ParentMessageId &&
+                    root.ConversationId == item.ConversationId).Select(root => (long?)root.Seq).FirstOrDefault()))
+            .SingleOrDefaultAsync(ct),
         MentionOutbox.PostKind or MentionOutbox.PostActivity => db.ChannelPosts.AsNoTracking()
             .Where(post => post.Id == message.ResourceId && post.OrganizationId == message.OrganizationId && post.DeletedAt == null)
-            .Select(post => new MentionSource(post.ConversationId, null, post.AuthorUserId)).SingleOrDefaultAsync(ct),
+            .Select(post => new MentionSource(post.ConversationId, null, post.AuthorUserId, null, null)).SingleOrDefaultAsync(ct),
         MentionOutbox.CommentKind or MentionOutbox.CommentActivity => (
             from comment in db.PostComments.AsNoTracking()
             join post in db.ChannelPosts.AsNoTracking() on comment.PostId equals post.Id
             where comment.Id == message.ResourceId && comment.DeletedAt == null &&
                   post.OrganizationId == message.OrganizationId && post.DeletedAt == null
-            select new MentionSource(post.ConversationId, null, comment.AuthorUserId)).SingleOrDefaultAsync(ct),
+            select new MentionSource(post.ConversationId, null, comment.AuthorUserId, null, null)).SingleOrDefaultAsync(ct),
         _ => throw new InvalidOperationException("Unsupported mention event kind.")
     };
 
@@ -111,7 +114,7 @@ internal sealed class MentionOutboxHandler(
             return [];
         }
 
-        if (source.Seq is not { } seq)
+        if (source.Seq is not { } seq || source.VisibleSeq is not { } visibleSeq)
         {
             return [];
         }
@@ -131,7 +134,14 @@ internal sealed class MentionOutboxHandler(
             from member in db.ConversationMembers.AsNoTracking()
             join person in people on member.UserId equals person.Id
             where member.ConversationId == conversation.Id && member.LeftAt == null &&
-                  member.VisibleFromSeq < seq && member.LastReadSeq < seq && recipients.Contains(person.Id) &&
+                  member.VisibleFromSeq < visibleSeq && recipients.Contains(person.Id) &&
+                  (source.ParentMessageId == null
+                    ? member.LastReadSeq < seq
+                    : !db.ThreadSubscriptions.Any(subscription => subscription.ParentMessageId == source.ParentMessageId &&
+                        subscription.UserId == member.UserId && subscription.LastReadReplySeq >= seq) &&
+                        (message.Kind != MentionOutbox.MessageActivity || db.ThreadSubscriptions.Any(subscription =>
+                            subscription.ParentMessageId == source.ParentMessageId && subscription.UserId == member.UserId &&
+                            subscription.IsFollowing))) &&
                   !existing.Any(notification => notification.RecipientId == person.Id) &&
                   (!isDm || !db.UserBlocks.Any(block => block.OrganizationId == orgId &&
                       ((block.BlockedUserId == source.AuthorId && block.BlockerUserId == person.Id) ||
@@ -144,6 +154,6 @@ internal sealed class MentionOutboxHandler(
             new ResourceContext(kind, orgId, MembershipRole: member.Role))).ToArray();
     }
 
-    private sealed record MentionSource(Guid ConversationId, long? Seq, Guid AuthorId);
+    private sealed record MentionSource(Guid ConversationId, long? Seq, Guid AuthorId, Guid? ParentMessageId, long? VisibleSeq);
     private sealed record MentionRecipient(ActorContext Actor, ResourceContext Resource);
 }

@@ -40,10 +40,12 @@ import {
 import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
 import { ChatMembersDrawer } from './chat/ChatDrawers';
 import { ChatModals } from './chat/ChatModals';
+import type { ThreadDeltaReceiver, ThreadTarget } from './chat/ThreadPane';
 import {
   QUICK_CHAT_REACTIONS,
   applyChatDelta,
   applyReactionToMessage,
+  applyThreadStateToMessage,
   deltaFromConversationEvent
 } from './chat/chatDeltaReducer';
 import {
@@ -55,12 +57,14 @@ import {
   ConversationListItem,
   DirectoryUserLite,
   GroupMemberItem,
-  ReactionSummary
+  ReactionSummary,
+  ThreadState
 } from './chat/types';
 
 const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
 const LazyVoiceNoteRecorder = lazy(() => import('./voice/VoiceNoteRecorder'));
 const LazyEmojiPicker = lazy(() => import('./EmojiPicker'));
+const LazyThreadPane = lazy(() => import('./chat/ThreadPane').then(module => ({ default: module.ThreadPane })));
 
 const QUICK_REACTION_LABELS: Record<(typeof QUICK_CHAT_REACTIONS)[number], string> = {
   '👍': 'thumbs up',
@@ -125,13 +129,14 @@ export type {
   StorageQuotaSummary
 };
 
-function applyReadState(conversation: ConversationListItem, lastReadSeq: number): ConversationListItem {
-  if (lastReadSeq <= conversation.lastReadSeq) return conversation;
+function applyReadState(conversation: ConversationListItem, lastReadSeq: number, unreadCount?: number): ConversationListItem {
+  if (lastReadSeq < conversation.lastReadSeq) return conversation;
+  if (lastReadSeq === conversation.lastReadSeq && unreadCount === undefined) return conversation;
 
   return {
     ...conversation,
     lastReadSeq,
-    unreadCount: Math.max(0, Math.min(conversation.unreadCount, conversation.nextSeq - lastReadSeq))
+    unreadCount: unreadCount ?? ((conversation.latestMainSeq ?? conversation.nextSeq) <= lastReadSeq ? 0 : conversation.unreadCount)
   };
 }
 
@@ -260,9 +265,33 @@ export function ChatWorkspace({
   const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
 
   // Group members & Files drawer (M2.8 / M3.5)
-  const [rightDrawer, setRightDrawer] = useState<'none' | 'members' | 'files'>('none');
+  const [rightDrawer, setRightDrawer] = useState<'none' | 'members' | 'files' | 'thread'>('none');
   const rightDrawerRef = useRef(rightDrawer);
   rightDrawerRef.current = rightDrawer;
+  const [threadTarget, setThreadTarget] = useState<ThreadTarget | null>(null);
+  const [threadStates, setThreadStates] = useState<Record<string, ThreadState>>({});
+  const [pendingThreadReplies, setPendingThreadReplies] = useState(new Map<string, string>());
+  const pendingThreadReplyRef = useRef(new Map<string, string>());
+  const threadOriginRef = useRef<HTMLElement | null>(null);
+  const threadDeltaRef = useRef<ThreadDeltaReceiver | null>(null);
+  const updateThreadState = useCallback((state: ThreadState) => {
+    setThreadStates(current => (current[state.parentMessageId]?.version ?? -1) > state.version
+      ? current
+      : { ...current, [state.parentMessageId]: state });
+  }, []);
+
+  const updatePendingThreadReply = useCallback((parentMessageId: string, clientMsgId: string, pending: boolean) => {
+    if (pending) pendingThreadReplyRef.current.set(clientMsgId, parentMessageId);
+    else if (!pendingThreadReplyRef.current.delete(clientMsgId)) return;
+    setPendingThreadReplies(new Map(pendingThreadReplyRef.current));
+  }, []);
+
+  const dispatchThreadDelta = useCallback((conversationId: string, delta: ChatDelta, changeSeq: number) => {
+    if (delta.type === 'thread_reply_created' && delta.message.senderId === currentUserIdRef.current) {
+      updatePendingThreadReply(delta.messageId, delta.message.clientMsgId, false);
+    }
+    threadDeltaRef.current?.(conversationId, delta, changeSeq);
+  }, [updatePendingThreadReply]);
   const [groupMemberSearch, setGroupMemberSearch] = useState('');
   const openGroupId = rightDrawer === 'members' ? selectedConversationId : null;
   const openGroupRole = conversations.find(item => item.id === openGroupId)?.role;
@@ -349,6 +378,7 @@ export function ChatWorkspace({
     uploadRequests.current.get(id)?.abort();
     messagesCacheRef.current.delete(id);
     cursorCacheRef.current.delete(id);
+    setThreadStates(current => Object.fromEntries(Object.entries(current).filter(([, state]) => state.conversationId !== id)));
     setLocalDraft(id, null);
     updateOutgoing(items => items.filter(item => item.conversationId !== id));
     setConversations(items => items.filter(item => item.id !== id));
@@ -489,10 +519,10 @@ export function ChatWorkspace({
     });
     if ([401, 403, 404].includes(response.status)) discardConversation(convId);
     if (!response.ok) throw new Error('Unable to update the read cursor.');
-    const { lastReadSeq } = await response.json();
+    const { lastReadSeq, unreadCount } = await response.json();
     const cached = messagesCacheRef.current.get(convId);
     if (cached && lastReadSeq > cached.lastRead) messagesCacheRef.current.set(convId, { ...cached, lastRead: lastReadSeq });
-    setConversations(items => items.map(item => item.id === convId ? applyReadState(item, lastReadSeq) : item));
+    setConversations(items => items.map(item => item.id === convId ? applyReadState(item, lastReadSeq, unreadCount) : item));
     return lastReadSeq as number;
   }, [discardConversation]);
 
@@ -733,18 +763,26 @@ export function ChatWorkspace({
       // A sequential SignalR delta can advance this cursor while HTTP is in flight.
       cursor = Math.max(cursor, cursorCacheRef.current.get(convId) ?? 0);
       const relevantEvents = events.filter(event => event.changeSeq > cursor);
+      const deltas = new Map<number, ChatDelta>();
+      for (const event of relevantEvents) {
+        const delta = deltaFromConversationEvent(event.eventType, event.payload);
+        if (delta) {
+          deltas.set(event.changeSeq, delta);
+          dispatchThreadDelta(convId, delta, event.changeSeq);
+        }
+      }
 
       const applySyncedEvents = (prev: ChatMessageItem[], includeCreated: boolean): ChatMessageItem[] => {
         let next = prev;
         for (const event of relevantEvents) {
           if (event.eventType === 'message.created' && event.payload) {
             const incomingMsg = event.payload as ChatMessageItem;
-            if (includeCreated && !next.some(message => message.id === incomingMsg.id)) {
+            if (includeCreated && !incomingMsg.parentMessageId && !next.some(message => message.id === incomingMsg.id)) {
               next = [...next, incomingMsg].sort((a, b) => a.seq - b.seq);
             }
             continue;
           }
-          const delta = deltaFromConversationEvent(event.eventType, event.payload);
+          const delta = deltas.get(event.changeSeq);
           if (delta) {
             next = applyChatDelta(next, delta, currentUserIdRef.current, event.changeSeq);
           }
@@ -771,7 +809,7 @@ export function ChatWorkspace({
       cursor = nextCursor;
       if (!data.hasMore) return;
     }
-  }, [discardConversation, loadMessagesFull, offlineScope]);
+  }, [discardConversation, dispatchThreadDelta, loadMessagesFull, offlineScope]);
 
   const requestConversationDelta = useCallback((convId: string, full = false) => {
     const existing = deltaRequests.current.get(convId);
@@ -793,6 +831,13 @@ export function ChatWorkspace({
     })().finally(() => deltaRequests.current.delete(convId));
     return request.promise;
   }, [loadMessagesFull, syncConversationDelta]);
+
+  const confirmThreadReply = useCallback((convId: string, clientMsgId: string) => {
+    if (activeConvRef.current === convId && pendingThreadReplyRef.current.has(clientMsgId)) {
+      return requestConversationDelta(convId);
+    }
+    return Promise.resolve();
+  }, [requestConversationDelta]);
 
   const checkPendingAttachments = useCallback(async (conversationId: string, ids: string[], signal?: AbortSignal) => {
     const found = new Set<string>();
@@ -949,6 +994,8 @@ export function ChatWorkspace({
 
   useEffect(() => {
     setRightDrawer('none');
+    setThreadTarget(null);
+    threadOriginRef.current = null;
     setVoiceRecorderOpen(false);
     setReactionPicker(null);
     setOwnershipTransfer(null);
@@ -993,12 +1040,21 @@ export function ChatWorkspace({
       }
       await loadConversations().catch(() => {});
       if (cancelled) return;
-      const existing = messagesCacheRef.current.get(target.conversationId)?.items.some(m => m.id === target.messageId);
+      const existing = messagesCacheRef.current.get(target.conversationId)?.items.some(m => m.id === (target.parentMessageId ?? target.messageId));
       if (!existing) {
-        await loadMessagesAround(target.conversationId, target.seq);
+        await loadMessagesAround(target.conversationId, target.parentSeq ?? target.seq);
       }
       if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
       if (cancelled) return;
+      if (target.parentMessageId) {
+        threadOriginRef.current = null;
+        setThreadTarget({
+          conversationId: target.conversationId, parentMessageId: target.parentMessageId,
+          replyId: target.messageId, replySeq: target.seq
+        });
+        setRightDrawer('thread');
+        return;
+      }
       setHighlightedMessageId(target.messageId);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -1039,7 +1095,7 @@ export function ChatWorkspace({
       const incoming = evt.message;
       const isActive = evt.conversationId === activeConvRef.current;
 
-      if (incoming) {
+      if (incoming && !incoming.parentMessageId) {
         const mergeMessage = (prev: ChatMessageItem[]) => {
           if (prev.some(message => message.id === incoming.id)) return prev;
           return [...prev, incoming].sort((a, b) => a.seq - b.seq);
@@ -1058,13 +1114,15 @@ export function ChatWorkspace({
           const next = prev.map(c => {
             if (c.id !== evt.conversationId) return c;
             foundInList = true;
-            const nextSeq = Math.max(c.nextSeq, incoming.seq);
+            const latestMainSeq = c.latestMainSeq ?? c.nextSeq;
+            const isNewRoot = incoming.seq > latestMainSeq;
             return {
               ...c,
-              nextSeq,
+              nextSeq: Math.max(c.nextSeq, incoming.seq),
+              latestMainSeq: Math.max(latestMainSeq, incoming.seq),
               changeSeq: Math.max(c.changeSeq, evt.changeSeq),
-              unreadCount: c.unreadCount + Math.max(0, nextSeq - Math.max(c.nextSeq, c.lastReadSeq)),
-              updatedAt: incoming.createdAt
+              unreadCount: c.unreadCount + (isNewRoot && incoming.seq > c.lastReadSeq ? 1 : 0),
+              updatedAt: isNewRoot ? incoming.createdAt : c.updatedAt
             };
           });
           return foundInList
@@ -1096,6 +1154,7 @@ export function ChatWorkspace({
         if (knownSeq !== undefined && evt.changeSeq <= knownSeq) return;
 
         if (knownSeq !== undefined && evt.changeSeq === knownSeq + 1) {
+          dispatchThreadDelta(evt.conversationId, delta, evt.changeSeq);
           const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, evt.changeSeq);
           const cached = messagesCacheRef.current.get(evt.conversationId);
           if (cached) {
@@ -1126,14 +1185,18 @@ export function ChatWorkspace({
       }
     });
 
-    connection.on('ReadStateUpdated', (evt: { conversationId: string; lastReadSeq: number }) => {
+    connection.on('ReadStateUpdated', (evt: { conversationId: string; lastReadSeq: number; unreadCount?: number }) => {
       const cached = messagesCacheRef.current.get(evt.conversationId);
       if (cached && evt.lastReadSeq > cached.lastRead) {
         messagesCacheRef.current.set(evt.conversationId, { ...cached, lastRead: evt.lastReadSeq });
       }
       setConversations(previous => previous.map(item =>
-        item.id === evt.conversationId ? applyReadState(item, evt.lastReadSeq) : item
+        item.id === evt.conversationId ? applyReadState(item, evt.lastReadSeq, evt.unreadCount) : item
       ));
+    });
+
+    connection.on('ThreadStateUpdated', (evt: ThreadState) => {
+      if (evt.parentMessageId && !discarded.current.has(evt.conversationId)) updateThreadState(evt);
     });
 
     connection.on('CommunityFeedChanged', (evt: { conversationId: string; delta?: CommunityFeedDelta | null }) => {
@@ -1223,7 +1286,7 @@ export function ChatWorkspace({
       refresh.queued = false;
       void connection.stop();
     };
-  }, [loadGroupMembers, scheduleConversationRefresh]);
+  }, [dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
 
   async function sendCurrentMessage() {
     const conversationId = selectedConversationId;
@@ -1344,14 +1407,36 @@ export function ChatWorkspace({
     onOpenContentLink(token);
   }
 
-  async function handleCopyMessageLink(message: ChatMessageItem) {
+  async function handleCopyMessageLink(message: ChatMessageItem, announce = true) {
     const result = await copyContentLink({
       kind: 'message',
       organizationId: null,
       conversationId: message.conversationId,
       messageId: message.id
     });
-    setNotice(result.ok ? 'Message link copied.' : 'Unable to copy link automatically.');
+    if (announce) setNotice(result.ok ? 'Message link copied.' : 'Unable to copy link automatically.');
+    return result.ok;
+  }
+
+  function openThread(message: ChatMessageItem, trigger: HTMLElement) {
+    if (rightDrawer === 'thread' && threadTarget?.parentMessageId === message.id) {
+      closeThread();
+      return;
+    }
+    threadOriginRef.current = trigger;
+    setReactionPicker(null);
+    setThreadTarget({ conversationId: message.conversationId, parentMessageId: message.id });
+    setRightDrawer('thread');
+  }
+
+  function closeThread() {
+    setRightDrawer('none');
+    const origin = threadOriginRef.current;
+    threadOriginRef.current = null;
+    requestAnimationFrame(() => {
+      if (origin?.isConnected) origin.focus();
+      else composerRef.current?.focus();
+    });
   }
 
   function focusAddReactionButton(messageId: string) {
@@ -1657,11 +1742,18 @@ export function ChatWorkspace({
     return () => observer.disconnect();
   }, [activeId, composer, visible]);
 
-  const activeMessages = useMemo(() => messages.filter(message => message.conversationId === selectedConversationId), [messages, selectedConversationId]);
+  const activeMessages = useMemo(() => messages.filter(message => message.conversationId === selectedConversationId
+    && !message.parentMessageId), [messages, selectedConversationId]);
   const confirmedOwnMessages = new Set(activeMessages.filter(message => message.senderId === currentUserId).map(message => message.clientMsgId));
   const visibleOutgoing = outgoing.filter(item => item.conversationId === selectedConversationId && !confirmedOwnMessages.has(item.clientMsgId));
-  const reading = useChatReading(activeConv?.id ?? null, visible, activeMessages, visibleOutgoing.length,
+  const openThreadTarget = rightDrawer === 'thread' && threadTarget?.conversationId === selectedConversationId ? threadTarget : null;
+  const reading = useChatReading(activeConv?.id ?? null, visible && !openThreadTarget, activeMessages, visibleOutgoing.length,
     activeConv?.lastReadSeq ?? 0, markRead, reconnectCount);
+  const pendingThreadCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const id of pendingThreadReplies.values()) counts.set(id, (counts.get(id) ?? 0) + 1);
+    return counts;
+  }, [pendingThreadReplies]);
 
   useEffect(() => {
     if (!reactionPicker) return;
@@ -1874,7 +1966,7 @@ export function ChatWorkspace({
   };
 
   return (
-    <div className={`nx-chat-layout ${activeConv ? 'has-selection' : ''}`}>
+    <div className={`nx-chat-layout ${activeConv ? 'has-selection' : ''} ${openThreadTarget ? 'has-thread' : ''}`}>
       {/* Conversation Sidebar */}
       <aside className="nx-chat-sidebar" aria-label="Conversations">
         <div className="nx-side-header">
@@ -2271,6 +2363,11 @@ export function ChatWorkspace({
                 const compact = Boolean(prev && !showDate && !showDivider && prev.senderId === m.senderId);
                 const isInteractiveMessage = !m.pending && !m.deletedAt;
                 const isPickerOpen = isInteractiveMessage && reactionPicker?.messageId === m.id;
+                const isThreadOpen = openThreadTarget?.parentMessageId === m.id;
+                const currentThreadState = threadStates[m.id];
+                const threadMessage = currentThreadState ? applyThreadStateToMessage(m, currentThreadState) : m;
+                const replyCount = (m.replyCount ?? 0) + (pendingThreadCounts.get(m.id) ?? 0);
+                const hasUnreadReplies = threadMessage.isFollowing && (m.lastReplySeq ?? 0) > (threadMessage.lastReadReplySeq ?? 0);
                 const optimisticMessage = Object.entries(pendingReactions[m.id] ?? {}).reduce(
                   (message, [emoji, reacted]) => applyReactionToMessage(message, { emoji, reacted, isMine: true }),
                   m
@@ -2417,6 +2514,17 @@ export function ChatWorkspace({
                               >
                                 <Link2 size={13} aria-hidden="true" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                aria-label="Reply in thread"
+                                aria-expanded={isThreadOpen}
+                                title="Reply in thread"
+                                onClick={event => openThread(m, event.currentTarget)}
+                              >
+                                <MessageSquare size={13} aria-hidden="true" />
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -2437,6 +2545,19 @@ export function ChatWorkspace({
                               </button>
                             ))}
                           </div>
+                        )}
+                        {replyCount > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="nx-thread-summary"
+                            aria-expanded={isThreadOpen}
+                            onClick={event => openThread(m, event.currentTarget)}
+                          >
+                            <MessageSquare size={13} aria-hidden="true" />
+                            {replyCount === 1 ? '1 reply' : `${replyCount} replies`}
+                            {hasUnreadReplies && <span> · Unread</span>}
+                          </Button>
                         )}
                       </div>
                     </div>
@@ -2632,6 +2753,28 @@ export function ChatWorkspace({
           </>
         )}
       </section>
+
+      {activeConv && openThreadTarget && (
+        <Suspense fallback={<aside className="nx-drawer nx-thread-pane" aria-label="Thread"><div className="nx-drawer-body"><p role="status">Loading replies…</p></div></aside>}>
+          <LazyThreadPane
+            key={openThreadTarget.parentMessageId + ':' + (openThreadTarget.replyId ?? '')}
+            target={openThreadTarget}
+            currentUserId={currentUserId}
+            visible={visible && !lightboxImage}
+            blocked={blockedPeer}
+            reconnectCount={reconnectCount}
+            deltaRef={threadDeltaRef}
+            liveState={threadStates[openThreadTarget.parentMessageId]}
+            onState={updateThreadState}
+            onPendingReply={updatePendingThreadReply}
+            onConfirmReply={confirmThreadReply}
+            onClose={closeThread}
+            onCopyLink={message => handleCopyMessageLink(message, false)}
+            onInlineLink={handleInlineContentLinkClick}
+            onPreviewImage={setLightboxImage}
+          />
+        </Suspense>
+      )}
 
       {activeConv && activeConv.kind !== 'dm' && activeConv.kind !== 'self' && rightDrawer === 'members' && (
         <ChatMembersDrawer

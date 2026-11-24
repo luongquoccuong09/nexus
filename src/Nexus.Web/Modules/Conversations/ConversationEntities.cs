@@ -38,6 +38,7 @@ public sealed class ConversationEntity
     public string? Description { get; set; }
     public string? DmKey { get; set; }
     public long NextSeq { get; set; }
+    public long LatestMainSeq { get; set; }
     public long ChangeSeq { get; set; }
     public long MinAvailableChangeSeq { get; set; } = 1;
     public Guid CreatedByUserId { get; set; }
@@ -93,6 +94,7 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
         builder.Property(x => x.Description).HasColumnName("description").HasColumnType("text");
         builder.Property(x => x.DmKey).HasColumnName("dm_key").HasMaxLength(128);
         builder.Property(x => x.NextSeq).HasColumnName("next_seq").IsRequired();
+        builder.Property(x => x.LatestMainSeq).HasColumnName("latest_main_seq").HasDefaultValue(0L);
         builder.Property(x => x.ChangeSeq).HasColumnName("change_seq").IsRequired();
         builder.Property(x => x.MinAvailableChangeSeq).HasColumnName("min_available_change_seq").IsRequired();
         builder.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").IsRequired();

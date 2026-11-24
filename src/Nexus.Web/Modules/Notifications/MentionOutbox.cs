@@ -33,7 +33,8 @@ internal static partial class MentionOutbox
         string body,
         DateTimeOffset now,
         bool includeOrdinaryActivity,
-        CancellationToken ct)
+        CancellationToken ct,
+        MessageEntity? threadRoot = null)
     {
         var names = MentionPattern().Matches(body)
             .Select(match => match.Groups["name"].Value.ToLowerInvariant())
@@ -76,18 +77,22 @@ internal static partial class MentionOutbox
         var taggedIds = taggedMemberIds.ToArray();
         if (community is null)
         {
+            var rootId = threadRoot?.Id;
+            var rootSeq = threadRoot?.Seq;
             candidates = from member in db.ConversationMembers.AsNoTracking()
                          join person in db.ActiveScopePeople.AsNoTracking() on member.UserId equals person.Id
                          where member.ConversationId == conversationId && member.LeftAt == null &&
+                               (rootSeq == null || member.VisibleFromSeq < rootSeq) &&
                                person.Id != sender.Id && (includeOrdinaryActivity || broadcast || usernames.Contains(person.UserName.ToLower()) || taggedIds.Contains(person.Id))
-                         select new MentionCandidate(person.Id, person.UserName);
+                         select new MentionCandidate(person.Id, person.UserName, rootId == null || db.ThreadSubscriptions.Any(subscription =>
+                             subscription.ParentMessageId == rootId && subscription.UserId == member.UserId && subscription.IsFollowing));
         }
         else
         {
             candidates = AnnouncementRecipients.Eligible(db, community)
                 .Where(recipient => recipient.Membership.Id != sender.Id &&
                     (includeOrdinaryActivity || broadcast || usernames.Contains(recipient.Membership.UserName.ToLower()) || taggedIds.Contains(recipient.Membership.Id)))
-                .Select(recipient => new MentionCandidate(recipient.Membership.Id, recipient.Membership.UserName));
+                .Select(recipient => new MentionCandidate(recipient.Membership.Id, recipient.Membership.UserName, true));
         }
 
         var recipients = await candidates.ToListAsync(ct);
@@ -100,7 +105,8 @@ internal static partial class MentionOutbox
         }
 
         if (!includeOrdinaryActivity) return;
-        var others = recipients.Where(recipient => !mentioned.Contains(recipient.Id)).Select(recipient => recipient.Id).ToArray();
+        var others = recipients.Where(recipient => recipient.IncludeActivity && !mentioned.Contains(recipient.Id))
+            .Select(recipient => recipient.Id).ToArray();
         if (others.Length == 0) return;
 
         var activityKind = eventKind switch
@@ -127,5 +133,5 @@ internal static partial class MentionOutbox
         });
     }
 
-    private sealed record MentionCandidate(Guid Id, string Username);
+    private sealed record MentionCandidate(Guid Id, string Username, bool IncludeActivity);
 }
