@@ -10,6 +10,7 @@ import { ConversationNotificationButton } from './notificationPreferences';
 import { useChatDrafts } from './chatDrafts';
 import { useChatReading } from './chatReading';
 import { shouldSendOnEnter } from './composerKeys';
+import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { ListPaging, readCursorPage, useCursorList } from './cursorList';
 import { personKey, searchChatCandidates } from './peopleDirectory';
@@ -342,6 +343,7 @@ export function ChatWorkspace({
   const activeConvRef = useRef<string | null>(selectedConversationId);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const compositionActive = useRef(false);
+  const [linkTriggerSignal, setLinkTriggerSignal] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingTimerRef = useRef<number | null>(null);
@@ -1352,6 +1354,18 @@ export function ChatWorkspace({
   }
 
   function handleComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      selectedConversationId &&
+      handleComposerFormattingKeyDown(
+        e,
+        compositionActive.current,
+        composer,
+        nextBody => changeDraft(selectedConversationId, () => ({ body: nextBody })),
+        () => setLinkTriggerSignal(n => n + 1)
+      )
+    ) {
+      return;
+    }
     if (shouldSendOnEnter(e.nativeEvent, compositionActive.current)) {
       e.preventDefault();
       void sendCurrentMessage();
@@ -2177,6 +2191,17 @@ export function ChatWorkspace({
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileInputChange}
+              />
+
+              <ComposerToolbar
+                key={activeConv.id}
+                textareaRef={composerRef}
+                value={composer}
+                onChange={nextBody => changeDraft(activeConv.id, () => ({ body: nextBody }))}
+                disabled={blockedPeer || loadingDraft}
+                placement="top"
+                openLinkSignal={linkTriggerSignal}
+                ariaLabel="Message formatting"
               />
 
               <div className="nx-composer-box">

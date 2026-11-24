@@ -171,7 +171,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 
 - [x] **M6.25** Add authorized links to messages, posts, and channels. Load the target in context and highlight it. Reuse the link route for search hits, activity items, and saved results. → M2.5, M5.5
 - [x] **M6.26** Add Favorites, user-defined sections, hide/show, unread filtering, and message previews for the Chat and Communities sidebars. → M6.16, M6.18, M6.23
-- [ ] **M6.27** Add formatting controls, link insertion, and a searchable Unicode emoji picker with native iPhone rendering. Evaluate a licensed cross-platform style if needed. → M2.9, M6.17, M6.19
+- [x] **M6.27** Add formatting controls, link insertion, and a searchable Unicode emoji picker with native iPhone rendering. Evaluate a licensed cross-platform style if needed. → M2.9, M6.17, M6.19
 - [ ] **M6.28** Add accessible profile cards and timed availability states such as Busy, Away, and Do not disturb. Keep availability and notification preferences coordinated. → M1.11, M2.10, M4.4
 - [ ] **M6.29** Add a private self chat for notes and files with one conversation per account. → M2.13, M3.3
 - [ ] **M6.30** Add Community and Channel metadata editing and Channel archive/restore. Archived channels remain readable and enforce read-only behavior on the server. → M5.1, M5.2

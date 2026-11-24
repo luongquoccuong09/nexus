@@ -35,6 +35,7 @@ import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganizatio
 import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from './sidebarControls';
 import { OrganizationItem } from './organizationControls';
 import { renderSafeMarkdown } from './markdown';
+import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
 import { ConversationNotificationButton } from './notificationPreferences';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
@@ -304,6 +305,9 @@ export function CommunitiesWorkspace({
   // Composer state
   const [postTitle, setPostTitle] = useState('');
   const [postBody, setPostBody] = useState('');
+  const postBodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const postCompositionActive = useRef(false);
+  const [postLinkSignal, setPostLinkSignal] = useState(0);
   const [isAnnouncement, setIsAnnouncement] = useState(false);
   const [requiresAck, setRequiresAck] = useState(false);
   const [includePoll, setIncludePoll] = useState(false);
@@ -1936,7 +1940,18 @@ export function CommunitiesWorkspace({
                       value={postTitle}
                       onChange={e => setPostTitle(e.target.value)}
                     />
+                    <ComposerToolbar
+                      key={selectedConversationId}
+                      textareaRef={postBodyRef}
+                      value={postBody}
+                      onChange={setPostBody}
+                      disabled={posting}
+                      placement="bottom"
+                      openLinkSignal={postLinkSignal}
+                      ariaLabel="Post formatting"
+                    />
                     <textarea
+                      ref={postBodyRef}
                       className="nx-post-body-input"
                       aria-label="Post content"
                       rows={3}
@@ -1947,8 +1962,30 @@ export function CommunitiesWorkspace({
                       }
                       value={postBody}
                       onChange={e => setPostBody(e.target.value)}
+                      onCompositionStart={() => { postCompositionActive.current = true; }}
+                      onCompositionEnd={() => { postCompositionActive.current = false; }}
+                      onBlur={() => { postCompositionActive.current = false; }}
                       onKeyDown={e => {
-                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && postBody.trim() && !posting) {
+                        if (
+                          handleComposerFormattingKeyDown(
+                            e,
+                            postCompositionActive.current,
+                            postBody,
+                            setPostBody,
+                            () => setPostLinkSignal(n => n + 1)
+                          )
+                        ) {
+                          return;
+                        }
+                        if (
+                          !postCompositionActive.current &&
+                          !e.nativeEvent.isComposing &&
+                          e.nativeEvent.keyCode !== 229 &&
+                          (e.ctrlKey || e.metaKey) &&
+                          e.key === 'Enter' &&
+                          postBody.trim() &&
+                          !posting
+                        ) {
                           e.preventDefault();
                           e.currentTarget.form?.requestSubmit();
                         }

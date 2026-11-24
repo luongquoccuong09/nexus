@@ -153,3 +153,16 @@ git diff --check
 ```
 
 The targeted PostgreSQL 17 integration test verified section creation/duplicate-409/rename/delete, favorites, reordering, hide/show preserving history & notification preferences, `VisibleFromSeq` preview isolation (`SEC-18`), Discover non-leakage, `unreadOnly` read-state updates, unauthorized `403`, and immediate removal across both sidebars upon group/org revocation. The full pipeline passed 136 integration tests, 9 client unit tests, Release Web and Desktop builds, and all audits.
+
+## M6.27 Composer formatting, link insertion, and searchable Unicode emoji picker
+
+**Verified on November 24, 2026.** Extended `markdown.ts` with safe unordered (`- ` / `* `) and ordered (`1. `) Markdown list rendering (`<ul/ol class="nx-md-list">`) while preserving `SEC-10` HTML escaping, `http:`/`https:`-only URL validation, and complex Unicode emoji (ZWJ, Fitzpatrick skin tones, variation selectors, flags). Added `composerFormatting.ts` (selection-preserving formatting, safe link insertion, emoji insertion, and IME-safe `Ctrl/Cmd+B/I/E/K` shortcuts), same-origin `emojiCatalog.ts` (400+ native Unicode entries across 9 categories with English keyword search and Fitzpatrick skin-tone modifiers, zero external CDN requests), lazy-loaded `EmojiPicker.tsx` (`React.lazy(() => import('./EmojiPicker'))` emitting an independent Vite chunk `EmojiPicker-*.js` loaded only when opened, with recents and skin-tone preferences persisted in `localStorage`), and reusable `ComposerToolbar.tsx` wired into both the Chat composer (`chat.tsx`) and Community feed post composer (`communities.tsx`) without disrupting `M6.17` IndexedDB drafts or `M6.19` IME composition.
+
+```powershell
+npm.cmd --prefix src/Nexus.Client run test
+npm.cmd --prefix src/Nexus.Client run build
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The full pipeline passed 136 PostgreSQL 17 integration tests, 21 client unit tests (`markdown.test.mjs`, `composerFormatting.test.mjs`, `emojiCatalog.test.mjs`, plus existing suites), Release Web and Desktop builds (0 warnings/0 errors), security guardrails (180 files, 0 violations), UI design compliance (41 files, 0 violations), and knowledge index checks. Live Browser QA against an isolated local PostgreSQL 17 + `Nexus.Web` fixture (`http://127.0.0.1:5195`) with two real accounts (`qaalice27`, `qabob27`) confirmed zero external CDN requests, on-demand same-origin fetch of `EmojiPicker-*.js`, safe link rejection for `javascript:alert(1)`, Escape/Tab focus restoration, recents/skin-tone insertion, draft reload preservation, IME composition guard, cross-account formatted message and community post rendering, and zero horizontal overflow (`scrollWidth <= innerWidth`) across `1440×900`, `390×844`, and `320×700` in both Light and Dark themes with 0 console errors.
