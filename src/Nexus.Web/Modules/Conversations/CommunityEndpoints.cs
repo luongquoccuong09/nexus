@@ -113,11 +113,11 @@ public static partial class CommunityEndpoints
         if (!string.IsNullOrEmpty(search))
         {
             var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
-            query = query.Where(c => EF.Functions.ILike(c.Name, pattern) ||
-                db.Organizations.Any(o => o.Id == c.OrganizationId && EF.Functions.ILike(o.Name, pattern)) ||
-                (discover && c.Description != null && EF.Functions.ILike(c.Description, pattern)) ||
+            query = query.Where(c => EF.Functions.ILike(c.Name, pattern, "\\") ||
+                db.Organizations.Any(o => o.Id == c.OrganizationId && EF.Functions.ILike(o.Name, pattern, "\\")) ||
+                (discover && c.Description != null && EF.Functions.ILike(c.Description, pattern, "\\")) ||
                 (!discover && db.Conversations.Any(ch => ch.CommunityId == c.Id && !ch.IsCommunityMainFeed &&
-                    ch.Title != null && EF.Functions.ILike(ch.Title, pattern))));
+                    ch.Title != null && EF.Functions.ILike(ch.Title, pattern, "\\"))));
         }
         if (after is not null)
         {

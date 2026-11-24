@@ -95,6 +95,11 @@
 - Optional filters include `q` (message body or post title and body), `senderId`, `sender` (display name or username), `conversationId` (chat or channel), `from` (inclusive), `to` (exclusive), and `hasAttachment` (approved attached files). Text matching ignores Vietnamese accents and case. Text filters accept up to 120 characters each.
 - The endpoint returns `{ items, nextCursor }` with `Cache-Control: no-store`. Results include `id`, `kind`, `conversationId`, `conversationTitle`, `authorId`, `authorName`, `createdAt`, `title`, `hasAttachment`, `preview`, and `sourceLink`. Pages use an opaque `cursor` ordered by `(createdAt DESC, id DESC, kind DESC)` with `limit` up to 50. Opening a result rechecks authorization.
 
+### Quick switcher (`M6.7`)
+
+- `GET /api/conversations?q=` filters current chat memberships by group or Self Chat title, or by the DM peer's display name or username. The optional filter accepts up to 120 characters, ignores case and Vietnamese accents, and applies before cursor pagination.
+- The quick switcher uses the Personal conversation list, Organization member Community lists, and Personal chat candidates. Channel results resolve through the existing authorized channel link. `Ctrl+K` or `Cmd+K` opens the switcher from the workspace. A composer consumes its own link-insertion shortcut when focused.
+
 ### Sidebar organization and previews (`M6.26`)
 
 - `GET /api/sidebar?surface=chat|communities` returns `{ surface, sections, items }` (`Cache-Control: no-store`), capped at 50 sections per surface, joining items against current active conversation/community/organization memberships (plus `SEC-20b` Verified status for Official communities).

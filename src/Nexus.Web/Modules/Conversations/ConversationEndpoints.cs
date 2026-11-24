@@ -63,6 +63,7 @@ public static class ConversationEndpoints
         Guid? beforeId,
         int? limit,
         Guid? conversationId,
+        string? q,
         bool unreadOnly = false,
         CancellationToken ct = default)
     {
@@ -86,6 +87,10 @@ public static class ConversationEndpoints
         {
             return Results.BadRequest(new { code = "invalid_cursor", message = "Both beforeAt and beforeId are required for pagination." });
         }
+        if (q?.Length > 120)
+        {
+            return Results.BadRequest(new { code = "invalid_search_query", message = "Search text must be at most 120 characters." });
+        }
 
         var query = db.ConversationMembers
             .AsNoTracking()
@@ -101,6 +106,19 @@ public static class ConversationEndpoints
         if (conversationId is { } requestedId)
         {
             query = query.Where(item => item.Conv.Id == requestedId);
+        }
+        var search = HrCsvImportService.NormalizeVietnamese(q ?? string.Empty);
+        if (search.Length > 0)
+        {
+            var pattern = "%" + search.Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%";
+            query = query.Where(item => item.Conv.Kind == ConversationKind.Dm
+                ? db.ConversationMembers.Any(peer => peer.ConversationId == item.Conv.Id && peer.UserId != actorId && peer.LeftAt == null &&
+                    db.OrganizationPeople.Any(person => person.Id == peer.UserId &&
+                        (EF.Functions.ILike(NexusDbContext.ImmutableUnaccent(person.DisplayName.ToLower()), pattern, "\\") ||
+                         EF.Functions.ILike(NexusDbContext.ImmutableUnaccent(person.UserName.ToLower()), pattern, "\\"))))
+                : EF.Functions.ILike(NexusDbContext.ImmutableUnaccent((item.Conv.Title ??
+                    (item.Conv.Kind == ConversationKind.Self ? SelfChatDefaultTitle : "Group")).ToLower()), pattern, "\\"));
         }
 
         if (unreadOnly)

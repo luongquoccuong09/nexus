@@ -119,6 +119,24 @@ PostgreSQL 17 verified two Organization scopes, current access, Official Communi
 
 The two-account Edge walkthrough passed at `1440×900`, `390×844`, and `320×700` in both themes. Filtered results appeared in 117.1–137.0 ms. It also verified keyboard opening and dismissal, a live recall removing the result, and exact navigation to a Personal message, a workspace message, and a channel post.
 
+## M6.7 Quick switcher
+
+**Verified on November 24, 2026.** The topbar button and `Ctrl+K` or `Cmd+K` open a combobox for Personal conversations, member channels, eligible people, and workspace actions. The arrow keys wrap through results, Enter opens the selection, and Escape restores the prior focus. The switcher observes composition events and respects the composer's link-insertion shortcut. Channel navigation reuses authorized content links and waits for the requested destination during the initial Communities load.
+
+```powershell
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~ConversationNameFilterFindsOnlyCurrentMemberships --verbosity minimal
+node --test src/Nexus.Client/tests/quickSwitcherKeys.test.mjs
+npm.cmd --prefix src/Nexus.Client run build
+node (Join-Path $env:TEMP 'nexus-m67-qa\quick-switcher.mjs')
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+git diff --cached --check
+```
+
+PostgreSQL 17 verified conversation title and peer search, current membership, two Organization scopes, and literal underscores in usernames. The standard gate passed 186 integration tests, 51 client tests, Release builds with zero warnings or errors, and all audits. The opt-in Docker Monitor smoke test was skipped.
+
+The two-account Edge walkthrough passed at `1440×900`, `390×844`, and `320×700` in both themes. It covered all four destination types, focus restoration, channel membership, composer shortcut precedence, and synthetic IME composition events. The input received focus 7.5–9.9 ms after the shortcut in the final run, measured between browser events.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

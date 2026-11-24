@@ -120,6 +120,8 @@ export function CommunitiesWorkspace({
     (cursor, signal) => readCommunityPages(organizations, true, normalizedFilter, cursor, signal),
     communityKey, normalizedFilter ? 180 : 0);
   const communities = communitiesPage.items;
+  const communitiesRef = useRef(communities);
+  communitiesRef.current = communities;
   const discoverCommunities = discoverPage.items;
   const [focusedCommunity, setFocusedCommunity] = useState<CommunityItemDto | null>(null);
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({});
@@ -538,13 +540,14 @@ export function CommunitiesWorkspace({
 
   useEffect(() => {
     if (discoverMode || memberSearch || communitiesPage.loading || initialCommunitySelectedRef.current || selectedCommunityId) return;
+    if (jumpTarget && jumpTarget.nonce !== handledJumpNonceRef.current) return;
     const first = communities[0];
     if (!first) return;
     initialCommunitySelectedRef.current = true;
     setFocusedCommunity(first);
     setSelectedCommunityId(first.id);
     setSelectedConversationId(first.mainFeedConversationId ?? null);
-  }, [communities, communitiesPage.loading, discoverMode, memberSearch, selectedCommunityId]);
+  }, [communities, communitiesPage.loading, discoverMode, jumpTarget, memberSearch, selectedCommunityId]);
 
   useEffect(() => {
     if (!requestedChannel || openedChannel.current === requestedChannel) return;
@@ -595,25 +598,30 @@ export function CommunitiesWorkspace({
     }
 
     return () => {
-      feedRequestRef.current?.controller.abort();
-      feedRequestRef.current = null;
+      const request = feedRequestRef.current;
+      if (request?.conversationId === selectedConversationId) {
+        request.controller.abort();
+        feedRequestRef.current = null;
+      }
     };
   }, [selectedConversationId, loadPosts]);
 
   useEffect(() => {
     if (!jumpTarget || jumpTarget.nonce === handledJumpNonceRef.current) return;
-    handledJumpNonceRef.current = jumpTarget.nonce;
     pendingJumpRef.current = jumpTarget;
     const controller = new AbortController();
     let highlightTimer: number | null = null;
 
     async function runJump(target: CommunityJumpTarget) {
-      const cachedComm = communities.find(c => c.id === target.communityId)
+      const cachedComm = communitiesRef.current.find(c => c.id === target.communityId)
         ?? await lookupCommunity(target.organizationId, target.communityId, controller.signal).catch(() => null);
-      if (!cachedComm || controller.signal.aborted) {
-        if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
+      if (controller.signal.aborted) return;
+      handledJumpNonceRef.current = target.nonce;
+      if (!cachedComm) {
+        pendingJumpRef.current = null;
         return;
       }
+      initialCommunitySelectedRef.current = true;
       setDiscoverMode(false);
       setFocusedCommunity(cachedComm);
       setSelectedCommunityId(cachedComm.id);
@@ -643,7 +651,6 @@ export function CommunitiesWorkspace({
         }, 4000);
       } else {
         if (pendingJumpRef.current?.nonce === target.nonce) pendingJumpRef.current = null;
-        void loadPosts(target.conversationId, false, target.organizationId);
         setHighlightedHeader(true);
         requestAnimationFrame(() => {
           stageHeaderRef.current?.focus({ preventScroll: true });
@@ -657,7 +664,7 @@ export function CommunitiesWorkspace({
       controller.abort();
       if (highlightTimer !== null) window.clearTimeout(highlightTimer);
     };
-  }, [communities, jumpTarget, loadPosts, loadPostsAround, lookupCommunity]);
+  }, [jumpTarget, loadPostsAround, lookupCommunity]);
 
   const updateFeedPosts = useCallback((conversationId: string, updater: (prev: ChannelPostDto[]) => ChannelPostDto[]) => {
     const cached = postsCacheRef.current.get(conversationId);

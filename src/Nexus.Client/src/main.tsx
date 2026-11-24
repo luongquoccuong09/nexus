@@ -2,16 +2,19 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
+import { Activity, Bell, Briefcase, Command, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
   CommunityJumpTarget,
+  encodeContentLink,
   readInitialContentLink,
   resolveContentLink
 } from './contentLinks';
 import type { CommunityFeedDelta } from './chat/types';
 import type { OrganizationMessageTarget } from './OrganizationMessageContext';
+import QuickSwitcher, { type QuickSwitchTarget } from './QuickSwitcher';
+import { isQuickSwitcherShortcut } from './quickSwitcherKeys';
 import {
   AvailabilityChangedEvent,
   AvailabilityDto,
@@ -203,6 +206,7 @@ function App() {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [searchRecalledIds, setSearchRecalledIds] = useState(new Set<string>());
   const [organizationMessage, setOrganizationMessage] = useState<OrganizationMessageTarget | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
@@ -571,6 +575,7 @@ function App() {
 
   const handleOrganizationAccessRevoked = useCallback((revokedOrgId: string) => {
     setMessageSearchOpen(false);
+    setQuickSwitcherOpen(false);
     setSearchRecalledIds(new Set());
     setOrganizationMessage(current => current?.organizationId === revokedOrgId ? null : current);
     setOrganizations(prev => {
@@ -589,9 +594,32 @@ function App() {
   useEffect(() => {
     if (!accountId) {
       setMessageSearchOpen(false);
+      setQuickSwitcherOpen(false);
       setSearchRecalledIds(new Set());
       setOrganizationMessage(null);
     }
+  }, [accountId]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    let composing = false;
+    const startComposition = () => { composing = true; };
+    const endComposition = () => { composing = false; };
+    const openSwitcher = (event: globalThis.KeyboardEvent) => {
+      if (!isQuickSwitcherShortcut(event, composing) || document.querySelector('[role="dialog"][data-state="open"]')) return;
+      event.preventDefault();
+      setQuickSwitcherOpen(true);
+    };
+    window.addEventListener('compositionstart', startComposition, true);
+    window.addEventListener('compositionend', endComposition, true);
+    window.addEventListener('blur', endComposition, true);
+    window.addEventListener('keydown', openSwitcher);
+    return () => {
+      window.removeEventListener('compositionstart', startComposition, true);
+      window.removeEventListener('compositionend', endComposition, true);
+      window.removeEventListener('blur', endComposition, true);
+      window.removeEventListener('keydown', openSwitcher);
+    };
   }, [accountId]);
   const signOutChannelRef = useRef<BroadcastChannel | null>(null);
   useEffect(() => {
@@ -697,6 +725,28 @@ function App() {
   async function handleOpenDm(targetUserId: string) {
     setError('');
     try { await openDm(targetUserId); } catch (failure) { setError((failure as Error).message); }
+  }
+
+  async function chooseQuickSwitch(target: QuickSwitchTarget) {
+    if (target.kind === 'conversation') {
+      setActiveConvId(target.id);
+      setWorkspaceTab('chat');
+    } else if (target.kind === 'person') {
+      await openDm(target.id);
+    } else if (target.kind === 'channel') {
+      await openContentLink(encodeContentLink({ kind: 'channel', organizationId: target.organizationId, conversationId: target.id }));
+    } else if (target.kind === 'action') {
+      switch (target.action) {
+        case 'search': setMessageSearchOpen(true); break;
+        case 'new-chat': setNewChatOpen(true); break;
+        case 'communities':
+          setCommunitiesVisited(true);
+          setWorkspaceTab('communities');
+          break;
+        case 'people': setWorkspaceTab('directory'); break;
+        default: setWorkspaceTab(target.action);
+      }
+    }
   }
 
   async function handleUpdateCustomStatus(e: FormEvent) {
@@ -1214,6 +1264,10 @@ function App() {
           </div>
 
           <div className="nx-topbar-right">
+            <Button variant="ghost" size="sm" iconOnly aria-label="Quick switcher" title="Quick switcher (Ctrl+K or Cmd+K)"
+              aria-keyshortcuts="Control+k Meta+k" onClick={() => setQuickSwitcherOpen(true)}>
+              <Command size={16} aria-hidden="true" />
+            </Button>
             <Button variant="ghost" size="sm" iconOnly aria-label="Search messages" title="Search messages"
               onClick={() => setMessageSearchOpen(true)}>
               <Search size={16} aria-hidden="true" />
@@ -1311,6 +1365,10 @@ function App() {
               />
             </Suspense>
           </div>
+          {quickSwitcherOpen && (
+            <QuickSwitcher organizations={organizations} currentUserId={user.id} candidateRevision={candidateRevision}
+              onClose={() => setQuickSwitcherOpen(false)} onChoose={chooseQuickSwitch} />
+          )}
           {messageSearchOpen && (
             <Suspense fallback={null}>
               <MessageSearchDialog organizations={organizations} recalledIds={searchRecalledIds} onClose={() => {

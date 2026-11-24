@@ -15,7 +15,8 @@ export function Modal({
   size = 'md',
   children,
   footer,
-  initialFocusRef
+  initialFocusRef,
+  onEscapeKeyDown
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,6 +26,7 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  onEscapeKeyDown?: (event: KeyboardEvent) => void;
 }) {
   const wasOpenRef = useRef(false);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -42,6 +44,7 @@ export function Modal({
         <Dialog.Overlay className="nx-modal-overlay" />
         <Dialog.Content
           className={`nx-modal-content ${size === 'xl' ? 'xl' : ''}`.trim()}
+          onEscapeKeyDown={onEscapeKeyDown}
           onOpenAutoFocus={event => {
             if (initialFocusRef?.current) {
               event.preventDefault();

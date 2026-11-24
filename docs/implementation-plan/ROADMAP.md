@@ -142,7 +142,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 - [x] **M6.4** Pin and save messages (UX-03/04) with PUT/DELETE.
 - [x] **M6.5** Mark unread using manual_unread_from_seq.
 - [x] **M6.6** Search messages with membership enforced inside the query. Filter by sender, channel, date and attachment.
-- [ ] **M6.7** Ctrl+K quick switcher and keyboard navigation (UX-10).
+- [x] **M6.7** Ctrl+K quick switcher and keyboard navigation (UX-10).
 - [ ] **M6.8** Optional DM read receipts. ⚑ D09
 - [ ] **M6.9** Forward messages after checking file access at the destination.
 

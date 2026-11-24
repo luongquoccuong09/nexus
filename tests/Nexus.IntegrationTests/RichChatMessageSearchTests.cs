@@ -18,6 +18,53 @@ namespace Nexus.IntegrationTests;
 public sealed class RichChatMessageSearchTests(PostgresContainerFixture pg)
 {
     [Fact]
+    public async Task ConversationNameFilterFindsOnlyCurrentMemberships()
+    {
+        await using var app = NexusHost.Build([
+            "--urls", "http://127.0.0.1:0", "--NexusDatabase:RequireTls=false",
+            "--NexusOrganizations:AllowCreation=true", "--NexusSecurity:RateLimitPermitsPerMinute=600",
+            $"--ConnectionStrings:Runtime={pg.RuntimeConnectionString}"
+        ]);
+        await app.StartAsync();
+        var origin = new Uri(Assert.Single(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses));
+        using var owner = Client(origin);
+        using var peer = Client(origin);
+        using var outsider = Client(origin);
+        await Register(owner, "Switcher owner");
+        var partner = await Register(peer, "Nguyễn Văn Hòa");
+        var peerId = partner.GetProperty("id").GetGuid();
+        await Register(outsider, "Switcher outsider");
+        await Post(owner, "/api/personal/contacts/requests", new { username = partner.GetProperty("username").GetString() }, HttpStatusCode.Accepted);
+        var contact = Assert.Single((await Get(peer, "/api/personal/contacts/requests")).GetProperty("items").EnumerateArray());
+        await Call(peer, HttpMethod.Put, $"/api/personal/contacts/requests/{contact.GetProperty("id").GetGuid()}",
+            HttpStatusCode.NoContent, new { accept = true });
+        var username = Uri.EscapeDataString(partner.GetProperty("username").GetString()!);
+        var candidates = (await Get(owner, $"/api/personal/people/chat-candidates?q={username}")).GetProperty("items");
+        Assert.Equal(peerId, Assert.Single(candidates.EnumerateArray()).GetProperty("id").GetGuid());
+        const string personal = "/api/personal/conversations";
+        var group = await Call(owner, HttpMethod.Post, personal + "/groups", HttpStatusCode.Created,
+            new { title = "Kế hoạch quý 4", memberUserIds = new[] { peerId } }, idempotency: true);
+        const string filter = "?q=ke%20hoach&limit=1";
+        var hits = (await Get(peer, personal + filter)).GetProperty("items");
+        Assert.Equal(group.GetProperty("id").GetGuid(), Assert.Single(hits.EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Empty((await Get(outsider, personal + filter)).GetProperty("items").EnumerateArray());
+        await Call(owner, HttpMethod.Delete, $"{personal}/{group.GetProperty("id").GetGuid()}/members/{peerId}", HttpStatusCode.NoContent);
+        Assert.Empty((await Get(peer, personal + filter)).GetProperty("items").EnumerateArray());
+
+        var orgId = await CreateOrg(owner, "Switcher workspace");
+        var orgPath = $"/api/organizations/{orgId}";
+        var invite = await Post(owner, orgPath + "/invitations", new { }, HttpStatusCode.OK);
+        await Post(peer, "/api/organizations/invitations/redeem", new { token = invite.GetProperty("token").GetString() }, HttpStatusCode.OK);
+        var dm = await Post(owner, $"{orgPath}/conversations/dm", new { targetUserId = peerId }, HttpStatusCode.OK);
+        var dmHits = (await Get(owner, $"{orgPath}/conversations?q=nguyen%20van")).GetProperty("items");
+        Assert.Equal(dm.GetProperty("id").GetGuid(), Assert.Single(dmHits.EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Empty((await Get(owner, personal + "?q=nguyen%20van")).GetProperty("items").EnumerateArray());
+        await Call(outsider, HttpMethod.Get, $"{orgPath}/conversations?q=nguyen%20van", HttpStatusCode.Forbidden);
+        var otherOrg = await CreateOrg(outsider, "Switcher workspace two");
+        Assert.Empty((await Get(outsider, $"/api/organizations/{otherOrg}/conversations?q=nguyen%20van")).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
     public async Task SearchFindsVietnameseAndFiltersUnreadableMessagesAndChannelsInsideScope()
     {
         await using var app = NexusHost.Build([

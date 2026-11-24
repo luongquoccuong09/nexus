@@ -118,7 +118,7 @@ public static class PersonalConnections
         if (!string.IsNullOrEmpty(search))
         {
             var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
-            people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern) || EF.Functions.ILike(u.UserName ?? string.Empty, pattern));
+            people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern, "\\") || EF.Functions.ILike(u.UserName ?? string.Empty, pattern, "\\"));
         }
         if (after is not null)
         {
