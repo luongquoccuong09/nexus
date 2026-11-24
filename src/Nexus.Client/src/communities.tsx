@@ -1,5 +1,5 @@
 import { orgApiPath, orgFetch, protectedRequest } from './scope';
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, MouseEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArrowLeft,
@@ -28,7 +28,7 @@ import {
   Users,
   X
 } from 'lucide-react';
-import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
+import { AttachmentItem, formatBytes } from './attachments/attachmentUtils';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
 import { CommunityJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
 import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
@@ -40,12 +40,10 @@ import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership'
 import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
 import { loadOrganizationDepartments, personKey, searchPeopleScope } from './peopleDirectory';
 import { Badge, Button, EmptyState, ToastBar } from './ui';
-import { ChannelFilesDrawer } from './communities/ChannelFilesDrawer';
 import { CommunityMembersDrawer } from './communities/CommunityMembersDrawer';
 import { CommunityModals } from './communities/CommunityModals';
 import { CommunityPostCard } from './communities/CommunityPostCard';
 import {
-  ChannelFileItem,
   ChannelPostDto,
   CommunitiesWorkspaceProps,
   CommunityChannelDto,
@@ -58,6 +56,8 @@ import {
   ReactionChange,
   applyReaction
 } from './communities/types';
+
+const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
 
 export type { CommunityChannelDto, CommunityItemDto, DepartmentLite, DirectoryUserLite };
 
@@ -181,19 +181,13 @@ export function CommunitiesWorkspace({
   }, []);
   const [ownershipTransfer, setOwnershipTransfer] = useState<OwnershipTransfer | null>(null);
   const communityMembersHeading = useRef<HTMLHeadingElement | null>(null);
-  const channelFilesHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const filesBtnWrapRef = useRef<HTMLSpanElement | null>(null);
+  const [sharedRefreshNonce, setSharedRefreshNonce] = useState(0);
   const [addMemberUserId, setAddMemberUserId] = useState('');
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [mappedDeptId, setMappedDeptId] = useState('');
 
-  // M6.31 Channel Files drawer & Feed post attachments state
-  const [channelFiles, setChannelFiles] = useState<ChannelFileItem[]>([]);
-  const [loadingChannelFiles, setLoadingChannelFiles] = useState(false);
-  const [channelFilesError, setChannelFilesError] = useState<'refresh' | 'older' | null>(null);
-  const [channelFilesNext, setChannelFilesNext] = useState<{ before: string; beforeId: string } | null>(null);
-  const [channelFilesQuota, setChannelFilesQuota] = useState<StorageQuotaSummary | null>(null);
-  const channelFilesReqRef = useRef<AbortController | null>(null);
+  // M6.31 Feed post attachments state
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [isComposerDragOver, setIsComposerDragOver] = useState(false);
@@ -514,96 +508,14 @@ export function CommunitiesWorkspace({
     }
   }, [refreshAddCandidates, refreshMemberList]);
 
-  const loadChannelFiles = useCallback(async (orgId: string, conversationId: string, older = false) => {
-    if (older && !channelFilesNext) return;
-    channelFilesReqRef.current?.abort();
-    const controller = new AbortController();
-    channelFilesReqRef.current = controller;
-    setLoadingChannelFiles(true);
-    setChannelFilesError(null);
-    try {
-      const params = new URLSearchParams({ limit: '50' });
-      if (older && channelFilesNext) {
-        params.set('before', channelFilesNext.before);
-        params.set('beforeId', channelFilesNext.beforeId);
-      }
-      const res = await orgFetch(orgId, `/api/channels/${conversationId}/files?${params}`, {
-        credentials: 'same-origin',
-        signal: controller.signal
-      });
-      if (controller.signal.aborted || activeFeedRef.current !== conversationId) return;
-      if ([401, 403, 404].includes(res.status)) {
-        setChannelFiles([]);
-        setChannelFilesNext(null);
-        setChannelFilesQuota(null);
-        setChannelFilesError(older ? 'older' : 'refresh');
-        return;
-      }
-      if (!res.ok) throw new Error('Unable to load channel files.');
-      const data = await res.json();
-      if (controller.signal.aborted || activeFeedRef.current !== conversationId) return;
-      const incoming: ChannelFileItem[] = data.items ?? [];
-      setChannelFiles(prev => {
-        const merged = new Map(older ? prev.map(item => [item.id, item]) : []);
-        for (const item of incoming) merged.set(item.id, item);
-        return [...merged.values()];
-      });
-      setChannelFilesNext(
-        data.hasMore && data.nextBefore && data.nextBeforeId
-          ? { before: data.nextBefore, beforeId: data.nextBeforeId }
-          : null
-      );
-      setChannelFilesQuota(data.quota ?? null);
-    } catch {
-      if (!controller.signal.aborted && activeFeedRef.current === conversationId) {
-        setChannelFilesError(older ? 'older' : 'refresh');
-      }
-    } finally {
-      if (channelFilesReqRef.current === controller) {
-        channelFilesReqRef.current = null;
-        if (!controller.signal.aborted && activeFeedRef.current === conversationId) {
-          setLoadingChannelFiles(false);
-        }
-      }
-    }
-  }, [channelFilesNext]);
-
-  const loadChannelFilesRef = useRef(loadChannelFiles);
-  loadChannelFilesRef.current = loadChannelFiles;
-
   useEffect(() => {
     uploadControllerRef.current?.abort();
     uploadControllerRef.current = null;
-    channelFilesReqRef.current?.abort();
-    channelFilesReqRef.current = null;
     setUploadingFiles(false);
     setPendingAttachments([]);
     setQuotaWarning('');
     setIsComposerDragOver(false);
-    setChannelFiles([]);
-    setChannelFilesNext(null);
-    setChannelFilesError(null);
-    setChannelFilesQuota(null);
-    if (rightDrawerRef.current === 'files' && selectedConversationId && activeOrgId) {
-      void loadChannelFilesRef.current(activeOrgId, selectedConversationId, false);
-    }
   }, [activeOrgId, selectedConversationId]);
-
-  useEffect(() => {
-    if (!filesOpen) return;
-    requestAnimationFrame(() => channelFilesHeadingRef.current?.focus());
-    const handleEsc = (ev: globalThis.KeyboardEvent) => {
-      if (ev.key === 'Escape' && !lightboxImage) {
-        ev.preventDefault();
-        setRightDrawer('none');
-        requestAnimationFrame(() => {
-          filesBtnWrapRef.current?.querySelector('button')?.focus();
-        });
-      }
-    };
-    document.addEventListener('keydown', handleEsc);
-    return () => document.removeEventListener('keydown', handleEsc);
-  }, [filesOpen, lightboxImage]);
 
   useEffect(() => {
     if (!membersOpen || !activeOrgId || orgDepartmentsByOrg[activeOrgId]) return;
@@ -785,8 +697,7 @@ export function CommunitiesWorkspace({
             return [...pinned, nextPost, ...regular];
           });
           if (rightDrawerRef.current === 'files' && activeFeedRef.current === changedConversationId && incoming.attachments?.length) {
-            const orgId = communityOrgByConvRef.current.get(changedConversationId);
-            if (orgId) void loadChannelFilesRef.current(orgId, changedConversationId, false);
+            setSharedRefreshNonce(n => n + 1);
           }
           return;
         }
@@ -1332,9 +1243,6 @@ export function CommunitiesWorkspace({
           };
           setPendingAttachments(prev => (prev.some(a => a.id === normalized.id) ? prev : [...prev, normalized]));
         }
-        if (data.quota) {
-          setChannelFilesQuota(data.quota as StorageQuotaSummary);
-        }
         if (typeof data.quotaWarning === 'string' && data.quotaWarning) {
           setQuotaWarning(data.quotaWarning);
         }
@@ -1530,7 +1438,7 @@ export function CommunitiesWorkspace({
         );
       });
       if (rightDrawerRef.current === 'files' && serverAttachments.length > 0) {
-        void loadChannelFilesRef.current(targetOrgId, targetConvId, false);
+        setSharedRefreshNonce(n => n + 1);
       }
       if (pollPayload || (canManage && savedIsAnnouncement && savedRequiresAck)) {
         void loadPosts(targetConvId, true);
@@ -2481,18 +2389,15 @@ export function CommunitiesWorkspace({
                   <Button
                     variant={filesOpen ? 'primary' : 'default'}
                     size="sm"
-                    aria-label="Channel files"
-                    title="Files"
+                    aria-label="Shared content"
+                    title="Shared"
                     onClick={() => {
                       const next = filesOpen ? 'none' : 'files';
                       setRightDrawer(next);
-                      if (next === 'files' && selectedCommunity && selectedConversationId) {
-                        void loadChannelFiles(selectedCommunity.organizationId, selectedConversationId, false);
-                      }
                     }}
                   >
                     <FolderOpen size={15} aria-hidden="true" />
-                    <span className="nx-stage-action-label">Files</span>
+                    <span className="nx-stage-action-label">Shared</span>
                   </Button>
                 </span>
                 <Button
@@ -2835,26 +2740,23 @@ export function CommunitiesWorkspace({
               </div>
 
               {filesOpen && selectedCommunity && selectedConversationId && (
-                <ChannelFilesDrawer
-                  headingRef={channelFilesHeadingRef}
-                  files={channelFiles}
-                  loading={loadingChannelFiles}
-                  error={channelFilesError}
-                  hasMore={channelFilesNext !== null}
-                  quota={channelFilesQuota}
-                  onClose={() => {
-                    setRightDrawer('none');
-                    requestAnimationFrame(() => {
-                      filesBtnWrapRef.current?.querySelector('button')?.focus();
-                    });
-                  }}
-                  onPreviewImage={setLightboxImage}
-                  onGoToPost={onOpenContentLink ? sourceLink => {
-                    if (window.innerWidth <= 860) setRightDrawer('none');
-                    onOpenContentLink(sourceLink);
-                  } : undefined}
-                  onLoadMore={older => void loadChannelFiles(selectedCommunity.organizationId, selectedConversationId, older)}
-                />
+                <Suspense fallback={<aside className="nx-drawer" aria-label="Shared content"><div className="nx-drawer-body"><p className="nx-muted" role="status">Loading shared content…</p></div></aside>}>
+                  <LazySharedContentDrawer
+                    key={`${selectedConversationId}:${sharedRefreshNonce}`}
+                    scope={{ kind: 'organization', organizationId: selectedCommunity.organizationId }}
+                    conversationId={selectedConversationId}
+                    originLabel="post"
+                    lightboxOpen={Boolean(lightboxImage)}
+                    onClose={() => {
+                      setRightDrawer('none');
+                      requestAnimationFrame(() => {
+                        filesBtnWrapRef.current?.querySelector('button')?.focus();
+                      });
+                    }}
+                    onPreviewImage={setLightboxImage}
+                    onOpenContentLink={onOpenContentLink}
+                  />
+                </Suspense>
               )}
 
               {membersOpen && (

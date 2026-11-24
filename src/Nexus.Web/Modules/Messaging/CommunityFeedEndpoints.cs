@@ -427,6 +427,21 @@ public static partial class CommunityFeedEndpoints
         }
 
         db.ChannelPosts.Add(post);
+        foreach (var link in SharedLinkExtractor.Extract(body))
+        {
+            db.SharedLinks.Add(new SharedLinkEntity
+            {
+                Id = Guid.CreateVersion7(),
+                OrganizationId = actor.OrganizationId,
+                ConversationId = conversationId,
+                PostId = post.Id,
+                SenderUserId = actorId,
+                Url = link.Url,
+                Host = link.Host,
+                Label = link.Label,
+                CreatedAt = now
+            });
+        }
         foreach (var att in pendingAttachments)
         {
             att.PostId = post.Id;

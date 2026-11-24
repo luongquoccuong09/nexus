@@ -1,6 +1,4 @@
 import { RefObject } from 'react';
-import { Download, FileText } from 'lucide-react';
-import { AttachmentItem, StorageQuotaSummary, formatBytes } from '../attachments/attachmentUtils';
 import { LiveAvailabilityEntry, resolveUserAvailability } from '../availability';
 import { ListPaging } from '../cursorList';
 import { ProfileCardTarget } from '../ProfileCardModal';
@@ -191,110 +189,6 @@ export function ChatMembersDrawer({
             Leave group
           </Button>
         </div>
-      </div>
-    </aside>
-  );
-}
-
-export interface ChatFilesDrawerProps {
-  files: AttachmentItem[];
-  loading: boolean;
-  moreFiles: boolean;
-  filesLoadError: 'refresh' | 'older' | null;
-  quota: StorageQuotaSummary | null;
-  onPreviewImage: (att: AttachmentItem) => void;
-  onLoadMore: (older: boolean) => void;
-  onClose: () => void;
-}
-
-export function ChatFilesDrawer({
-  files,
-  loading,
-  moreFiles,
-  filesLoadError,
-  quota,
-  onPreviewImage,
-  onLoadMore,
-  onClose
-}: ChatFilesDrawerProps) {
-  return (
-    <aside className="nx-drawer" aria-label="Conversation files">
-      <div className="nx-drawer-head">
-        <strong>{loading && files.length === 0 ? 'Files' : `Files (${files.length})`}</strong>
-        <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-      </div>
-      <div className="nx-drawer-body">
-        {quota && (
-          <div className="nx-quota-box">
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <strong>Conversation storage</strong>
-              <span className="nx-muted">
-                {formatBytes(quota.conversationUsedBytes)} / {formatBytes(quota.conversationQuotaBytes)}
-              </span>
-            </div>
-            <div className="nx-quota-bar">
-              <div
-                className="nx-quota-fill"
-                style={{
-                  width: `${Math.min(100, Math.round((quota.conversationUsedBytes / Math.max(1, quota.conversationQuotaBytes)) * 100))}%`
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {loading && files.length === 0 ? (
-          <p className="nx-muted" role="status" style={{ textAlign: 'center', marginTop: 18 }}>
-            Loading files…
-          </p>
-        ) : files.length === 0 && !filesLoadError ? (
-          <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
-            No files shared in this conversation yet.
-          </p>
-        ) : (
-          <div>
-            {files.map(f => (
-              <div className="nx-row" key={f.id}>
-                {f.thumbnailUrl ? (
-                  <button
-                    type="button"
-                    className="nx-file-preview-trigger"
-                    onClick={() => onPreviewImage(f)}
-                    title={`Preview ${f.fileName}`}
-                  >
-                    <img src={f.thumbnailUrl} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
-                    <span style={{ minWidth: 0 }}>
-                      <div className="nx-att-file-title">{f.fileName}</div>
-                      <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
-                    </span>
-                  </button>
-                ) : (
-                  <div className="nx-att-file-meta">
-                    <FileText size={18} aria-hidden="true" />
-                    <div style={{ minWidth: 0 }}>
-                      <div className="nx-att-file-title">{f.fileName}</div>
-                      <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
-                    </div>
-                  </div>
-                )}
-                <a href={f.downloadUrl} download={f.fileName} className="nx-btn sm" aria-label={`Download ${f.fileName}`} title={`Download ${f.fileName}`}>
-                  <Download size={13} aria-hidden="true" />
-                </a>
-              </div>
-            ))}
-          </div>
-        )}
-        {(moreFiles || filesLoadError || (loading && files.length > 0)) && (
-          <div className="nx-empty-side">
-            {filesLoadError && <p className="nx-error" role="alert">Unable to load files.</p>}
-            {loading && files.length > 0 && <span role="status">Loading files…</span>}
-            {!loading && (
-              <Button size="sm" onClick={() => onLoadMore(filesLoadError !== 'refresh')}>
-                {filesLoadError ? 'Retry' : 'Load more files'}
-              </Button>
-            )}
-          </div>
-        )}
       </div>
     </aside>
   );

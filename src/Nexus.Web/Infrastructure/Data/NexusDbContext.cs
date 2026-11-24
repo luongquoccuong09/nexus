@@ -85,6 +85,7 @@ public sealed class NexusDbContext
     public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
     public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
     public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();
+    public DbSet<SharedLinkEntity> SharedLinks => Set<SharedLinkEntity>();
     public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<ConversationNotificationPreference> ConversationNotificationPreferences => Set<ConversationNotificationPreference>();

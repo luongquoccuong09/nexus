@@ -1,5 +1,5 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
@@ -38,7 +38,7 @@ import {
   stageMessage
 } from './offlineQueue';
 import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
-import { ChatFilesDrawer, ChatMembersDrawer } from './chat/ChatDrawers';
+import { ChatMembersDrawer } from './chat/ChatDrawers';
 import { ChatModals } from './chat/ChatModals';
 import {
   ChatMessageItem,
@@ -47,9 +47,10 @@ import {
   ConversationCursor,
   ConversationListItem,
   DirectoryUserLite,
-  FilesCursor,
   GroupMemberItem
 } from './chat/types';
+
+const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
 
 export type {
   AttachmentItem,
@@ -209,11 +210,8 @@ export function ChatWorkspace({
   const [ownershipTransfer, setOwnershipTransfer] = useState<OwnershipTransfer | null>(null);
   const groupMembersHeading = useRef<HTMLElement | null>(null);
   const [addMemberId, setAddMemberId] = useState('');
-  const [conversationFiles, setConversationFiles] = useState<AttachmentItem[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
-  const [moreFiles, setMoreFiles] = useState(false);
-  const [filesLoadError, setFilesLoadError] = useState<'refresh' | 'older' | null>(null);
-  const [quota, setQuota] = useState<StorageQuotaSummary | null>(null);
+  const [sharedRefreshNonce, setSharedRefreshNonce] = useState(0);
+  const sharedBtnWrapRef = useRef<HTMLSpanElement | null>(null);
   const [uploads, setUploads] = useState(new Set<string>());
   const uploadRequests = useRef(new Map<string, AbortController>());
   const uploadingFiles = Boolean(selectedConversationId && uploads.has(selectedConversationId));
@@ -255,8 +253,6 @@ export function ChatWorkspace({
   const conversationRefreshRef = useRef({ timer: null as number | null, queued: false });
   const conversationListRequest = useRef<AbortController | null>(null);
   const conversationPages = useRef<{ count: number; next: ConversationCursor | null }>({ count: 1, next: null });
-  const filesListRequest = useRef<AbortController | null>(null);
-  const filePages = useRef<{ count: number; next: FilesCursor | null }>({ count: 1, next: null });
   const deltaRequests = useRef(new Map<string, { queued: boolean; full: boolean; promise: Promise<void> }>());
   const messagesCacheRef = useRef(new Map<string, { items: ChatMessageItem[]; hasMore: boolean; nextBeforeSeq: number | null; lastRead: number }>());
   const cursorCacheRef = useRef(new Map<string, number>());
@@ -545,67 +541,6 @@ export function ChatWorkspace({
     if (activeConvRef.current === convId) await refreshGroupMembers.current();
   }, []);
 
-  const loadConversationFiles = useCallback(async (convId: string, older = false) => {
-    const start = older ? filePages.current.next : null;
-    if (older && !start) return;
-
-    filesListRequest.current?.abort();
-    const controller = new AbortController();
-    filesListRequest.current = controller;
-    setLoadingFiles(true);
-    setFilesLoadError(null);
-    try {
-      let fileQuota: StorageQuotaSummary | null = null;
-      const { items, next, pages } = await readPages<AttachmentItem, FilesCursor>(
-        start, older ? 1 : filePages.current.count, async cursor => {
-          const params = new URLSearchParams({ limit: '50' });
-          if (cursor) {
-            params.set('before', cursor.createdAt);
-            params.set('beforeId', cursor.id);
-          }
-          const response = await fetch(`/api/conversations/${convId}/files?${params}`, { signal: controller.signal });
-          if ([401, 403, 404].includes(response.status)) {
-            if (!controller.signal.aborted && activeConvRef.current === convId) {
-              setConversationFiles([]);
-              setQuota(null);
-              setMoreFiles(false);
-              filePages.current = { count: 1, next: null };
-            }
-            throw new Error('File access is unavailable.');
-          }
-          if (!response.ok) throw new Error('Unable to load files.');
-          const page = await response.json();
-          fileQuota = page.quota ?? null;
-          return {
-            items: page.items ?? [],
-            next: page.hasMore && page.nextBefore && page.nextBeforeId
-              ? { createdAt: page.nextBefore, id: page.nextBeforeId } : null
-          };
-        }
-      );
-
-      if (!controller.signal.aborted && activeConvRef.current === convId) {
-        filePages.current = { count: older ? filePages.current.count + pages : pages, next };
-        setMoreFiles(next !== null);
-        setConversationFiles(previous => {
-          const merged = new Map(older ? previous.map(item => [item.id, item]) : []);
-          for (const item of items) merged.set(item.id, item);
-          return [...merged.values()];
-        });
-        setQuota(fileQuota);
-      }
-    } catch {
-      if (!controller.signal.aborted && activeConvRef.current === convId) {
-        setFilesLoadError(older ? 'older' : 'refresh');
-      }
-    } finally {
-      if (filesListRequest.current === controller) {
-        filesListRequest.current = null;
-        if (!controller.signal.aborted && activeConvRef.current === convId) setLoadingFiles(false);
-      }
-    }
-  }, []);
-
   const uploadFilesToConversation = useCallback(async (fileList: File[]) => {
     const target = selectedConversationId;
     if (!target || loadingDraft || fileList.length === 0 || staging.current.has(target) || uploadRequests.current.has(target)) return;
@@ -635,9 +570,6 @@ export function ChatWorkspace({
         if (data.attachment) {
           const { id, fileName, sizeBytes, thumbnailUrl } = data.attachment as AttachmentItem;
           changeDraft(target, current => ({ attachments: [...current.attachments, { id, fileName, sizeBytes, thumbnailUrl }] }));
-        }
-        if (data.quota && activeConvRef.current === target) {
-          setQuota(data.quota as StorageQuotaSummary);
         }
       }
     } catch {
@@ -791,7 +723,7 @@ export function ChatWorkspace({
       if (cached) messagesCacheRef.current.set(conversationId, { ...cached, items: merge(cached.items) });
       if (activeConvRef.current === conversationId) {
         setMessages(merge);
-        if (attachments?.length && rightDrawerRef.current === 'files') void loadConversationFiles(conversationId);
+        if (attachments?.length && rightDrawerRef.current === 'files') setSharedRefreshNonce(n => n + 1);
       }
       updateOutgoing(items => items.filter(current => current.clientMsgId !== clientMsgId));
       await dequeueOfflineMessage(offlineScope, clientMsgId).catch(onStorageError);
@@ -802,7 +734,7 @@ export function ChatWorkspace({
       sendingRef.current.delete(clientMsgId);
       setSending(new Set(sendingRef.current));
     }
-  }, [checkPendingAttachments, loadConversationFiles, offlineScope, onStorageError, scheduleConversationRefresh, updateOutgoing]);
+  }, [checkPendingAttachments, offlineScope, onStorageError, scheduleConversationRefresh, updateOutgoing]);
 
   const flushOfflineQueue = useCallback(async () => {
     const beforeRead = outgoingRef.current;
@@ -881,15 +813,8 @@ export function ChatWorkspace({
     setOwnershipTransfer(null);
     compositionActive.current = false;
     setMoreMenuOpen(false);
-    setConversationFiles([]);
-    filesListRequest.current?.abort();
-    filePages.current = { count: 1, next: null };
-    setMoreFiles(false);
-    setFilesLoadError(null);
-    setLoadingFiles(false);
     setGroupMemberSearch('');
     setAddMemberId('');
-    setQuota(null);
     setTypingText('');
     setError('');
     setHasNewerMessages(false);
@@ -911,9 +836,6 @@ export function ChatWorkspace({
         if (activeConvRef.current === selectedConversationId) setError('Unable to load messages.');
       });
     }
-    return () => {
-      filesListRequest.current?.abort();
-    };
   }, [selectedConversationId, requestConversationDelta]);
 
   useEffect(() => {
@@ -1935,23 +1857,21 @@ export function ChatWorkspace({
                 {!isSelfConv && (
                   <ConversationNotificationButton key={activeConv.id} conversationId={activeConv.id} />
                 )}
-                <Button
-                  variant={rightDrawer === 'files' ? 'primary' : 'default'}
-                  size="sm"
-                  aria-label="Conversation files"
-                  title="Files"
-                  onClick={() => {
-                    const next = rightDrawer === 'files' ? 'none' : 'files';
-                    if (next === 'files') {
-                      setLoadingFiles(true);
-                      void loadConversationFiles(activeConv.id);
-                    }
-                    setRightDrawer(next);
-                  }}
-                >
-                  <FolderOpen size={15} aria-hidden="true" />
-                  <span className="nx-stage-action-label">Files</span>
-                </Button>
+                <span ref={sharedBtnWrapRef}>
+                  <Button
+                    variant={rightDrawer === 'files' ? 'primary' : 'default'}
+                    size="sm"
+                    aria-label="Shared content"
+                    title="Shared"
+                    onClick={() => {
+                      const next = rightDrawer === 'files' ? 'none' : 'files';
+                      setRightDrawer(next);
+                    }}
+                  >
+                    <FolderOpen size={15} aria-hidden="true" />
+                    <span className="nx-stage-action-label">Shared</span>
+                  </Button>
+                </span>
                 {activeConv.kind === 'dm' && activeConv.peer ? (
                   <div className="nx-menu-wrap" ref={moreMenuRef}>
                     <button
@@ -2341,16 +2261,23 @@ export function ChatWorkspace({
       )}
 
       {activeConv && rightDrawer === 'files' && (
-        <ChatFilesDrawer
-          files={conversationFiles}
-          loading={loadingFiles}
-          moreFiles={moreFiles}
-          filesLoadError={filesLoadError}
-          quota={quota}
-          onPreviewImage={setLightboxImage}
-          onLoadMore={older => void loadConversationFiles(activeConv.id, older)}
-          onClose={() => setRightDrawer('none')}
-        />
+        <Suspense fallback={<aside className="nx-drawer" aria-label="Shared content"><div className="nx-drawer-body"><p className="nx-muted" role="status">Loading shared content…</p></div></aside>}>
+          <LazySharedContentDrawer
+            key={`${activeConv.id}:${sharedRefreshNonce}`}
+            scope={{ kind: 'personal' }}
+            conversationId={activeConv.id}
+            originLabel="message"
+            lightboxOpen={Boolean(lightboxImage)}
+            onClose={() => {
+              setRightDrawer('none');
+              requestAnimationFrame(() => {
+                sharedBtnWrapRef.current?.querySelector('button')?.focus();
+              });
+            }}
+            onPreviewImage={setLightboxImage}
+            onOpenContentLink={onOpenContentLink}
+          />
+        </Suspense>
       )}
 
       <ChatModals

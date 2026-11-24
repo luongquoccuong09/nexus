@@ -712,7 +712,7 @@ public static class FilesEndpoints
         return (attachment, null);
     }
 
-    private static async Task<object> BuildQuotaSummaryAsync(
+    internal static async Task<object> BuildQuotaSummaryAsync(
         NexusDbContext db,
         Guid userId,
         Guid conversationId,

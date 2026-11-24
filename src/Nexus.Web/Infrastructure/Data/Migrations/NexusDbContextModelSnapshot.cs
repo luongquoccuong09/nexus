@@ -833,6 +833,83 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Files.SharedLinkEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Host")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("host");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("text")
+                        .HasColumnName("label");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<long?>("MessageSeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("message_seq");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<Guid?>("PostId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("post_id");
+
+                    b.Property<Guid>("SenderUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sender_user_id");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId")
+                        .HasDatabaseName("ix_shared_links_message_id")
+                        .HasFilter("message_id IS NOT NULL");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("PostId")
+                        .HasDatabaseName("ix_shared_links_post_id")
+                        .HasFilter("post_id IS NOT NULL");
+
+                    b.HasIndex("SenderUserId");
+
+                    b.HasIndex("ConversationId", "CreatedAt", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("ix_shared_links_conv_created");
+
+                    b.ToTable("shared_links", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_shared_links_lengths", "char_length(url) <= 2048 AND char_length(host) <= 255 AND (label IS NULL OR char_length(label) <= 160)");
+
+                            t.HasCheckConstraint("ck_shared_links_safe_scheme", "url ~* '^https?://'");
+
+                            t.HasCheckConstraint("ck_shared_links_single_parent", "(message_id IS NOT NULL AND post_id IS NULL AND message_seq IS NOT NULL) OR (post_id IS NOT NULL AND message_id IS NULL AND message_seq IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Identity.AdminPasswordResetLinkEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2172,6 +2249,36 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()
                         .HasForeignKey("UploaderUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Files.SharedLinkEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Conversations.ConversationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Messaging.ChannelPostEntity", null)
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("SenderUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

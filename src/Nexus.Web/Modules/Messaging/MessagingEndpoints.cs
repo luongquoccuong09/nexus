@@ -212,6 +212,22 @@ public static class MessagingEndpoints
         };
 
         db.Messages.Add(message);
+        foreach (var link in SharedLinkExtractor.Extract(body))
+        {
+            db.SharedLinks.Add(new SharedLinkEntity
+            {
+                Id = Guid.CreateVersion7(),
+                OrganizationId = db.ConversationOrganizationId,
+                ConversationId = conversationId,
+                MessageId = message.Id,
+                MessageSeq = message.Seq,
+                SenderUserId = actorId,
+                Url = link.Url,
+                Host = link.Host,
+                Label = link.Label,
+                CreatedAt = now
+            });
+        }
         db.ConversationEvents.Add(evt);
         if (conv!.Kind != ConversationKind.Self)
         {
