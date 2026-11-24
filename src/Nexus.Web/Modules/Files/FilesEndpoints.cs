@@ -222,42 +222,9 @@ public static class FilesEndpoints
             }
         }
 
-        // Enforce per-user and per-conversation storage quotas (M3.5)
-        var currentUserBytes = await db.Attachments.AsNoTracking()
-            .Where(a => a.UploaderUserId == actorId && (a.State == AttachmentState.Pending || a.State == AttachmentState.Attached))
-            .SumAsync(a => (long?)a.SizeBytes, ct) ?? 0L;
-
-        var currentConvBytes = await db.Attachments.AsNoTracking()
-            .Where(a => a.ConversationId == conversationId && (a.State == AttachmentState.Pending || a.State == AttachmentState.Attached))
-            .SumAsync(a => (long?)a.SizeBytes, ct) ?? 0L;
-
         var incomingBytes = inspected.ProcessedBytes.LongLength + (inspected.ThumbnailPngBytes?.LongLength ?? 0L);
-
-        if (currentUserBytes + incomingBytes > policy.PerUserQuotaBytes)
-        {
-            return Results.Json(
-                new
-                {
-                    code = "user_quota_exceeded",
-                    message = "Your personal storage quota has been reached.",
-                    usedBytes = currentUserBytes,
-                    quotaBytes = policy.PerUserQuotaBytes
-                },
-                statusCode: StatusCodes.Status413PayloadTooLarge);
-        }
-
-        if (currentConvBytes + incomingBytes > policy.PerConversationQuotaBytes)
-        {
-            return Results.Json(
-                new
-                {
-                    code = "conversation_quota_exceeded",
-                    message = "This conversation's storage quota has been reached.",
-                    usedBytes = currentConvBytes,
-                    quotaBytes = policy.PerConversationQuotaBytes
-                },
-                statusCode: StatusCodes.Status413PayloadTooLarge);
-        }
+        var quotaError = await AttachmentQuota.CheckAsync(db, actorId, conversationId, incomingBytes, policy, ct);
+        if (quotaError is not null) return quotaError;
 
         // Quarantine & malware scan before releasing to private storage (M3.6)
         FileScanResult scanResult;
@@ -344,8 +311,32 @@ public static class FilesEndpoints
             CreatedAt = now
         };
 
-        db.Attachments.Add(entity);
-        await db.SaveChangesAsync(ct);
+        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+        {
+            await AttachmentQuota.LockAsync(db, actorId, conversationId, ct);
+            existing = await db.Attachments.AsNoTracking()
+                .SingleOrDefaultAsync(a => a.UploaderUserId == actorId && a.ClientUploadId == clientUploadId, ct);
+            if (existing is null)
+            {
+                quotaError = await AttachmentQuota.CheckAsync(db, actorId, conversationId, incomingBytes, policy, ct);
+                if (quotaError is null)
+                {
+                    db.Attachments.Add(entity);
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                }
+            }
+        }
+        if (quotaError is not null || existing is not null)
+        {
+            await storage.DeleteAsync(savedMain.ObjectKey, CancellationToken.None);
+            if (savedThumb is not null) await storage.DeleteAsync(savedThumb.ObjectKey, CancellationToken.None);
+            if (quotaError is not null) return quotaError;
+            if (existing!.ConversationId != conversationId)
+                return Results.Conflict(new { code = "client_upload_id_conflict", message = "clientUploadId was already used in a different conversation." });
+            var existingQuota = await BuildQuotaSummaryAsync(db, actorId, conversationId, policy, ct);
+            return Results.Ok(new { attachment = ToDto(existing), quota = existingQuota });
+        }
 
         NexusMeters.UploadCreated();
         var quota = await BuildQuotaSummaryAsync(db, actorId, conversationId, policy, ct);

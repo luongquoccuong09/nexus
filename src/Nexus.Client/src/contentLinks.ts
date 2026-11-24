@@ -3,6 +3,8 @@ export type ContentLinkInput =
   | { kind: 'post'; organizationId: string; conversationId: string; postId: string }
   | { kind: 'channel'; organizationId: string; conversationId: string };
 
+export type ForwardableContent = Exclude<ContentLinkInput, { kind: 'channel' }>;
+
 export type ResolvedContentLink =
   | { kind: 'message'; organizationId: string | null; conversationId: string; messageId: string; seq: number; parentMessageId?: string | null; parentSeq?: number | null }
   | { kind: 'post'; organizationId: string; communityId: string; conversationId: string; postId: string }

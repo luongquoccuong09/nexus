@@ -8,6 +8,7 @@ import {
   clearContentLinkFromUrl,
   CommunityJumpTarget,
   encodeContentLink,
+  type ForwardableContent,
   readInitialContentLink,
   resolveContentLink
 } from './contentLinks';
@@ -45,6 +46,7 @@ const ActivityWorkspace = lazy(() =>
 const CommunitiesWorkspace = lazy(() => import('./communities'));
 const ChatWorkspace = lazy(() => import('./chat').then(module => ({ default: module.ChatWorkspace })));
 const MessageSearchDialog = lazy(() => import('./MessageSearchDialog'));
+const ForwardContentDialog = lazy(() => import('./ForwardContentDialog'));
 const OrganizationMessageContext = lazy(() => import('./OrganizationMessageContext'));
 const MonitorWorkspace = lazy(() => import('./monitor/MonitorWorkspace'));
 const BlockedUsersSettings = lazy(() =>
@@ -214,6 +216,7 @@ function App() {
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [searchRecalledIds, setSearchRecalledIds] = useState(new Set<string>());
   const [organizationMessage, setOrganizationMessage] = useState<OrganizationMessageTarget | null>(null);
+  const [forwardSource, setForwardSource] = useState<ForwardableContent | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
   const inviteAutoOpenedRef = useRef(false);
 
@@ -582,6 +585,7 @@ function App() {
   const handleOrganizationAccessRevoked = useCallback((revokedOrgId: string) => {
     setMessageSearchOpen(false);
     setQuickSwitcherOpen(false);
+    setForwardSource(null);
     setSearchRecalledIds(new Set());
     setOrganizationMessage(current => current?.organizationId === revokedOrgId ? null : current);
     setOrganizations(prev => {
@@ -636,6 +640,7 @@ function App() {
     if (!accountId) {
       setMessageSearchOpen(false);
       setQuickSwitcherOpen(false);
+      setForwardSource(null);
       setSearchRecalledIds(new Set());
       setOrganizationMessage(null);
     }
@@ -1391,9 +1396,11 @@ function App() {
                 onSelectConversation={setActiveConvId}
                 onNewChat={() => setNewChatOpen(true)}
                 onOpenContentLink={token => void openContentLink(token)}
+                onForwardContent={setForwardSource}
                 onMessageRecalled={messageId => {
                   if (messageSearchOpen) setSearchRecalledIds(current => new Set([...current, messageId]));
                   setOrganizationMessage(current => current?.messageId === messageId ? null : current);
+                  setForwardSource(current => current?.kind === 'message' && current.messageId === messageId ? null : current);
                 }}
                 showDmReadReceipts={connState === 'connected' && user.dmReadReceipts?.enabled === true && pendingDmReceipts !== false}
                 onDmReadReceiptPreference={applyDmReceiptPreference}
@@ -1423,7 +1430,17 @@ function App() {
           )}
           {organizationMessage && (
             <Suspense fallback={null}>
-              <OrganizationMessageContext target={organizationMessage} onClose={() => setOrganizationMessage(null)} />
+              <OrganizationMessageContext target={organizationMessage} onClose={() => setOrganizationMessage(null)}
+                onForwardContent={source => { setOrganizationMessage(null); setForwardSource(source); }} />
+            </Suspense>
+          )}
+          {forwardSource && (
+            <Suspense fallback={null}>
+              <ForwardContentDialog source={forwardSource} organizations={organizations} onClose={() => setForwardSource(null)}
+                onForwarded={() => {
+                  setNotice(forwardSource.kind === 'post' ? 'Post forwarded.' : 'Message forwarded.');
+                  setForwardSource(null);
+                }} />
             </Suspense>
           )}
           {newChatOpen && (
@@ -1447,6 +1464,7 @@ function App() {
                   jumpTarget={communityJumpTarget}
                   feedListenerRef={communityFeedListenerRef}
                   onOpenContentLink={token => void openContentLink(token)}
+                  onForwardContent={setForwardSource}
                   onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
                   onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
                   onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}

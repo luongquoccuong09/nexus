@@ -97,6 +97,10 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
             .HasFilter("post_id IS NOT NULL")
             .HasDatabaseName("ix_attachments_post_id");
 
+        builder.HasIndex(x => x.ObjectKey).HasDatabaseName("ix_attachments_object_key");
+        builder.HasIndex(x => x.ThumbnailObjectKey).HasFilter("thumbnail_object_key IS NOT NULL")
+            .HasDatabaseName("ix_attachments_thumbnail_object_key");
+
         builder.HasIndex(x => new { x.ConversationId, x.CreatedAt, x.Id })
             .IsDescending(false, true, true)
             .HasFilter("state = 'Attached' AND post_id IS NOT NULL")

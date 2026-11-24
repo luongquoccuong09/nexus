@@ -828,11 +828,18 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasIndex("MessageId")
                         .HasDatabaseName("ix_attachments_message_id");
 
+                    b.HasIndex("ObjectKey")
+                        .HasDatabaseName("ix_attachments_object_key");
+
                     b.HasIndex("OrganizationId");
 
                     b.HasIndex("PostId")
                         .HasDatabaseName("ix_attachments_post_id")
                         .HasFilter("post_id IS NOT NULL");
+
+                    b.HasIndex("ThumbnailObjectKey")
+                        .HasDatabaseName("ix_attachments_thumbnail_object_key")
+                        .HasFilter("thumbnail_object_key IS NOT NULL");
 
                     b.HasIndex("State", "CreatedAt")
                         .HasDatabaseName("ix_attachments_state_created");
@@ -1148,6 +1155,16 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
+                    b.Property<string>("ForwardClientMsgId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("forward_client_msg_id");
+
+                    b.Property<string>("ForwardPayloadSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("forward_payload_sha256");
+
                     b.Property<bool>("IsAnnouncement")
                         .HasColumnType("boolean")
                         .HasColumnName("is_announcement");
@@ -1183,9 +1200,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AuthorUserId");
-
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("AuthorUserId", "ForwardClientMsgId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_channel_posts_forward_author_client_id")
+                        .HasFilter("forward_client_msg_id IS NOT NULL");
 
                     b.HasIndex("ConversationId", "IsPinned", "CreatedAt")
                         .HasDatabaseName("ix_channel_posts_conv_pinned_created");
@@ -1273,6 +1293,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset?>("EditedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("edited_at");
+
+                    b.Property<bool>("IsForwarded")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_forwarded");
 
                     b.Property<DateTimeOffset?>("LastReplyAt")
                         .HasColumnType("timestamp with time zone")

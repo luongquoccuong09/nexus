@@ -1,7 +1,7 @@
 import { MutableRefObject } from 'react';
 import { AttachmentItem } from '../attachments/attachmentUtils';
 import { AvailabilityChangedEvent, AvailabilityDto, LiveAvailabilityEntry } from '../availability';
-import { ChatJumpTarget } from '../contentLinks';
+import { ChatJumpTarget, type ForwardableContent } from '../contentLinks';
 import { ProfileCardTarget } from '../ProfileCardModal';
 import type { DmReadReceipt, DmReadReceiptPreference } from './dmReadReceipts';
 
@@ -121,6 +121,7 @@ export interface ChatMessageItem {
   clientMsgId: string;
   body: string;
   createdAt: string;
+  isForwarded?: boolean;
   editedAt?: string | null;
   deletedAt?: string | null;
   version?: number;
@@ -206,6 +207,7 @@ export interface CommunityFeedDelta {
     authorAvatarUrl?: string | null;
     title?: string | null;
     body: string;
+    isForwarded?: boolean;
     isAnnouncement: boolean;
     requiresAcknowledgment: boolean;
     acknowledgedCount: number;
@@ -241,6 +243,7 @@ export interface ChatWorkspaceProps {
   onSelectConversation: (id: string | null) => void;
   onNewChat: () => void;
   onOpenContentLink?: (token: string) => void;
+  onForwardContent: (source: ForwardableContent) => void;
   onMessageRecalled?: (messageId: string) => void;
   showDmReadReceipts: boolean;
   onDmReadReceiptPreference: (preference: DmReadReceiptPreference) => void;

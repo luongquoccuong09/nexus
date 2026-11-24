@@ -98,6 +98,7 @@ public static class NexusHost
         app.MapMessageMutationEndpoints();
         app.MapMessageBookmarkEndpoints();
         app.MapMessageSearchEndpoints();
+        app.MapMessageForwardEndpoints();
         app.MapCommunityFeedEndpoints();
         app.MapFilesEndpoints();
         app.MapSharedContentEndpoints();
@@ -109,6 +110,7 @@ public static class NexusHost
         app.MapMessageMutationEndpoints(OrganizationScope.PersonalApi);
         app.MapMessageBookmarkEndpoints(OrganizationScope.PersonalApi);
         app.MapMessageSearchEndpoints(OrganizationScope.PersonalApi);
+        app.MapMessageForwardEndpoints(OrganizationScope.PersonalApi);
         app.MapFilesEndpoints(OrganizationScope.PersonalApi);
         app.MapSharedContentEndpoints(OrganizationScope.PersonalApi);
         app.MapHub<MessagingHub>(OrganizationScope.Hub);

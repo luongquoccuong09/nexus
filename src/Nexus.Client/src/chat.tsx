@@ -1,7 +1,7 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
 import { CSSProperties, ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, Mail, MessageSquare, Mic, MoreVertical, Paperclip, Pin, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Forward, Link2, Mail, MessageSquare, Mic, MoreVertical, Paperclip, Pin, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
 import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
@@ -216,6 +216,7 @@ export function ChatWorkspace({
   onSelectConversation,
   onNewChat,
   onOpenContentLink,
+  onForwardContent,
   onMessageRecalled,
   showDmReadReceipts,
   onDmReadReceiptPreference,
@@ -2786,6 +2787,7 @@ export function ChatWorkspace({
                               </div>
                             )}
                             {compact && m.editedAt && !m.deletedAt && <span className="nx-msg-time">Edited</span>}
+                            {m.isForwarded && !m.deletedAt && <span className="nx-forward-label nx-muted">Forwarded</span>}
                             {m.deletedAt ? <span className="nx-muted">{RECALLED_MESSAGE_LABEL}</span> : m.body && (
                               <div
                                 className="nx-msg-body"
@@ -2875,6 +2877,10 @@ export function ChatWorkspace({
                               </Button>
                               <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blockedPeer}
                                 pending={Boolean(pendingMutation)} onOpen={openMessageMutation} />
+                              <Button variant="ghost" size="sm" iconOnly aria-label="Forward message" title="Forward message"
+                                onClick={() => onForwardContent({ kind: 'message', conversationId: m.conversationId, messageId: m.id })}>
+                                <Forward size={13} aria-hidden="true" />
+                              </Button>
                               <MessageBookmarkActions message={saved} canPin={canPin} pending={pendingBookmarks.get(saved.id)}
                                 onToggle={toggleBookmark} />
                               <Button variant="ghost" size="sm" iconOnly aria-label="Mark unread" title="Mark unread"
@@ -3129,6 +3135,7 @@ export function ChatWorkspace({
             onConfirmReply={confirmThreadReply}
             onClose={closeThread}
             onCopyLink={message => handleCopyMessageLink(message, false)}
+            onForward={message => onForwardContent({ kind: 'message', conversationId: message.conversationId, messageId: message.id })}
             onInlineLink={handleInlineContentLinkClick}
             onPreviewImage={setLightboxImage}
             mutationError={activeMutationError}

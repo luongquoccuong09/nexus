@@ -2,7 +2,7 @@ import { RefObject } from 'react';
 import { AttachmentItem } from '../attachments/attachmentUtils';
 import { AvailabilityDto, LiveAvailabilityEntry } from '../availability';
 import { CommunityFeedDelta } from '../chat/types';
-import { CommunityJumpTarget } from '../contentLinks';
+import { CommunityJumpTarget, type ForwardableContent } from '../contentLinks';
 import { OrganizationItem } from '../organizationControls';
 import { ProfileCardTarget } from '../ProfileCardModal';
 
@@ -85,6 +85,7 @@ export interface ChannelPostDto {
   authorAvatarUrl?: string | null;
   title?: string | null;
   body: string;
+  isForwarded?: boolean;
   isAnnouncement: boolean;
   requiresAcknowledgment: boolean;
   acknowledgedCount: number;
@@ -141,6 +142,7 @@ export interface CommunitiesWorkspaceProps {
   jumpTarget?: CommunityJumpTarget | null;
   feedListenerRef: RefObject<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>;
   onOpenContentLink?: (token: string) => void;
+  onForwardContent: (source: ForwardableContent) => void;
   onOpenCreateWorkspace: () => void;
   onOpenJoinWorkspace: () => void;
   onOpenWorkspaceSettings: (org: OrganizationItem) => void;

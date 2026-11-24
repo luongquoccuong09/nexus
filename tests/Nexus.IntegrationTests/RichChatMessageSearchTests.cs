@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Messaging;
 using Npgsql;
 
@@ -17,6 +18,144 @@ namespace Nexus.IntegrationTests;
 [Collection("RichChatPostgres")]
 public sealed class RichChatMessageSearchTests(PostgresContainerFixture pg)
 {
+    [Fact]
+    public async Task ForwardCopiesOnlyAuthorizedContentAndReservesDestinationQuotaOnce()
+    {
+        var pdfBytes = "%PDF-1.4\nForward fixture payload\n%%EOF"u8.ToArray();
+        await using var app = NexusHost.Build([
+            "--urls", "http://127.0.0.1:0", "--NexusDatabase:RequireTls=false",
+            "--NexusOrganizations:AllowCreation=true", "--NexusSecurity:RateLimitPermitsPerMinute=600",
+            $"--NexusFiles:PerConversationQuotaBytes={pdfBytes.Length * 2}",
+            $"--ConnectionStrings:Runtime={pg.RuntimeConnectionString}"
+        ]);
+        await app.StartAsync();
+        var origin = new Uri(Assert.Single(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses));
+        using var owner = Client(origin);
+        using var peer = Client(origin);
+        using var recipient = Client(origin);
+        var ownerId = (await Register(owner, "Forward sender")).GetProperty("id").GetGuid();
+        var partner = await Register(peer, "Forward source partner");
+        var receiver = await Register(recipient, "Forward destination reader");
+        var peerId = partner.GetProperty("id").GetGuid();
+        var receiverId = receiver.GetProperty("id").GetGuid();
+        foreach (var participant in new[] { (Client: peer, Account: partner), (Client: recipient, Account: receiver) })
+        {
+            await Post(owner, "/api/personal/contacts/requests", new { username = participant.Account.GetProperty("username").GetString() }, HttpStatusCode.Accepted);
+            var pending = Assert.Single((await Get(participant.Client, "/api/personal/contacts/requests")).GetProperty("items").EnumerateArray());
+            await Call(participant.Client, HttpMethod.Put, $"/api/personal/contacts/requests/{pending.GetProperty("id").GetGuid()}",
+                HttpStatusCode.NoContent, new { accept = true });
+        }
+        const string personal = "/api/personal";
+        var sourceDm = await Post(owner, personal + "/conversations/dm", new { targetUserId = peerId }, HttpStatusCode.OK);
+        var sourceConversationId = sourceDm.GetProperty("id").GetGuid();
+        var sourcePath = $"{personal}/conversations/{sourceConversationId}";
+        var group = await Call(owner, HttpMethod.Post, personal + "/conversations/groups", HttpStatusCode.Created,
+            new { title = "Forwarded copies", memberUserIds = new[] { receiverId } }, idempotency: true);
+        var destination = $"{personal}/conversations/{group.GetProperty("id").GetGuid()}";
+        using var upload = new MultipartFormDataContent();
+        var pdf = new ByteArrayContent(pdfBytes);
+        pdf.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        upload.Add(pdf, "file", "forward-source.pdf");
+        upload.Add(new StringContent(Guid.NewGuid().ToString("N")), "clientUploadId");
+        using var uploaded = await owner.PostAsync(sourcePath + "/attachments", upload);
+        Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
+        var originalFile = (await uploaded.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("attachment");
+        var originalId = originalFile.GetProperty("id").GetGuid();
+        var originalUrl = originalFile.GetProperty("downloadUrl").GetString()!;
+        var source = await Send(owner, sourcePath, "Authorized copied text", attachments: [originalId]);
+        var sourceId = source.GetProperty("id").GetGuid();
+        var token = ContentLinkCodec.Encode("m", null, sourceConversationId, sourceId);
+        var clientMsgId = Guid.NewGuid().ToString("N");
+        Task<JsonElement> Forward(HttpClient client, string path, HttpStatusCode expected, string? link = null, string? key = null) =>
+            Call(client, HttpMethod.Post, path + "/forward", expected, new { sourceLink = link ?? token, clientMsgId = key ?? Guid.NewGuid().ToString("N") });
+
+        await Forward(recipient, destination, HttpStatusCode.NotFound);
+        var csrf = (await Get(owner, "/api/auth/csrf")).GetProperty("token").GetString();
+        async Task<(HttpStatusCode Status, JsonElement Body)> ConcurrentForward()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, destination + "/forward")
+            {
+                Content = JsonContent.Create(new { sourceLink = token, clientMsgId })
+            };
+            request.Headers.Add("X-CSRF-TOKEN", csrf);
+            using var response = await owner.SendAsync(request);
+            return (response.StatusCode, await response.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var raced = await Task.WhenAll(ConcurrentForward(), ConcurrentForward());
+        Assert.Single(raced, item => item.Status == HttpStatusCode.Created);
+        Assert.Single(raced, item => item.Status == HttpStatusCode.OK);
+        var copy = raced[0].Body;
+        Assert.Equal(copy.GetProperty("id").GetGuid(), raced[1].Body.GetProperty("id").GetGuid());
+        var replay = await Forward(owner, destination, HttpStatusCode.OK, key: clientMsgId);
+        Assert.Equal(copy.GetProperty("id").GetGuid(), replay.GetProperty("id").GetGuid());
+        await Forward(owner, sourcePath, HttpStatusCode.Conflict, key: clientMsgId);
+        var copied = Assert.Single((await Get(recipient, destination + "/messages")).GetProperty("items").EnumerateArray());
+        Assert.True(copied.GetProperty("isForwarded").GetBoolean());
+        Assert.Equal("Authorized copied text", copied.GetProperty("body").GetString());
+        var copiedFile = Assert.Single(copied.GetProperty("attachments").EnumerateArray());
+        Assert.NotEqual(originalId, copiedFile.GetProperty("id").GetGuid());
+        var copyUrl = copiedFile.GetProperty("downloadUrl").GetString()!;
+        Assert.Equal(pdfBytes, await recipient.GetByteArrayAsync(copyUrl));
+        await Call(recipient, HttpMethod.Get, originalUrl, HttpStatusCode.Forbidden);
+        await Forward(owner, destination, HttpStatusCode.Created);
+        await Forward(owner, destination, HttpStatusCode.RequestEntityTooLarge);
+        Assert.Equal(2, (await Get(recipient, destination + "/messages")).GetProperty("items").GetArrayLength());
+
+        var orgA = await CreateOrg(owner, "Forward workspace A");
+        var orgB = await CreateOrg(recipient, "Forward workspace B");
+        var orgPath = $"/api/organizations/{orgA}";
+        var community = await Call(owner, HttpMethod.Post, orgPath + "/communities", HttpStatusCode.Created,
+            new { name = "Forward receiving community", visibility = "Public" }, idempotency: true);
+        var communityId = community.GetProperty("id").GetGuid();
+        var channel = await Call(owner, HttpMethod.Post, $"{orgPath}/communities/{communityId}/channels", HttpStatusCode.Created,
+            new { name = "Forward receiving channel" }, idempotency: true);
+        var channelId = channel.GetProperty("id").GetGuid();
+        var channelPath = $"{orgPath}/conversations/{channelId}";
+        var channelCopy = await Forward(owner, channelPath, HttpStatusCode.Created);
+        var channelPosts = await Get(owner, $"{orgPath}/channels/{channelId}/posts");
+        var channelPost = Assert.Single(channelPosts.GetProperty("items").EnumerateArray());
+        Assert.True(channelPost.GetProperty("isForwarded").GetBoolean());
+        Assert.Equal(channelCopy.GetProperty("id").GetGuid(), channelPost.GetProperty("id").GetGuid());
+        Assert.StartsWith(orgPath, channelPost.GetProperty("attachments")[0].GetProperty("downloadUrl").GetString(), StringComparison.Ordinal);
+        await Forward(recipient, $"/api/organizations/{orgB}/conversations/{channelId}", HttpStatusCode.NotFound);
+        await Call(owner, HttpMethod.Post, $"{orgPath}/communities/{communityId}/channels/{channelId}/archive", HttpStatusCode.OK, new { });
+        await Forward(owner, channelPath, HttpStatusCode.Conflict);
+        var notes = await Post(owner, personal + "/conversations/self", new { }, HttpStatusCode.OK);
+        var notesPath = $"{personal}/conversations/{notes.GetProperty("id").GetGuid()}";
+        var postLink = ContentLinkCodec.Encode("p", orgA, channelId, channelPost.GetProperty("id").GetGuid());
+        await Forward(owner, notesPath, HttpStatusCode.Created, postLink);
+
+        var destinationDm = await Post(owner, personal + "/conversations/dm", new { targetUserId = receiverId }, HttpStatusCode.OK);
+        await Call(recipient, HttpMethod.Put, $"{personal}/people/blocks/{ownerId}", HttpStatusCode.NoContent);
+        await Forward(owner, $"{personal}/conversations/{destinationDm.GetProperty("id").GetGuid()}", HttpStatusCode.Forbidden);
+        await Call(recipient, HttpMethod.Delete, $"{personal}/people/blocks/{ownerId}", HttpStatusCode.NoContent);
+
+        var historyGroup = await Call(owner, HttpMethod.Post, personal + "/conversations/groups", HttpStatusCode.Created,
+            new { title = "Private forward history", memberUserIds = new[] { receiverId } }, idempotency: true);
+        var historyId = historyGroup.GetProperty("id").GetGuid();
+        var historyPath = $"{personal}/conversations/{historyId}";
+        var hidden = await Send(owner, historyPath, "Past content cannot be forwarded");
+        await Call(owner, HttpMethod.Delete, historyPath + $"/members/{receiverId}", HttpStatusCode.NoContent);
+        await Call(owner, HttpMethod.Post, historyPath + "/members", HttpStatusCode.OK, new { userId = receiverId });
+        var hiddenReply = await Send(owner, historyPath, "Reply to a hidden root", hidden.GetProperty("id").GetGuid());
+        await Forward(recipient, destination, HttpStatusCode.NotFound,
+            ContentLinkCodec.Encode("m", null, historyId, hiddenReply.GetProperty("id").GetGuid()));
+
+        await Call(owner, HttpMethod.Delete, $"{sourcePath}/messages/{sourceId}", HttpStatusCode.OK,
+            ifMatch: source.GetProperty("version").GetInt64());
+        await Forward(owner, destination, HttpStatusCode.NotFound);
+        await using (var scope = app.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            await db.Attachments.Where(item => item.Id == originalId).ExecuteUpdateAsync(update => update
+                .SetProperty(item => item.State, AttachmentState.Rejected)
+                .SetProperty(item => item.CreatedAt, DateTimeOffset.UtcNow.AddDays(-2)));
+            var cleanup = scope.ServiceProvider.GetRequiredService<OrphanAttachmentCleanupService>();
+            Assert.True(await cleanup.CleanupOrphansAsync(DateTimeOffset.UtcNow.AddDays(-1)) >= 1);
+        }
+        Assert.Equal(pdfBytes, await recipient.GetByteArrayAsync(copyUrl));
+    }
+
     [Fact]
     public async Task ConversationNameFilterFindsOnlyCurrentMemberships()
     {

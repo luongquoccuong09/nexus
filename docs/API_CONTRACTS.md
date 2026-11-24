@@ -1,7 +1,7 @@
 # API and Realtime Contracts
 
 - Status: active (living contract — M0.1 baseline)
-- Last updated: 2026-11-24
+- Last updated: 2026-11-25
 - Scope: HTTP API conventions, pagination limits, SignalR hub contracts, and client/server version coordination.
 
 ## 1. Global HTTP conventions
@@ -54,6 +54,7 @@
 | `PUT/DELETE /api/conversations/{id}/messages/{messageId}/pin`, `GET /api/conversations/{id}/pins` | Active reader for the list. Group Owner or Admin, an unblocked DM participant, or a Self Chat owner for writes. CSRF on writes. | Sets shared pin membership idempotently and provides a cursor-paged list of visible pins with message links. | `src/Nexus.Web/Modules/Messaging/MessageBookmarkEndpoints.cs` |
 | `PUT/DELETE /api/conversations/{id}/messages/{messageId}/save`, `GET /api/saved-messages` | Active chat reader, CSRF on writes | Sets the caller's private saved state idempotently. The cursor-paged list contains readable messages in the requested scope with message links. | `src/Nexus.Web/Modules/Messaging/MessageBookmarkEndpoints.cs` |
 | `GET /api/messages/search` | Active account with `MessageSearch` for each result | Returns a cursor page of readable chat messages, replies, and channel posts in the requested scope with authorized content links (M6.6). | `src/Nexus.Web/Modules/Messaging/MessageSearchEndpoints.cs` |
+| `POST /api/conversations/{id}/forward` | Active account with read access at the source and send access at the destination, CSRF | Creates a message or channel post from `{ sourceLink, clientMsgId }` and returns `{ id, kind, conversationId, destinationLink }` (M6.9). Personal and Organization scopes are supported. | `src/Nexus.Web/Modules/Messaging/MessageForwardEndpoints.cs` |
 | `PUT /api/conversations/{id}/unread` | Active chat reader, CSRF | Marks chat unread from `{ fromSeq }`, a visible main timeline message sequence. Omitting `fromSeq` selects the latest main message. Returns the caller's versioned read state. | `src/Nexus.Web/Modules/Messaging/MessagingEndpoints.cs` |
 | `POST /api/conversations/{id}/attachments`, `GET /api/conversations/{id}/files`, `GET /api/organizations/{orgId}/channels/{conversationId}/files`, `GET /api/{scope}/{conversations\|channels}/{conversationId}/shared?tab=files\|links\|media` | Active member (`FileUpload` / `ConversationRead`) | Stage-1 upload (`clientUploadId` idempotent, magic-byte allowlist, SkiaSharp EXIF strip + `<= 400px` PNG thumbnail, ClamAV `zINSTREAM` / fail-closed scan, per-user & per-conversation quotas with 80% warning), cursor-paged (`<= 50`) Conversation/Channel Files views, and unified Shared view (`Files`, `Links`, `Media` tabs + optional `q` filter) enforcing live `deleted_at IS NULL`, `visible_from_seq` (`SEC-18`), `SEC-20b`, and archived-channel read-only rules in SQL with M6.25 `sourceLink` per item (`M3.1`–`M3.6`, `M6.31`, `M6.32`) | `src/Nexus.Web/Modules/Files/FilesEndpoints.cs`, `SharedContentEndpoints.cs` |
 | `GET /api/conversations/{id}/attachments/pending?id={attachmentId}` | Active member (`ConversationRead`) | Returns `{ ids }` with the caller's still-pending IDs for this conversation from at most 50 repeated `id` parameters. Supports draft recovery with `Cache-Control: no-store`. Sending rechecks the attachments in the message transaction. | `src/Nexus.Web/Modules/Files/FilesEndpoints.cs` |
@@ -106,6 +107,12 @@
 - `GET /api/auth/me` includes the caller's `dmReadReceipts: { enabled, version }`. The preference defaults to enabled. Both participants must have receipts enabled in an active, unblocked DM.
 - Conversation lists and message history return `dmReadReceipt` with `version`, plus `peerLastReadSeq` and `peerLastReadAt` when authorized and known. The peer cursor and timestamp are omitted if either participant opts out or blocks the other. The caller's own read cursor stays available. Groups, channels, and Self Chat have no DM receipt.
 - `DmReadReceiptUpdated` sends `{ conversationId, receipt }` only to the eligible DM partner. `DmReadReceiptPrivacyChanged` sends the current receipt snapshot to both participants after a preference or block change, with just its version when private. `DmReadReceiptPreferenceChanged` sends the setting only to the caller's sessions.
+
+### Forwarding (`M6.9`)
+
+- The destination can be a DM, Group, Self Chat, community main feed, or sub-channel. `sourceLink` identifies a readable message, reply, or post. The server checks the current source and destination independently, including thread-root visibility, source file download permission, destination file upload permission, active membership, DM blocks, and channel posting rules.
+- A successful command returns `201`. An authorized retry of the same `clientMsgId`, source, and destination returns `200` with the original destination link. A reused ID for different content or a different destination returns `409`. A recalled or unreadable source returns `404 forward_source_unavailable`. Archived destinations return `409 channel_archived`. A copy that exceeds storage quota returns `413`.
+- The destination item exposes `isForwarded` and has its own attachment IDs. Text, files, and a post title are copied. Source identifiers, reactions, thread history, polls, and announcement state stay with the original. Copied mentions do not issue notifications.
 
 ### Sidebar organization and previews (`M6.26`)
 

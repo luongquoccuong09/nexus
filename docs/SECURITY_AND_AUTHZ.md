@@ -1,7 +1,7 @@
 # Security and Resource Authorization
 
 - Status: active (canonical — completes `P0.2`)
-- Last updated: 2026-11-23
+- Last updated: 2026-11-25
 - Scope: complete capability matrix, domain authorization contract (`IAuthorizationService.Can`), security invariants, forbidden patterns, and `SEC-01`–`SEC-24` traceability.
 
 Every protected HTTP endpoint, SignalR hub method, file download, search query, and delta-sync read must evaluate `Nexus.Web.Infrastructure.Security.IAuthorizationService.Can(actor, action, resource)`. **Deny by default:** any `(actor, action, resource)` combination without an explicit approved policy returns `false` (deny).
@@ -139,3 +139,5 @@ Preserve the intent of every security test; fix the implementation when a test f
 | `SEC-22` | Google OIDC PKCE/nonce/state & no auto-link by email | M1.12 | *Pending M1.12* |
 | `SEC-23` | Google linking requires active login + password reauth | M1.12 | *Pending M1.12* |
 | `SEC-24` | Password change rotates security stamp & revokes other sessions | M1.5 | `IdentityM1aTests.SEC24_M1_5_M1_7_ChangePassword_RemoteSignOut_AndAdminResetLink` |
+
+Forwarding uses the same read, send, download, and upload permissions on the original and destination resources. `RichChatMessageSearchTests.ForwardCopiesOnlyAuthorizedContentAndReservesDestinationQuotaOnce` covers forwarding from authorized history, cross-scope isolation, destination file handles, concurrent replay, and quota.

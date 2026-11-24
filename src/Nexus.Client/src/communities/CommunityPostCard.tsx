@@ -1,5 +1,5 @@
 import { FormEvent, MouseEvent } from 'react';
-import { Bell, Check, CheckCircle2, Download, Link2, Megaphone, MessageSquare, Pin } from 'lucide-react';
+import { Bell, Check, CheckCircle2, Download, Forward, Link2, Megaphone, MessageSquare, Pin } from 'lucide-react';
 import { AttachmentGallery } from '../attachments/AttachmentGallery';
 import { AttachmentItem } from '../attachments/attachmentUtils';
 import { LiveAvailabilityEntry, resolveUserAvailability } from '../availability';
@@ -30,6 +30,7 @@ export interface CommunityPostCardProps {
   onInlineLinkClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenProfileCard: (target: ProfileCardTarget) => void;
   onCopyPostLink: (post: ChannelPostDto) => void;
+  onForwardPost: (post: ChannelPostDto) => void;
   onTogglePin: (post: ChannelPostDto) => void;
   onPreviewImage: (att: AttachmentItem) => void;
   onAcknowledge: (postId: string) => void;
@@ -55,6 +56,7 @@ export function CommunityPostCard({
   onInlineLinkClick,
   onOpenProfileCard,
   onCopyPostLink,
+  onForwardPost,
   onTogglePin,
   onPreviewImage,
   onAcknowledge,
@@ -116,11 +118,14 @@ export function CommunityPostCard({
               {post.pending
                 ? <span className="nx-pending-label">Publishing…</span>
                 : <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>}
+              {post.isForwarded && <span className="nx-forward-label nx-muted">Forwarded</span>}
             </div>
           </div>
         </div>
 
         <div className="nx-post-badges">
+          {!post.pending && <Button variant="ghost" size="sm" iconOnly aria-label="Forward post" title="Forward post"
+            onClick={() => onForwardPost(post)}><Forward size={14} aria-hidden="true" /></Button>}
           {post.isPinned && (
             <Badge variant="role">
               <Pin size={11} aria-hidden="true" /> Pinned

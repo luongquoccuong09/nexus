@@ -99,6 +99,7 @@ export function CommunitiesWorkspace({
   jumpTarget,
   feedListenerRef,
   onOpenContentLink,
+  onForwardContent,
   onOpenCreateWorkspace,
   onOpenJoinWorkspace,
   onOpenWorkspaceSettings,
@@ -696,6 +697,7 @@ export function CommunitiesWorkspace({
               authorAvatarUrl: incoming.authorAvatarUrl ?? null,
               title: incoming.title ?? null,
               body: incoming.body,
+                isForwarded: incoming.isForwarded,
               isAnnouncement: Boolean(incoming.isAnnouncement),
               requiresAcknowledgment: Boolean(incoming.requiresAcknowledgment),
               acknowledgedCount: incoming.acknowledgedCount ?? 0,
@@ -2866,6 +2868,9 @@ export function CommunitiesWorkspace({
                       onInlineLinkClick={handleInlineContentLinkClick}
                       onOpenProfileCard={onOpenProfileCard}
                       onCopyPostLink={p => void handleCopyPostLink(p)}
+                      onForwardPost={p => {
+                        if (activeOrgId) onForwardContent({ kind: 'post', organizationId: activeOrgId, conversationId: p.conversationId, postId: p.id });
+                      }}
                       onTogglePin={p => void handleTogglePin(p)}
                       onPreviewImage={setLightboxImage}
                       onAcknowledge={id => void handleAcknowledge(id)}

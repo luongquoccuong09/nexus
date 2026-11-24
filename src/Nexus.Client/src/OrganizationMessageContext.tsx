@@ -3,16 +3,17 @@ import { AttachmentGallery } from './attachments/AttachmentGallery';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
 import type { AttachmentItem } from './attachments/attachmentUtils';
 import type { ChatMessageItem } from './chat/types';
-import type { ResolvedContentLink } from './contentLinks';
+import type { ForwardableContent, ResolvedContentLink } from './contentLinks';
 import { renderSafeMarkdown } from './markdown';
 import { orgApiPath } from './scope';
-import { Modal } from './ui';
+import { Button, Modal } from './ui';
 
 export type OrganizationMessageTarget = Extract<ResolvedContentLink, { kind: 'message' }> & { organizationId: string };
 
-export default function OrganizationMessageContext({ target, onClose }: {
+export default function OrganizationMessageContext({ target, onClose, onForwardContent }: {
   target: OrganizationMessageTarget;
   onClose: () => void;
+  onForwardContent: (source: ForwardableContent) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessageItem[] | null>(null);
   const [error, setError] = useState('');
@@ -55,8 +56,12 @@ export default function OrganizationMessageContext({ target, onClose }: {
               tabIndex={-1} className={message.id === target.messageId ? 'nx-highlight-target' : undefined}>
               <strong>{message.senderDisplayName}</strong>
               {message.deletedAt ? <p className="nx-muted">This message was recalled</p> : <>
+                {message.isForwarded && <span className="nx-forward-label nx-muted">Forwarded</span>}
                 <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(message.body) }} />
                 {!!message.attachments?.length && <AttachmentGallery attachments={message.attachments} onPreviewImage={setImage} />}
+                {message.id === target.messageId && <Button size="sm" onClick={() => onForwardContent({
+                  kind: 'message', organizationId: target.organizationId, conversationId: target.conversationId, messageId: message.id
+                })}>Forward message</Button>}
               </>}
             </article>
           ))}

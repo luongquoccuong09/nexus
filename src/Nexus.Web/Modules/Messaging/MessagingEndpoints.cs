@@ -59,7 +59,8 @@ public static class MessagingEndpoints
         long Version = 1,
         bool IsPinned = false,
         bool IsSaved = false,
-        long SavedVersion = 0);
+        long SavedVersion = 0,
+        bool IsForwarded = false);
 
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
@@ -585,7 +586,8 @@ public static class MessagingEndpoints
                 m.Version,
                 pinnedIds.Contains(m.Id),
                 saved?.IsSaved ?? false,
-                saved?.Version ?? 0);
+                saved?.Version ?? 0,
+                m.IsForwarded);
         }).ToList();
     }
 
@@ -853,7 +855,7 @@ public static class MessagingEndpoints
         }
     }
 
-    private static async Task<(long NextSeq, long ChangeSeq)> AllocateSequencesAsync(
+    internal static async Task<(long NextSeq, long ChangeSeq)> AllocateSequencesAsync(
         NexusDbContext db,
         Guid conversationId,
         DateTimeOffset now,
@@ -903,7 +905,7 @@ public static class MessagingEndpoints
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 
-    private static MessageDto ToMessageDto(
+    internal static MessageDto ToMessageDto(
         MessageEntity m,
         OrganizationMembership sender,
         IReadOnlyList<AttachmentDto>? attachments = null,
@@ -925,5 +927,6 @@ public static class MessagingEndpoints
         m.ReplyCount,
         m.LastReplyAt,
         m.LastReplySeq,
-        Version: m.Version);
+        Version: m.Version,
+        IsForwarded: m.IsForwarded);
 }

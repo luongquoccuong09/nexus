@@ -158,6 +158,25 @@ The focused PostgreSQL 17 case verified default enablement, both HTTP projection
 
 The Edge walkthrough used two accounts and an independent settings session at `1440×900`, `390×844`, and `320×700` in both themes. It verified visible reads and reciprocal privacy without history reloads. The indicators disappeared in 26.0–43.8 ms after pressing the settings shortcut or releasing the held request. The narrow dark run also observed the optimistic switch state before the server accepted the change.
 
+## M6.9 Forward messages and posts
+
+**Verified on November 25, 2026.** Users can forward a visible message, reply, or post with its approved attachments to an authorized chat or channel. The server rechecks access in the transaction, enforces destination posting rules, blocks and storage quotas, and returns one destination item on an authorized retry. A copy has its own file handles and remains readable in the destination if the original is later recalled. The original author and source link stay private. Forwarded mentions do not send notifications.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-m68-ef\dotnet-ef.exe'
+& $efCommand migrations add ForwardedChatContent --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter 'FullyQualifiedName~ForwardCopiesOnlyAuthorizedContentAndReservesDestinationQuotaOnce|FullyQualifiedName~FilesM3Tests' --verbosity minimal
+npm.cmd --prefix src/Nexus.Client run build
+pwsh -File ./scripts/Run-Tests.ps1
+node (Join-Path $env:TEMP 'nexus-m69-qa\forward.mjs')
+git diff --check
+git diff --cached --check
+```
+
+Five focused PostgreSQL 17 cases passed. They covered concurrent retries, current source and destination access, two Organization scopes, blocked and archived destinations, the hidden thread-root boundary, quota rollback, and storage cleanup with surviving copies. The final standard gate passed 188 integration tests, 53 client tests, Release builds with zero warnings or errors, and all audits. The opt-in Docker Monitor smoke test was skipped.
+
+The two-account Edge walkthrough covered both themes at `1440×900`, `390×844`, and `320×700`. The receiving session rendered the forwarded chat item in 55.0–128.1 ms and the channel post in 58.9–87.6 ms. The walkthrough verified keyboard activation, Escape, attachment downloads, forwarding from a channel back to chat, and one rendered item after a simulated lost response. The narrow dark run observed the pending button before the request reached the server. The recipient used the live event without loading history. The walkthrough found no unexpected console or network errors.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

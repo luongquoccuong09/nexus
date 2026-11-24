@@ -1,7 +1,7 @@
 # Message Synchronization & Idempotency Protocol
 
 - Status: active (canonical — completes `P0.3`)
-- Last updated: 2026-11-24
+- Last updated: 2026-11-25
 - Scope: `M0.5` idempotency keys & conditional state transitions, and `M2` messaging ordering, delta sync, offline queue, and reconnect reconciliation.
 
 PostgreSQL stores the authoritative state. SignalR delivers realtime updates and nudges — never the sole source of message persistence.
@@ -92,10 +92,19 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 
 - Every search page reads current server state for the requested scope. A result opens using its M6.25 content link, which resolves against current authorization again. An incoming recall removes the corresponding result from the open Search dialog.
 
+### Quick switcher (`M6.7`)
+
+- Destination lookups are live paginated reads. Opening a channel uses its authorized content link and the regular feed, and opening a conversation uses the regular message history and delta cursor.
+
 ### Reciprocal DM read receipts (`M6.8`)
 
 - Eligible DM peers receive a private SignalR receipt on a read cursor advance. The corresponding HTTP snapshots check current participant status, membership, blocks, and both preferences. Receipt fanout uses the DM's scope. Group and thread read state remain private.
 - Receipts carry a privacy version derived from both participants' account revisions. A preference or block change supersedes older snapshots and events. Receipt events are ephemeral, and reconnect refreshes authorized conversation summaries.
+
+### Forwarding (`M6.9`)
+
+- A forwarded chat item is a new root with its own `client_msg_id`, `seq`, and `change_seq`. It emits the existing `message.created` event and `ConversationChanged` payload. A forwarded channel item emits the existing `post_created` feed delta. Recipients render the copied content from the destination event.
+- The transaction binds the destination item, its attachment rows, and its shared links together. It keeps source and destination access separate. The recipient's read state advances only through normal visible reads. Retrying an authorized forward reuses the original destination item without allocating another sequence or emitting a new event.
 
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 

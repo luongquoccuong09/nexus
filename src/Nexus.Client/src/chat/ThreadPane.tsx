@@ -1,5 +1,5 @@
 import { FormEvent, MouseEvent, MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, BellOff, Link2, Send, X } from 'lucide-react';
+import { Bell, BellOff, Forward, Link2, Send, X } from 'lucide-react';
 import { AttachmentGallery } from '../attachments/AttachmentGallery';
 import { AttachmentItem } from '../attachments/attachmentUtils';
 import { useChatReading } from '../chatReading';
@@ -59,6 +59,7 @@ interface ThreadPaneProps {
   onConfirmReply: (conversationId: string, clientMsgId: string) => Promise<void>;
   onClose: () => void;
   onCopyLink: (message: ChatMessageItem) => Promise<boolean>;
+  onForward: (message: ChatMessageItem) => void;
   onInlineLink: (event: MouseEvent<HTMLDivElement>) => void;
   onPreviewImage: (attachment: AttachmentItem) => void;
   mutationError?: string;
@@ -104,7 +105,7 @@ function applyThreadDelta(
 
 export function ThreadPane({
   target, currentUserId, visible, blocked, reconnectCount, deltaRef, liveState, onState,
-  onPendingReply, onConfirmReply, onClose, onCopyLink, onInlineLink, onPreviewImage,
+  onPendingReply, onConfirmReply, onClose, onCopyLink, onForward, onInlineLink, onPreviewImage,
   mutationError, pendingMutations, onDismissMutationError, onOpenMutation, canPin, pendingBookmarks, onToggleBookmark
 }: ThreadPaneProps) {
   const { conversationId, parentMessageId, replyId, replySeq } = target;
@@ -302,6 +303,8 @@ export function ThreadPane({
   function actions(saved: ChatMessageItem) {
     return (
       <>
+        <Button size="sm" variant="ghost" iconOnly aria-label="Forward message" title="Forward message"
+          onClick={() => onForward(saved)}><Forward size={13} aria-hidden="true" /></Button>
         <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blocked}
           pending={pendingMutations.has(saved.id)} onOpen={onOpenMutation} />
         <MessageBookmarkActions message={saved} canPin={canPin} pending={pendingBookmarks.get(saved.id)}
@@ -353,6 +356,7 @@ export function ThreadPane({
             <div className="nx-thread-message-head">
               <strong>{root.senderDisplayName}</strong>
               {root.editedAt && !root.deletedAt && <span className="nx-muted">Edited</span>}
+              {root.isForwarded && !root.deletedAt && <span className="nx-muted">Forwarded</span>}
               {!root.deletedAt && actions(page.parent)}
             </div>
             {messageBody(root)}

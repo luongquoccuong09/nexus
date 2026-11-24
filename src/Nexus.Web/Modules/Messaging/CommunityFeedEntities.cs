@@ -14,6 +14,8 @@ public sealed class ChannelPostEntity
     public Guid AuthorUserId { get; set; }
     public string? Title { get; set; }
     public required string Body { get; set; }
+    public string? ForwardClientMsgId { get; set; }
+    public string? ForwardPayloadSha256 { get; set; }
     public bool IsAnnouncement { get; set; }
     public bool RequiresAcknowledgment { get; set; }
     public bool IsPinned { get; set; }
@@ -81,6 +83,8 @@ public sealed class ChannelPostEntityConfiguration : IEntityTypeConfiguration<Ch
         builder.Property(x => x.AuthorUserId).HasColumnName("author_user_id").IsRequired();
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(160);
         builder.Property(x => x.Body).HasColumnName("body").HasMaxLength(8000).IsRequired();
+        builder.Property(x => x.ForwardClientMsgId).HasColumnName("forward_client_msg_id").HasMaxLength(128);
+        builder.Property(x => x.ForwardPayloadSha256).HasColumnName("forward_payload_sha256").HasMaxLength(64);
         builder.Property(x => x.IsAnnouncement).HasColumnName("is_announcement").IsRequired();
         builder.Property(x => x.RequiresAcknowledgment).HasColumnName("requires_acknowledgment").IsRequired();
         builder.Property(x => x.IsPinned).HasColumnName("is_pinned").IsRequired();
@@ -96,6 +100,8 @@ public sealed class ChannelPostEntityConfiguration : IEntityTypeConfiguration<Ch
 
         builder.HasIndex(x => new { x.ConversationId, x.IsPinned, x.CreatedAt })
             .HasDatabaseName("ix_channel_posts_conv_pinned_created");
+        builder.HasIndex(x => new { x.AuthorUserId, x.ForwardClientMsgId })
+            .HasFilter("forward_client_msg_id IS NOT NULL").IsUnique().HasDatabaseName("ux_channel_posts_forward_author_client_id");
     }
 }
 

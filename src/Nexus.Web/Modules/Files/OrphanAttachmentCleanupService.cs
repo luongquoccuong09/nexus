@@ -34,18 +34,14 @@ public sealed class OrphanAttachmentCleanupService(
             return 0;
         }
 
-        foreach (var item in orphans)
-        {
-            if (!string.IsNullOrWhiteSpace(item.ObjectKey))
-            {
-                await storage.DeleteAsync(item.ObjectKey, ct);
-            }
-
-            if (!string.IsNullOrWhiteSpace(item.ThumbnailObjectKey))
-            {
-                await storage.DeleteAsync(item.ThumbnailObjectKey, ct);
-            }
-        }
+        var ids = orphans.Select(item => item.Id).ToArray();
+        var keys = orphans.SelectMany(item => new[] { item.ObjectKey, item.ThumbnailObjectKey })
+            .Where(key => !string.IsNullOrWhiteSpace(key)).Select(key => key!).Distinct(StringComparer.Ordinal).ToArray();
+        var references = await db.Attachments.AsNoTracking().Where(item => !ids.Contains(item.Id) &&
+                (keys.Contains(item.ObjectKey) || keys.Contains(item.ThumbnailObjectKey!)))
+            .Select(item => new { item.ObjectKey, item.ThumbnailObjectKey }).ToListAsync(ct);
+        var retained = references.SelectMany(item => new[] { item.ObjectKey, item.ThumbnailObjectKey }).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in keys.Where(key => !retained.Contains(key))) await storage.DeleteAsync(key, ct);
 
         db.Attachments.RemoveRange(orphans);
         await db.SaveChangesAsync(ct);

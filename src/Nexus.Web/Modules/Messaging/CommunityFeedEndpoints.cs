@@ -278,6 +278,7 @@ public static partial class CommunityFeedEndpoints
                 authorAvatarUrl = author.AvatarUrl,
                 title = p.Title,
                 body = p.Body,
+                isForwarded = p.ForwardClientMsgId != null,
                 isAnnouncement = p.IsAnnouncement,
                 requiresAcknowledgment = p.RequiresAcknowledgment,
                 acknowledgedCount = p.RequiresAcknowledgment ? postAcks.Count : 0,

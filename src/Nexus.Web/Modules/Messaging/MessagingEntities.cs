@@ -15,6 +15,7 @@ public sealed class MessageEntity
     public required string ClientMsgId { get; set; }
     public required string PayloadSha256 { get; set; }
     public required string Body { get; set; }
+    public bool IsForwarded { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? EditedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
@@ -71,6 +72,7 @@ public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<Messag
         builder.Property(x => x.ClientMsgId).HasColumnName("client_msg_id").HasMaxLength(128).IsRequired();
         builder.Property(x => x.PayloadSha256).HasColumnName("payload_sha256").HasMaxLength(64).IsRequired();
         builder.Property(x => x.Body).HasColumnName("body").HasMaxLength(4000).IsRequired();
+        builder.Property(x => x.IsForwarded).HasColumnName("is_forwarded").HasDefaultValue(false);
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(x => x.EditedAt).HasColumnName("edited_at");
         builder.Property(x => x.DeletedAt).HasColumnName("deleted_at");
