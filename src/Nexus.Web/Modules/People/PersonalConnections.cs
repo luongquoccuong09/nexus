@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.Conversations;
 
@@ -96,7 +97,7 @@ public static class PersonalConnections
 
     private static async Task<IResult> ListChatCandidatesAsync(
         string? q, string? cursor, Guid? excludeConversationId, int? limit,
-        [FromServices] NexusDbContext db, IAuthorizationService authz, CancellationToken ct)
+        [FromServices] NexusDbContext db, IAuthorizationService authz, IPresenceTracker presence, CancellationToken ct)
     {
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var error)) return Results.BadRequest(new { code = "invalid_page_size", message = error });
         if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
@@ -128,7 +129,14 @@ public static class PersonalConnections
         var rows = await people
             .OrderBy(u => u.DisplayName).ThenBy(u => u.Id)
             .Take(pageSize + 1)
-            .Select(u => new { u.Id, Username = u.UserName ?? string.Empty, u.DisplayName })
+            .Select(u => new
+            {
+                u.Id,
+                Username = u.UserName ?? string.Empty,
+                u.DisplayName,
+                u.AvailabilityState,
+                u.AvailabilityExpiresAt
+            })
             .ToListAsync(ct);
 
         if (rows.Count == 0) return Results.Ok(new { items = Array.Empty<object>(), nextCursor = (string?)null });
@@ -159,6 +167,7 @@ public static class PersonalConnections
                     .FirstOrDefault()
             });
 
+        var now = DateTimeOffset.UtcNow;
         var items = rows.Select(r =>
         {
             orgsByUser.TryGetValue(r.Id, out var orgInfo);
@@ -168,6 +177,8 @@ public static class PersonalConnections
                 username = r.Username,
                 displayName = r.DisplayName,
                 avatarUrl = orgInfo?.AvatarUrl,
+                isOnline = presence.IsOnline(r.Id),
+                availability = AvailabilityResolver.Resolve(r.AvailabilityState, r.AvailabilityExpiresAt, now),
                 isContact = contactSet.Contains(r.Id),
                 workspaceNames = orgInfo?.Names ?? Array.Empty<string>()
             };
@@ -177,7 +188,7 @@ public static class PersonalConnections
         return Results.Ok(new { items, nextCursor });
     }
 
-    private static async Task<IResult> ListDirectoryAsync(string? q, [FromServices] NexusDbContext db, Guid? after, int? limit, CancellationToken ct)
+    private static async Task<IResult> ListDirectoryAsync(string? q, [FromServices] NexusDbContext db, IPresenceTracker presence, Guid? after, int? limit, CancellationToken ct)
     {
         if (!PaginationGuard.TryNormalize(limit, out var pageSize, out var error)) return Results.BadRequest(new { code = "invalid_page_size", message = error });
         var userId = db.OrganizationActor!.Id;
@@ -189,8 +200,25 @@ public static class PersonalConnections
             var pattern = $"%{search.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
             people = people.Where(u => EF.Functions.ILike(u.DisplayName, pattern) || EF.Functions.ILike(u.UserName ?? string.Empty, pattern));
         }
-        var items = await people.Where(u => after == null || u.Id.CompareTo(after.Value) > 0).OrderBy(u => u.Id).Take(pageSize + 1)
-            .Select(u => new { u.Id, username = u.UserName, u.DisplayName, isUnverified = true }).ToListAsync(ct);
+        var rows = await people.Where(u => after == null || u.Id.CompareTo(after.Value) > 0).OrderBy(u => u.Id).Take(pageSize + 1)
+            .Select(u => new
+            {
+                u.Id,
+                username = u.UserName,
+                u.DisplayName,
+                u.AvailabilityState,
+                u.AvailabilityExpiresAt
+            }).ToListAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var items = rows.Select(u => new
+        {
+            u.Id,
+            u.username,
+            u.DisplayName,
+            isUnverified = true,
+            isOnline = presence.IsOnline(u.Id),
+            availability = AvailabilityResolver.Resolve(u.AvailabilityState, u.AvailabilityExpiresAt, now)
+        }).ToList();
         return PaginationGuard.CursorPage(items, pageSize, item => item.Id);
     }
 

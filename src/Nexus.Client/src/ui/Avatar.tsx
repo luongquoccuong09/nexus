@@ -19,7 +19,7 @@ export function Avatar({
   cacheKey?: number;
   size?: 'sm' | 'md' | 'lg';
   variant?: 'user' | 'group';
-  presence?: 'online' | 'offline';
+  presence?: 'online' | 'offline' | 'available' | 'busy' | 'away' | 'dnd';
   onRail?: boolean;
 }) {
   const cls = [

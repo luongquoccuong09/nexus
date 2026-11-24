@@ -14,6 +14,18 @@ import {
 } from './contentLinks';
 import { ChatWorkspace, CommunityFeedDelta } from './chat';
 import { CommunitiesWorkspace } from './communities';
+import {
+  AvailabilityChangedEvent,
+  AvailabilityDto,
+  LiveAvailabilityEntry,
+  getEarliestExpiryDelayMs,
+  isChimeSuppressed,
+  normalizeAvailability,
+  resolveEffectiveAvailability,
+  resolveUserAvailability
+} from './availability';
+import { AvailabilityPicker, AvailabilityUpdateResult } from './AvailabilityPicker';
+import { ProfileCardModal, ProfileCardTarget } from './ProfileCardModal';
 import { clearChatWork } from './offlineQueue';
 import { PasswordResetForm } from './passwordReset';
 import { loadOrganizationDepartments, personKey, searchChatCandidates, searchPeopleScope } from './peopleDirectory';
@@ -33,6 +45,8 @@ interface UserSummary {
   mfaSetupRequired: boolean;
   customStatus?: string | null;
   avatarUrl?: string | null;
+  availability?: AvailabilityDto;
+  suppressChime?: boolean;
 }
 
 interface DirectoryProfile {
@@ -44,6 +58,8 @@ interface DirectoryProfile {
   branchName?: string | null;
   customStatus?: string | null;
   avatarUrl?: string | null;
+  isOnline?: boolean;
+  availability?: AvailabilityDto | null;
 }
 
 interface DepartmentItem {
@@ -197,6 +213,11 @@ function App() {
   const reloadConversationsRef = useRef<(() => Promise<void>) | null>(null);
 
   const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
+  const [availabilityMap, setAvailabilityMap] = useState<Record<string, LiveAvailabilityEntry>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [profileCardTarget, setProfileCardTarget] = useState<ProfileCardTarget | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
+  currentUserIdRef.current = user?.id ?? null;
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [unreadMentionCount, setUnreadMentionCount] = useState(0);
   const refreshMentionCountRef = useRef<(() => void) | null>(null);
@@ -430,8 +451,19 @@ function App() {
       setProfileOrgId('');
     }
 
-    setUser(me);
-    setCustomStatusInput(me.customStatus ?? '');
+    const normalizedAvailability = normalizeAvailability(me.availability ?? account.availability);
+    const resolvedSuppressChime =
+      typeof account.suppressChime === 'boolean'
+        ? account.suppressChime
+        : isChimeSuppressed(normalizedAvailability);
+    const hydratedMe: UserSummary = {
+      ...me,
+      availability: normalizedAvailability,
+      suppressChime: resolvedSuppressChime
+    };
+
+    setUser(hydratedMe);
+    setCustomStatusInput(hydratedMe.customStatus ?? '');
 
     if (!peopleFilterPickedRef.current && orgs.length > 0) {
       setPeopleFilter(orgs[0].id);
@@ -757,6 +789,63 @@ function App() {
     setVersionStale(true);
   }, []);
 
+  // Single O(1) local timeout across current user + live availability map (zero polling)
+  useEffect(() => {
+    const tracked: Array<AvailabilityDto | undefined> = [
+      user?.availability,
+      ...Object.values(availabilityMap).map(entry => entry.availability)
+    ];
+    const delay = getEarliestExpiryDelayMs(tracked, nowMs);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [availabilityMap, nowMs, user?.availability]);
+
+  const handleAvailabilityUpdated = useCallback((next: AvailabilityUpdateResult) => {
+    const normalized = normalizeAvailability(next.availability);
+    const now = Date.now();
+    setNowMs(now);
+    setUser(prev =>
+      prev
+        ? { ...prev, availability: normalized, suppressChime: next.suppressChime }
+        : prev
+    );
+    const uid = currentUserIdRef.current;
+    if (uid) {
+      setAvailabilityMap(prev => ({
+        ...prev,
+        [uid]: { isOnline: next.isOnline, availability: normalized, updatedAt: new Date(now).toISOString() }
+      }));
+    }
+  }, []);
+
+  const handleAvailabilityChanged = useCallback((evt: AvailabilityChangedEvent) => {
+    const normalized = normalizeAvailability(evt.availability);
+    const now = Date.now();
+    setNowMs(now);
+    setAvailabilityMap(prev => ({
+      ...prev,
+      [evt.userId]: {
+        isOnline: evt.isOnline,
+        availability: normalized,
+        updatedAt: evt.updatedAt
+      }
+    }));
+    if (evt.userId === currentUserIdRef.current) {
+      setUser(prev =>
+        prev
+          ? {
+              ...prev,
+              availability: normalized,
+              suppressChime: isChimeSuppressed(normalized, now)
+            }
+          : prev
+      );
+    }
+  }, []);
+
   if (authLoading) {
     return (
       <div className="nx-empty-stage" style={{ minHeight: '100dvh' }}>
@@ -932,6 +1021,9 @@ function App() {
 
   const activeProfileOrg = organizations.find(o => o.id === profileOrgId) ?? organizations[0] ?? null;
   const activePeopleOrg = peopleFilter === 'contacts' ? null : (organizations.find(o => o.id === peopleFilter) ?? null);
+  const myEffectiveAvailability = resolveEffectiveAvailability(user.availability, nowMs);
+  const myIsOnline = connState === 'connected';
+  const mySuppressChime = isChimeSuppressed(myEffectiveAvailability, nowMs);
 
   const pageTitle =
     workspaceTab === 'activity' ? 'Activity' :
@@ -942,7 +1034,7 @@ function App() {
     'HR import';
 
   return (
-    <div className="nx-app">
+    <div className="nx-app" data-suppress-chime={mySuppressChime ? 'true' : 'false'}>
       {/* Left App Rail */}
       <nav className="nx-rail" aria-label="Main navigation">
         <div className="nx-rail-logo" title="Nexus">
@@ -1031,21 +1123,19 @@ function App() {
             {darkMode ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
           </button>
 
-          <button
-            type="button"
-            className="nx-rail-avatar-btn"
-            title={`${user.displayName} (@${user.username})`}
-            aria-label="Open profile & security"
-            onClick={() => setWorkspaceTab('security')}
-          >
-            <Avatar
-              displayName={user.displayName}
-              avatarUrl={user.avatarUrl}
-              cacheKey={avatarBust}
-              presence="online"
-              onRail
-            />
-          </button>
+          <AvailabilityPicker
+            variant="popover"
+            popoverPlacement="rail"
+            availability={myEffectiveAvailability}
+            isOnline={myIsOnline}
+            nowMs={nowMs}
+            onUpdated={handleAvailabilityUpdated}
+            displayName={user.displayName}
+            username={user.username}
+            avatarUrl={user.avatarUrl}
+            avatarCacheKey={avatarBust}
+            onOpenProfileSettings={() => setWorkspaceTab('security')}
+          />
 
           <button
             type="button"
@@ -1083,7 +1173,18 @@ function App() {
               <span className={`nx-dot ${connState}`} />
               <span>{connState === 'connected' ? 'Connected' : connState === 'reconnecting' ? 'Reconnecting…' : 'Offline'}</span>
             </span>
-            <strong className="nx-user-name-wrap">{user.displayName}</strong>
+            <AvailabilityPicker
+              variant="popover"
+              popoverPlacement="topbar"
+              availability={myEffectiveAvailability}
+              isOnline={myIsOnline}
+              nowMs={nowMs}
+              onUpdated={handleAvailabilityUpdated}
+              displayName={user.displayName}
+              username={user.username}
+              onOpenProfileSettings={() => setWorkspaceTab('security')}
+            />
+            <strong className="nx-user-name-wrap nx-topbar-user-name">{user.displayName}</strong>
           </div>
         </header>
 
@@ -1130,6 +1231,10 @@ function App() {
               onUnreadTotalChange={setUnreadTotal}
               onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
               onVersionStale={handleVersionStale}
+              availabilityMap={availabilityMap}
+              nowMs={nowMs}
+              onAvailabilityChanged={handleAvailabilityChanged}
+              onOpenProfileCard={setProfileCardTarget}
             />
           </div>
           {newChatOpen && (
@@ -1155,6 +1260,9 @@ function App() {
                 onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
                 onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
                 onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}
+                availabilityMap={availabilityMap}
+                nowMs={nowMs}
+                onOpenProfileCard={setProfileCardTarget}
               />
             </div>
           )}
@@ -1268,32 +1376,67 @@ function App() {
                   </Card>
                 ) : directory.length > 0 && (
                   <div className="nx-dir-grid">
-                    {directory.map(p => (
-                      <article className="nx-person-card" key={p.id}>
-                        <div className="nx-person-top">
-                          <Avatar displayName={p.displayName} avatarUrl={p.avatarUrl} cacheKey={avatarBust} size="lg" />
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <strong className="nx-user-name-wrap">{p.displayName}</strong>
-                            <div className="nx-muted" style={{ marginTop: 2 }}>
-                              @{p.username}
-                              {p.departmentName ? ` · ${p.departmentName}` : ''}
-                              {p.branchName ? ` · ${p.branchName}` : ''}
+                    {directory.map(p => {
+                      const pStatus = resolveUserAvailability(p.id, p, availabilityMap, nowMs);
+                      const openPersonProfile = () =>
+                        setProfileCardTarget({
+                          userId: p.id,
+                          organizationId: activePeopleOrg ? activePeopleOrg.id : null,
+                          fallbackDisplayName: p.displayName,
+                          fallbackUsername: p.username,
+                          fallbackAvatarUrl: p.avatarUrl
+                        });
+                      return (
+                        <article className="nx-person-card" key={p.id}>
+                          <div className="nx-person-top">
+                            <button
+                              type="button"
+                              className="nx-profile-trigger nx-avatar-trigger"
+                              aria-label={`View profile for ${p.displayName}`}
+                              onClick={openPersonProfile}
+                            >
+                              <Avatar
+                                displayName={p.displayName}
+                                avatarUrl={p.avatarUrl}
+                                cacheKey={avatarBust}
+                                size="lg"
+                                presence={pStatus.dotTone}
+                              />
+                            </button>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <button
+                                type="button"
+                                className="nx-profile-trigger nx-name-trigger"
+                                onClick={openPersonProfile}
+                              >
+                                <strong className="nx-user-name-wrap">{p.displayName}</strong>
+                              </button>
+                              <div className="nx-muted nx-inline-status-meta" style={{ marginTop: 2 }}>
+                                <span className={`nx-dot ${pStatus.dotTone}`} aria-hidden="true" />
+                                <span>{pStatus.label}</span>
+                                {pStatus.expiryText && <span>· {pStatus.expiryText}</span>}
+                              </div>
+                              <div className="nx-muted" style={{ marginTop: 2 }}>
+                                @{p.username}
+                                {p.departmentName ? ` · ${p.departmentName}` : ''}
+                                {p.branchName ? ` · ${p.branchName}` : ''}
+                              </div>
+                              {p.customStatus && <div className="nx-person-quote">“{p.customStatus}”</div>}
                             </div>
-                            {p.customStatus && <div className="nx-person-quote">“{p.customStatus}”</div>}
                           </div>
-                        </div>
 
-                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                          {p.id === user.id ? (
-                            <Badge variant="role">You</Badge>
-                          ) : (
-                            <Button variant="primary" size="sm" onClick={() => void handleOpenDm(p.id)}>
-                              <MessageSquare size={14} aria-hidden="true" /> Message
-                            </Button>
-                          )}
-                        </div>
-                      </article>
-                    ))}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            {p.id === user.id ? (
+                              <Badge variant="role">You</Badge>
+                            ) : (
+                              <Button variant="primary" size="sm" onClick={() => void handleOpenDm(p.id)}>
+                                <MessageSquare size={14} aria-hidden="true" /> Message
+                              </Button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
                 <ListPaging loading={loadingDirectory} error={directoryPage.error} hasMore={directoryPage.next !== null}
@@ -1324,6 +1467,16 @@ function App() {
                 )}
 
                 <div className="nx-settings-grid">
+                  <Card title="Availability">
+                    <AvailabilityPicker
+                      variant="inline"
+                      availability={myEffectiveAvailability}
+                      isOnline={myIsOnline}
+                      nowMs={nowMs}
+                      onUpdated={handleAvailabilityUpdated}
+                    />
+                  </Card>
+
                   {activeProfileOrg && (
                     <Card title="Profile & Status">
                       <div className="nx-profile-hero">
@@ -1496,6 +1649,16 @@ function App() {
           )}
         </main>
       </div>
+
+      <ProfileCardModal
+        target={profileCardTarget}
+        currentUserId={user.id}
+        availabilityMap={availabilityMap}
+        nowMs={nowMs}
+        avatarCacheKey={avatarBust}
+        onClose={() => setProfileCardTarget(null)}
+        onStartDirectChat={openDm}
+      />
 
       <WorkspaceModals
         modal={workspaceModal}

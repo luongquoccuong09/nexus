@@ -36,6 +36,8 @@ import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from '.
 import { OrganizationItem } from './organizationControls';
 import { renderSafeMarkdown } from './markdown';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
+import { AvailabilityDto, LiveAvailabilityEntry, resolveUserAvailability } from './availability';
+import { ProfileCardTarget } from './ProfileCardModal';
 import { ConversationNotificationButton } from './notificationPreferences';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
@@ -163,6 +165,8 @@ interface CommunityMemberDto {
   avatarUrl?: string | null;
   isUnverified: boolean;
   isActive?: boolean;
+  isOnline?: boolean;
+  availability?: AvailabilityDto | null;
   role: string;
   joinedAt: string;
 }
@@ -192,6 +196,9 @@ interface CommunitiesWorkspaceProps {
   onOpenCreateWorkspace: () => void;
   onOpenJoinWorkspace: () => void;
   onOpenWorkspaceSettings: (org: OrganizationItem) => void;
+  availabilityMap: Record<string, LiveAvailabilityEntry>;
+  nowMs: number;
+  onOpenProfileCard: (target: ProfileCardTarget) => void;
 }
 
 const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
@@ -231,7 +238,10 @@ export function CommunitiesWorkspace({
   onOpenContentLink,
   onOpenCreateWorkspace,
   onOpenJoinWorkspace,
-  onOpenWorkspaceSettings
+  onOpenWorkspaceSettings,
+  availabilityMap,
+  nowMs,
+  onOpenProfileCard
 }: CommunitiesWorkspaceProps) {
   const [discoverMode, setDiscoverMode] = useState(false);
   const [sidebarFilter, setSidebarFilter] = useState('');
@@ -2141,14 +2151,44 @@ export function CommunitiesWorkspace({
                       >
                         <header className="nx-post-head">
                           <div className="nx-post-author">
-                            <Avatar
-                              displayName={post.authorDisplayName}
-                              avatarUrl={post.authorAvatarUrl}
-                              size="sm"
-                            />
+                            <button
+                              type="button"
+                              className="nx-profile-trigger nx-avatar-trigger"
+                              aria-label={`View profile for ${post.authorDisplayName}`}
+                              onClick={() =>
+                                onOpenProfileCard({
+                                  userId: post.authorUserId,
+                                  organizationId: selectedCommunity.organizationId,
+                                  fallbackDisplayName: post.authorDisplayName,
+                                  fallbackAvatarUrl: post.authorAvatarUrl
+                                })
+                              }
+                            >
+                              <Avatar
+                                displayName={post.authorDisplayName}
+                                avatarUrl={post.authorAvatarUrl}
+                                size="sm"
+                                presence={availabilityMap[post.authorUserId]
+                                  ? resolveUserAvailability(post.authorUserId, {}, availabilityMap, nowMs).dotTone
+                                  : undefined}
+                              />
+                            </button>
                             <div>
                               <div className="nx-post-author-row">
-                                <strong>{post.authorDisplayName}</strong>
+                                <button
+                                  type="button"
+                                  className="nx-profile-trigger nx-name-trigger"
+                                  onClick={() =>
+                                    onOpenProfileCard({
+                                      userId: post.authorUserId,
+                                      organizationId: selectedCommunity.organizationId,
+                                      fallbackDisplayName: post.authorDisplayName,
+                                      fallbackAvatarUrl: post.authorAvatarUrl
+                                    })
+                                  }
+                                >
+                                  <strong>{post.authorDisplayName}</strong>
+                                </button>
                                 {post.pending
                                   ? <span className="nx-pending-label">Publishing…</span>
                                   : <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>}
@@ -2320,7 +2360,19 @@ export function CommunitiesWorkspace({
                             {post.comments.map(c => (
                               <div className={`nx-comment-item ${c.pending ? 'pending' : ''}`} key={c.id}>
                                 <div className="nx-comment-head">
-                                  <strong>{c.authorDisplayName}</strong>
+                                  <button
+                                    type="button"
+                                    className="nx-profile-trigger nx-name-trigger"
+                                    onClick={() =>
+                                      onOpenProfileCard({
+                                        userId: c.authorUserId,
+                                        organizationId: selectedCommunity.organizationId,
+                                        fallbackDisplayName: c.authorDisplayName
+                                      })
+                                    }
+                                  >
+                                    <strong>{c.authorDisplayName}</strong>
+                                  </button>
                                   {c.pending
                                     ? <span className="nx-pending-label">Sending…</span>
                                     : <span className="nx-msg-time">{formatPostTime(c.createdAt)}</span>}
@@ -2462,51 +2514,78 @@ export function CommunitiesWorkspace({
                         <p className="nx-muted" role="status" style={{ textAlign: 'center', margin: '12px 0' }}>
                           Loading members…
                         </p>
-                      ) : members.map(m => (
-                        <div className="nx-member-row nx-managed-member" key={m.userId}>
-                          <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" />
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <strong>{m.displayName}</strong>
-                            <div className="nx-muted">
-                              @{m.username} · <Badge variant="role">{m.role}</Badge>
-                            </div>
-                          </div>
-                          {canManage && m.userId !== currentUserId && m.role !== 'Owner' && (
-                            <div className="nx-member-actions">
-                              {selectedCommunity.myRole === 'Owner' && m.isActive !== false &&
-                                (!selectedCommunity.isOfficial || !m.isUnverified) && (
-                                <Button variant="ghost" size="sm"
-                                  aria-label={`Transfer ownership to ${m.displayName} (@${m.username})`}
-                                  onClick={() => setOwnershipTransfer({
-                                    path: orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/transfer-ownership`),
-                                    resourceLabel: 'Community',
-                                    resourceName: selectedCommunity.name,
-                                    userId: m.userId,
-                                    displayName: m.displayName,
-                                    username: m.username
-                                  })}
-                                >Transfer ownership</Button>
-                              )}
-                              {selectedCommunity.myRole === 'Owner' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => void handleToggleAdmin(m)}
-                                >
-                                  {m.role === 'Admin' ? 'Demote' : 'Admin'}
-                                </Button>
-                              )}
-                              <Button
-                                variant="danger"
-                                size="sm"
-                                onClick={() => void handleRemoveMember(m.userId)}
+                      ) : members.map(m => {
+                        const mStatus = resolveUserAvailability(m.userId, m, availabilityMap, nowMs);
+                        const openMemberProfile = () =>
+                          onOpenProfileCard({
+                            userId: m.userId,
+                            organizationId: selectedCommunity.organizationId,
+                            fallbackDisplayName: m.displayName,
+                            fallbackUsername: m.username,
+                            fallbackAvatarUrl: m.avatarUrl
+                          });
+                        return (
+                          <div className="nx-member-row nx-managed-member" key={m.userId}>
+                            <button
+                              type="button"
+                              className="nx-profile-trigger nx-avatar-trigger"
+                              aria-label={`View profile for ${m.displayName}`}
+                              onClick={openMemberProfile}
+                            >
+                              <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" presence={mStatus.dotTone} />
+                            </button>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <button
+                                type="button"
+                                className="nx-profile-trigger nx-name-trigger"
+                                onClick={openMemberProfile}
                               >
-                                Remove
-                              </Button>
+                                <strong>{m.displayName}</strong>
+                              </button>
+                              <div className="nx-muted nx-inline-status-meta">
+                                <span className={`nx-dot ${mStatus.dotTone}`} aria-hidden="true" />
+                                <span>{mStatus.label}</span>
+                                <span>· @{m.username}</span>
+                                <Badge variant="role">{m.role}</Badge>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            {canManage && m.userId !== currentUserId && m.role !== 'Owner' && (
+                              <div className="nx-member-actions">
+                                {selectedCommunity.myRole === 'Owner' && m.isActive !== false &&
+                                  (!selectedCommunity.isOfficial || !m.isUnverified) && (
+                                  <Button variant="ghost" size="sm"
+                                    aria-label={`Transfer ownership to ${m.displayName} (@${m.username})`}
+                                    onClick={() => setOwnershipTransfer({
+                                      path: orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/transfer-ownership`),
+                                      resourceLabel: 'Community',
+                                      resourceName: selectedCommunity.name,
+                                      userId: m.userId,
+                                      displayName: m.displayName,
+                                      username: m.username
+                                    })}
+                                  >Transfer ownership</Button>
+                                )}
+                                {selectedCommunity.myRole === 'Owner' && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void handleToggleAdmin(m)}
+                                  >
+                                    {m.role === 'Admin' ? 'Demote' : 'Admin'}
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="danger"
+                                  size="sm"
+                                  onClick={() => void handleRemoveMember(m.userId)}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                       <ListPaging loading={loadingMembers} error={memberList.error} hasMore={memberList.next !== null}
                         onMore={memberList.loadMore} onRetry={memberList.retry} moreLabel="Load more members" />
                     </div>

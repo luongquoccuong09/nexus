@@ -64,6 +64,11 @@
   --dot-online:       #22C55E;
   --dot-reconnecting: #F59E0B;
   --dot-offline:      #94A3B8;
+  --status-available: #16A34A;
+  --status-busy:      #DC2626;
+  --status-away:      #D97706;
+  --status-dnd:       #B91C1C;
+  --status-offline:   #94A3B8;
   --badge-alert:      #E53935;
   --badge-role-text:  #1A5B8A;
 
@@ -134,5 +139,10 @@ body.dark {
   --success-bg:      #153524;
   --warning-bg:      #3D2B10;
   --danger-bg:       #3D1B1A;
+  --status-available: #22C55E;
+  --status-busy:      #F87171;
+  --status-away:      #FBBF24;
+  --status-dnd:       #EF4444;
+  --status-offline:   #64748B;
   --code-inline-bg:  rgba(255, 255, 255, 0.12);
 }

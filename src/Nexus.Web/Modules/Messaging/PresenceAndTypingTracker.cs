@@ -3,48 +3,114 @@ using System.Collections.Concurrent;
 namespace Nexus.Web.Modules.Messaging;
 
 /// <summary>
-/// In-memory presence and throttled typing tracker (M2.10 — single-instance monolith, no Redis).
+/// In-memory presence and throttled typing tracker (M2.10 / M6.28 — single-instance monolith, no Redis).
 /// </summary>
 public interface IPresenceTracker
 {
     bool OnConnected(Guid organizationId, Guid userId, string connectionId);
     bool OnDisconnected(Guid organizationId, Guid userId, string connectionId);
+    bool IsOnline(Guid userId);
     bool IsOnline(Guid organizationId, Guid userId);
     bool TryAcquireTypingSlot(Guid userId, Guid conversationId, TimeSpan throttleWindow);
 }
 
 public sealed class InMemoryPresenceTracker : IPresenceTracker
 {
-    private readonly ConcurrentDictionary<(Guid OrganizationId, Guid UserId), ConcurrentDictionary<string, byte>> _online = new();
+    private sealed class UserConnectionState
+    {
+        public readonly object Sync = new();
+        public readonly Dictionary<string, Guid> Connections = new(StringComparer.Ordinal);
+        public readonly Dictionary<Guid, int> ScopeCounts = new();
+    }
+
+    private readonly ConcurrentDictionary<Guid, UserConnectionState> _users = new();
     private readonly ConcurrentDictionary<(Guid UserId, Guid ConversationId), DateTimeOffset> _typingLastSent = new();
 
     public bool OnConnected(Guid organizationId, Guid userId, string connectionId)
     {
-        var set = _online.GetOrAdd((organizationId, userId), _ => new ConcurrentDictionary<string, byte>());
-        var wasEmpty = set.IsEmpty;
-        set[connectionId] = 0;
-        return wasEmpty;
+        while (true)
+        {
+            var state = _users.GetOrAdd(userId, _ => new UserConnectionState());
+            lock (state.Sync)
+            {
+                if (!_users.TryGetValue(userId, out var current) || !ReferenceEquals(current, state))
+                {
+                    continue;
+                }
+
+                var wasOffline = state.Connections.Count == 0;
+                if (state.Connections.TryAdd(connectionId, organizationId))
+                {
+                    state.ScopeCounts[organizationId] = state.ScopeCounts.GetValueOrDefault(organizationId) + 1;
+                }
+
+                return wasOffline && state.Connections.Count > 0;
+            }
+        }
     }
 
     public bool OnDisconnected(Guid organizationId, Guid userId, string connectionId)
     {
-        if (!_online.TryGetValue((organizationId, userId), out var set))
+        if (!_users.TryGetValue(userId, out var state))
         {
             return false;
         }
 
-        set.TryRemove(connectionId, out _);
-        if (set.IsEmpty)
+        lock (state.Sync)
         {
-            _online.TryRemove((organizationId, userId), out _);
-            return true;
-        }
+            if (!state.Connections.Remove(connectionId, out var recordedScope))
+            {
+                return false;
+            }
 
-        return false;
+            if (state.ScopeCounts.TryGetValue(recordedScope, out var count))
+            {
+                if (count <= 1)
+                {
+                    state.ScopeCounts.Remove(recordedScope);
+                }
+                else
+                {
+                    state.ScopeCounts[recordedScope] = count - 1;
+                }
+            }
+
+            if (state.Connections.Count == 0)
+            {
+                _users.TryRemove(new KeyValuePair<Guid, UserConnectionState>(userId, state));
+                return true;
+            }
+
+            return false;
+        }
     }
 
-    public bool IsOnline(Guid organizationId, Guid userId) =>
-        _online.TryGetValue((organizationId, userId), out var set) && !set.IsEmpty;
+    public bool IsOnline(Guid userId)
+    {
+        if (!_users.TryGetValue(userId, out var state))
+        {
+            return false;
+        }
+
+        lock (state.Sync)
+        {
+            return state.Connections.Count > 0;
+        }
+    }
+
+    public bool IsOnline(Guid organizationId, Guid userId)
+    {
+        if (!_users.TryGetValue(userId, out var state))
+        {
+            return false;
+        }
+
+        lock (state.Sync)
+        {
+            return state.ScopeCounts.GetValueOrDefault(organizationId) > 0 ||
+                   state.ScopeCounts.GetValueOrDefault(Guid.Empty) > 0;
+        }
+    }
 
     public bool TryAcquireTypingSlot(Guid userId, Guid conversationId, TimeSpan throttleWindow)
     {

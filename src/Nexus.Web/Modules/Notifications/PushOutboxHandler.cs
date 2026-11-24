@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Identity;
 
 namespace Nexus.Web.Modules.Notifications;
 
@@ -15,8 +16,27 @@ internal sealed class PushOutboxHandler(NexusDbContext db, WebPushTransport tran
         var now = DateTimeOffset.UtcNow;
         if (message.CreatedAt < now.AddDays(-1)) return;
 
-        var subscription = await ActiveSubscriptions(db, now).SingleOrDefaultAsync(item => item.Id == subscriptionId, ct);
-        if (subscription is null || !WebPushTransport.TryParseEndpoint(subscription.Endpoint, out var endpoint)) return;
+        var target = await (
+            from sub in db.PushSubscriptions.AsNoTracking()
+            join session in db.AppSessions.AsNoTracking() on sub.SessionId equals session.Id
+            join account in db.Users.AsNoTracking() on sub.UserId equals account.Id
+            where sub.Id == subscriptionId &&
+                  session.UserId == sub.UserId && session.RevokedAt == null &&
+                  (session.ExpiresAt == null || session.ExpiresAt > now) && session.SecurityStamp == account.SecurityStamp &&
+                  account.Status == AccountStatus.Active
+            select new
+            {
+                Subscription = sub,
+                account.AvailabilityState,
+                account.AvailabilityExpiresAt
+            }).SingleOrDefaultAsync(ct);
+        if (target is null || !WebPushTransport.TryParseEndpoint(target.Subscription.Endpoint, out var endpoint)) return;
+
+        var subscription = target.Subscription;
+        if (AvailabilityResolver.ResolveState(target.AvailabilityState, target.AvailabilityExpiresAt, now) == AvailabilityState.DoNotDisturb)
+        {
+            return;
+        }
 
         var visible = NotificationQueries.VisibleTo(db, subscription.UserId);
         var notification = await NotificationQueries.Unread(db, visible, subscription.UserId)

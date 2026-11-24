@@ -9,6 +9,7 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.Org;
@@ -28,7 +29,7 @@ public static class OrganizationManagementEndpoints
         account.MapPost("/invitations/redeem", RedeemAsync).AddEndpointFilter(ValidateCsrfAsync);
 
         var organization = app.MapGroup(OrganizationScope.Api);
-        organization.MapGet("/me", ([FromServices] NexusDbContext db) => Results.Ok(ToProfile(db.OrganizationActor!)));
+        organization.MapGet("/me", GetProfileAsync);
         organization.MapGet("/invitations", ListInvitationsAsync);
         organization.MapPost("/invitations", IssueInvitationAsync).AddEndpointFilter(ValidateCsrfAsync);
         organization.MapDelete("/invitations/{invitationId:guid}", RevokeInvitationAsync).AddEndpointFilter(ValidateCsrfAsync);
@@ -253,12 +254,31 @@ public static class OrganizationManagementEndpoints
     private static string? TokenHash(string? token) => token is { Length: 64 } && token.All(Uri.IsHexDigit)
         ? Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(token))) : null;
 
-    private static object ToProfile(OrganizationMembership member) => new
+    private static async Task<IResult> GetProfileAsync([FromServices] NexusDbContext db, IPresenceTracker presence, CancellationToken ct)
     {
-        member.Id, username = member.UserName, member.DisplayName, member.CustomStatus, member.IsOwner,
-        orgRole = member.OrgRole.ToString(), isUnverified = member.TrustLevel == TrustLevel.Unverified,
-        avatarUrl = member.AvatarObjectKey is null ? null : $"/api/organizations/{member.OrganizationId}/people/{member.Id}/avatar"
-    };
+        var member = db.OrganizationActor!;
+        var account = await db.Users.AsNoTracking()
+            .Where(u => u.Id == member.Id)
+            .Select(u => new { u.AvailabilityState, u.AvailabilityExpiresAt })
+            .SingleOrDefaultAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var state = account?.AvailabilityState ?? AvailabilityState.Available;
+        var expiresAt = account?.AvailabilityExpiresAt;
+        return Results.Ok(new
+        {
+            member.Id,
+            username = member.UserName,
+            member.DisplayName,
+            member.CustomStatus,
+            member.IsOwner,
+            orgRole = member.OrgRole.ToString(),
+            isUnverified = member.TrustLevel == TrustLevel.Unverified,
+            avatarUrl = member.AvatarObjectKey is null ? null : $"/api/organizations/{member.OrganizationId}/people/{member.Id}/avatar",
+            isOnline = presence.IsOnline(member.OrganizationId, member.Id),
+            availability = AvailabilityResolver.Resolve(state, expiresAt, now),
+            suppressChime = AvailabilityResolver.IsChimeSuppressed(state, expiresAt, now)
+        });
+    }
 
     internal static void Audit([FromServices] NexusDbContext db, Guid orgId, Guid actor, string action, Guid target, DateTimeOffset now) =>
         db.AuditLogs.Add(new AuditLogEntity

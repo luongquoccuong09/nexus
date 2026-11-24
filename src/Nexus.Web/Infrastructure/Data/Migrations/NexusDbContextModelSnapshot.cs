@@ -845,6 +845,17 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
 
+                    b.Property<DateTimeOffset?>("AvailabilityExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("availability_expires_at");
+
+                    b.Property<string>("AvailabilityState")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Available")
+                        .HasColumnName("availability_state");
+
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");
@@ -923,7 +934,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
 
-                    b.ToTable("users", (string)null);
+                    b.ToTable("users", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_users_availability_expires_at", "availability_state <> 'Available' OR availability_expires_at IS NULL");
+
+                            t.HasCheckConstraint("ck_users_availability_state", "availability_state IN ('Available', 'Busy', 'Away', 'DoNotDisturb')");
+                        });
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.AnnouncementAcknowledgmentEntity", b =>

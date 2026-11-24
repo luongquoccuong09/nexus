@@ -4,6 +4,7 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.Conversations;
 
@@ -26,7 +27,9 @@ public static class PeopleEndpoints
         string? DepartmentName,
         string? BranchName,
         string? CustomStatus,
-        string? AvatarUrl);
+        string? AvatarUrl,
+        bool IsOnline,
+        AvailabilityDto Availability);
 
     public static IEndpointRouteBuilder MapPeopleEndpoints(this IEndpointRouteBuilder app)
     {
@@ -38,6 +41,8 @@ public static class PeopleEndpoints
         people.MapDelete("/me/avatar", HandleDeleteAvatarAsync);
         people.MapGet("/{targetUserId:guid}/avatar", HandleGetAvatarAsync);
 
+        app.MapProfileAndAvailabilityEndpoints();
+
         return app;
     }
 
@@ -45,6 +50,7 @@ public static class PeopleEndpoints
         HttpContext ctx,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        IPresenceTracker presence,
         string? q,
         Guid? departmentId,
         Guid? excludeCommunityId,
@@ -136,6 +142,8 @@ public static class PeopleEndpoints
                 r.User.BranchId,
                 r.User.CustomStatus,
                 r.User.AvatarObjectKey,
+                r.User.Account.AvailabilityState,
+                r.User.Account.AvailabilityExpiresAt,
                 r.Score
             })
             .ToListAsync(ct);
@@ -153,6 +161,7 @@ public static class PeopleEndpoints
             ? new Dictionary<Guid, string>()
             : await db.Branches.AsNoTracking().Where(b => branchIds.Contains(b.Id)).ToDictionaryAsync(b => b.Id, b => b.Name, ct);
 
+        var now = DateTimeOffset.UtcNow;
         var items = rows.Select(r => new DirectoryProfileDto(
             r.Id,
             r.Username,
@@ -163,7 +172,9 @@ public static class PeopleEndpoints
             r.DepartmentId.HasValue && deptNames.TryGetValue(r.DepartmentId.Value, out var dn) ? dn : null,
             r.BranchId.HasValue && branchNames.TryGetValue(r.BranchId.Value, out var bn) ? bn : null,
             r.CustomStatus,
-            string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{r.Id}/avatar"))
+            string.IsNullOrEmpty(r.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{r.Id}/avatar",
+            presence.IsOnline(actor.OrganizationId, r.Id),
+            AvailabilityResolver.Resolve(r.AvailabilityState, r.AvailabilityExpiresAt, now)))
             .ToList();
 
         var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new DirectoryCursor(rows[^1].DisplayName, rows[^1].Id, rows[^1].Score)) : null;

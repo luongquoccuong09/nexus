@@ -11,6 +11,14 @@ import { useChatDrafts } from './chatDrafts';
 import { useChatReading } from './chatReading';
 import { shouldSendOnEnter } from './composerKeys';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
+import {
+  AvailabilityChangedEvent,
+  AvailabilityDto,
+  LiveAvailabilityEntry,
+  normalizeAvailability,
+  resolveUserAvailability
+} from './availability';
+import { ProfileCardTarget } from './ProfileCardModal';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { ListPaging, readCursorPage, useCursorList } from './cursorList';
 import { personKey, searchChatCandidates } from './peopleDirectory';
@@ -53,6 +61,7 @@ export interface ConversationListItem {
     username: string;
     displayName: string;
     isOnline: boolean;
+    availability?: AvailabilityDto | null;
     isBlockedByMe?: boolean;
     avatarUrl?: string | null;
   } | null;
@@ -124,6 +133,8 @@ interface GroupMemberItem {
   displayName: string;
   role: string;
   isActive?: boolean;
+  isOnline?: boolean;
+  availability?: AvailabilityDto | null;
 }
 const groupMemberKey = (member: GroupMemberItem) => member.userId;
 
@@ -192,6 +203,10 @@ interface ChatWorkspaceProps {
   onUnreadTotalChange: (total: number) => void;
   onCommunityFeedChanged: (conversationId?: string, delta?: CommunityFeedDelta | null) => void;
   onVersionStale: () => void;
+  availabilityMap: Record<string, LiveAvailabilityEntry>;
+  nowMs: number;
+  onAvailabilityChanged: (evt: AvailabilityChangedEvent) => void;
+  onOpenProfileCard: (target: ProfileCardTarget) => void;
 }
 
 function formatTime(iso: string): string {
@@ -235,7 +250,11 @@ export function ChatWorkspace({
   onConnectionStateChange,
   onUnreadTotalChange,
   onCommunityFeedChanged,
-  onVersionStale
+  onVersionStale,
+  availabilityMap,
+  nowMs,
+  onAvailabilityChanged,
+  onOpenProfileCard
 }: ChatWorkspaceProps) {
   const offlineScope = `${currentUserId}:personal`;
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
@@ -355,6 +374,7 @@ export function ChatWorkspace({
   const connStateCbRef = useRef(onConnectionStateChange);
   const communityFeedCbRef = useRef(onCommunityFeedChanged);
   const orgRevokedCbRef = useRef(onOrganizationAccessRevoked);
+  const availabilityChangedCbRef = useRef(onAvailabilityChanged);
   const discardConversationRef = useRef<(id: string) => void>(() => {});
   const conversationRefreshRef = useRef({ timer: null as number | null, queued: false });
   const conversationListRequest = useRef<AbortController | null>(null);
@@ -368,6 +388,7 @@ export function ChatWorkspace({
   connStateCbRef.current = onConnectionStateChange;
   communityFeedCbRef.current = onCommunityFeedChanged;
   orgRevokedCbRef.current = onOrganizationAccessRevoked;
+  availabilityChangedCbRef.current = onAvailabilityChanged;
 
   const updateOutgoing = useCallback((update: (current: QueuedMessage[]) => QueuedMessage[]) => {
     outgoingRef.current = update(outgoingRef.current);
@@ -1173,6 +1194,22 @@ export function ChatWorkspace({
       }
     });
 
+    connection.on('AvailabilityChanged', (evt: AvailabilityChangedEvent) => {
+      if (!evt?.userId) return;
+      const cleanEvt: AvailabilityChangedEvent = {
+        userId: evt.userId,
+        availability: normalizeAvailability(evt.availability),
+        isOnline: Boolean(evt.isOnline),
+        updatedAt: evt.updatedAt ?? new Date().toISOString()
+      };
+      availabilityChangedCbRef.current(cleanEvt);
+      setConversations(prev => prev.map(c =>
+        c.peer?.id === cleanEvt.userId
+          ? { ...c, peer: { ...c.peer, isOnline: cleanEvt.isOnline, availability: cleanEvt.availability } }
+          : c
+      ));
+    });
+
     connection.onreconnecting(() => {
       if (!disposed) connStateCbRef.current('reconnecting');
     });
@@ -1609,10 +1646,13 @@ export function ChatWorkspace({
     const groupIds = groupList.map(item => item.id);
     const idx = groupIds.indexOf(c.id);
     const preview = c.lastMessagePreview;
+    const peerStatus = isDm && c.peer
+      ? resolveUserAvailability(c.peer.id, c.peer, availabilityMap, nowMs)
+      : null;
     const previewText = preview
       ? `${preview.senderDisplayName}: ${preview.bodyPreview}`
       : isDm
-        ? (c.peer?.isOnline ? 'Online' : `@${c.peer?.username ?? 'direct'}`)
+        ? (peerStatus ? `${peerStatus.label}${peerStatus.expiryText ? ` · ${peerStatus.expiryText}` : ''}` : `@${c.peer?.username ?? 'direct'}`)
         : `${c.memberCount} ${c.memberCount === 1 ? 'member' : 'members'}`;
 
     return (
@@ -1649,7 +1689,7 @@ export function ChatWorkspace({
             displayName={c.title}
             avatarUrl={isDm ? c.peer?.avatarUrl : null}
             variant={isDm ? 'user' : 'group'}
-            presence={isDm ? (c.peer?.isOnline ? 'online' : 'offline') : undefined}
+            presence={peerStatus?.dotTone}
           />
           <div className="nx-conv-meta">
             <div className="nx-conv-top">
@@ -1868,28 +1908,62 @@ export function ChatWorkspace({
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
                 </Button>
-                <Avatar
-                  displayName={activeConv.title}
-                  avatarUrl={activeConv.kind === 'dm' ? activeConv.peer?.avatarUrl : null}
-                  variant={activeConv.kind === 'dm' ? 'user' : 'group'}
-                  presence={activeConv.kind === 'dm' ? (activeConv.peer?.isOnline ? 'online' : 'offline') : undefined}
-                />
-                <div className="nx-stage-identity">
-                  <h3>
-                    <span className="nx-stage-name">{activeConv.title}</span>
-                  </h3>
-                  <div className="nx-stage-subtitle">
-                    {activeConv.kind === 'dm' ? (
-                      <>
-                        <span className={`nx-dot ${activeConv.peer?.isOnline ? 'online' : 'offline'}`} />
-                        <span>{activeConv.peer?.isOnline ? 'Online' : 'Offline'}</span>
-                        {activeConv.peer?.username && <span className="nx-stage-handle">· @{activeConv.peer.username}</span>}
-                      </>
-                    ) : (
-                      <span>{activeConv.memberCount} {activeConv.memberCount === 1 ? 'member' : 'members'} · Role: {activeConv.role}</span>
-                    )}
-                  </div>
-                </div>
+                {activeConv.kind === 'dm' && activeConv.peer ? (() => {
+                  const activePeer = activeConv.peer;
+                  const peerStatus = resolveUserAvailability(activePeer.id, activePeer, availabilityMap, nowMs);
+                  return (
+                    <button
+                      type="button"
+                      className="nx-profile-trigger nx-stage-profile-btn"
+                      aria-label={`View profile for ${activeConv.title}`}
+                      onClick={() =>
+                        onOpenProfileCard({
+                          userId: activePeer.id,
+                          organizationId: null,
+                          fallbackDisplayName: activePeer.displayName,
+                          fallbackUsername: activePeer.username,
+                          fallbackAvatarUrl: activePeer.avatarUrl
+                        })
+                      }
+                    >
+                      <Avatar
+                        displayName={activeConv.title}
+                        avatarUrl={activePeer.avatarUrl}
+                        variant="user"
+                        presence={peerStatus.dotTone}
+                      />
+                      <div className="nx-stage-identity">
+                        <h3>
+                          <span className="nx-stage-name">{activeConv.title}</span>
+                        </h3>
+                        <div className="nx-stage-subtitle">
+                          <span className={`nx-dot ${peerStatus.dotTone}`} aria-hidden="true" />
+                          <span className="nx-stage-status-label">{peerStatus.label}</span>
+                          {peerStatus.expiryText && <span className="nx-stage-handle">· {peerStatus.expiryText}</span>}
+                          {activePeer.username && <span className="nx-stage-handle">· @{activePeer.username}</span>}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })() : (
+                  <>
+                    <Avatar
+                      displayName={activeConv.title}
+                      avatarUrl={null}
+                      variant="group"
+                    />
+                    <div className="nx-stage-identity">
+                      <h3>
+                        <span className="nx-stage-name">{activeConv.title}</span>
+                      </h3>
+                      <div className="nx-stage-subtitle">
+                        <span className="nx-stage-status-label">
+                          {activeConv.memberCount} {activeConv.memberCount === 1 ? 'member' : 'members'} · Role: {activeConv.role}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="nx-inline-actions nx-stage-actions">
@@ -1897,6 +1971,8 @@ export function ChatWorkspace({
                 <Button
                   variant={rightDrawer === 'files' ? 'primary' : 'default'}
                   size="sm"
+                  aria-label="Conversation files"
+                  title="Files"
                   onClick={() => {
                     const next = rightDrawer === 'files' ? 'none' : 'files';
                     if (next === 'files') {
@@ -1906,7 +1982,8 @@ export function ChatWorkspace({
                     setRightDrawer(next);
                   }}
                 >
-                  <FolderOpen size={15} aria-hidden="true" /> Files
+                  <FolderOpen size={15} aria-hidden="true" />
+                  <span className="nx-stage-action-label">Files</span>
                 </Button>
                 {activeConv.kind === 'dm' && activeConv.peer ? (
                   <div className="nx-menu-wrap" ref={moreMenuRef}>
@@ -1974,12 +2051,15 @@ export function ChatWorkspace({
                   <Button
                     variant={rightDrawer === 'members' ? 'primary' : 'default'}
                     size="sm"
+                    aria-label={`Members (${activeConv.memberCount})`}
+                    title={`Members (${activeConv.memberCount})`}
                     onClick={() => {
                       const next = rightDrawer === 'members' ? 'none' : 'members';
                       setRightDrawer(next);
                     }}
                   >
-                    <Users size={15} aria-hidden="true" /> Members ({activeConv.memberCount})
+                    <Users size={15} aria-hidden="true" />
+                    <span className="nx-stage-action-label">Members ({activeConv.memberCount})</span>
                   </Button>
                 )}
               </div>
@@ -2018,7 +2098,28 @@ export function ChatWorkspace({
                       {!isOwn && (
                         compact
                           ? <div className="nx-msg-avatar-spacer" />
-                          : <Avatar displayName={m.senderDisplayName} size="sm" />
+                          : (
+                            <button
+                              type="button"
+                              className="nx-profile-trigger nx-avatar-trigger"
+                              aria-label={`View profile for ${m.senderDisplayName}`}
+                              onClick={() =>
+                                onOpenProfileCard({
+                                  userId: m.senderId,
+                                  organizationId: null,
+                                  fallbackDisplayName: m.senderDisplayName
+                                })
+                              }
+                            >
+                              <Avatar
+                                displayName={m.senderDisplayName}
+                                size="sm"
+                                presence={availabilityMap[m.senderId]
+                                  ? resolveUserAvailability(m.senderId, {}, availabilityMap, nowMs).dotTone
+                                  : undefined}
+                              />
+                            </button>
+                          )
                       )}
                       <div
                         className={`nx-msg-bubble ${highlightedMessageId === m.id ? 'nx-highlight-target' : ''}`}
@@ -2029,7 +2130,23 @@ export function ChatWorkspace({
                         <div className="nx-msg-head">
                           {!compact && (
                             <>
-                              <strong>{isOwn ? 'You' : m.senderDisplayName}</strong>
+                              {isOwn ? (
+                                <strong>You</strong>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="nx-profile-trigger nx-name-trigger"
+                                  onClick={() =>
+                                    onOpenProfileCard({
+                                      userId: m.senderId,
+                                      organizationId: null,
+                                      fallbackDisplayName: m.senderDisplayName
+                                    })
+                                  }
+                                >
+                                  <strong>{m.senderDisplayName}</strong>
+                                </button>
+                              )}
                               <span className="nx-msg-time">
                                 {m.pending ? 'Sending…' : formatTime(m.createdAt)}
                               </span>
@@ -2294,15 +2411,34 @@ export function ChatWorkspace({
             )}
 
             <div>
-              {groupMembers.map(gm => (
-                <div className="nx-row nx-managed-member" key={gm.userId}>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="nx-user-name-wrap">
-                      <strong style={{ fontSize: 13 }}>{gm.displayName}</strong>
-                      <Badge variant="role">{gm.role}</Badge>
+              {groupMembers.map(gm => {
+                const gmStatus = resolveUserAvailability(gm.userId, gm, availabilityMap, nowMs);
+                return (
+                  <div className="nx-row nx-managed-member" key={gm.userId}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="nx-user-name-wrap">
+                        <button
+                          type="button"
+                          className="nx-profile-trigger nx-name-trigger"
+                          onClick={() =>
+                            onOpenProfileCard({
+                              userId: gm.userId,
+                              organizationId: null,
+                              fallbackDisplayName: gm.displayName,
+                              fallbackUsername: gm.username
+                            })
+                          }
+                        >
+                          <strong style={{ fontSize: 13 }}>{gm.displayName}</strong>
+                        </button>
+                        <Badge variant="role">{gm.role}</Badge>
+                      </div>
+                      <div className="nx-muted nx-inline-status-meta">
+                        <span className={`nx-dot ${gmStatus.dotTone}`} aria-hidden="true" />
+                        <span>{gmStatus.label}</span>
+                        <span>· @{gm.username}</span>
+                      </div>
                     </div>
-                    <div className="nx-muted">@{gm.username}</div>
-                  </div>
                   {(activeConv.role === 'Owner' || activeConv.role === 'Admin') &&
                     gm.userId !== currentUserId &&
                     gm.role !== 'Owner' && (
@@ -2325,8 +2461,9 @@ export function ChatWorkspace({
                         </Button>
                       </div>
                     )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
             <ListPaging loading={loadingMembers} error={groupMemberPage.error} hasMore={groupMemberPage.next !== null}
               onMore={groupMemberPage.loadMore} onRetry={groupMemberPage.retry} moreLabel="Load more members" />

@@ -57,7 +57,9 @@ public static class IdentityEndpoints
         bool MfaRequired,
         bool MfaSetupRequired,
         string? CustomStatus,
-        string? AvatarUrl);
+        string? AvatarUrl,
+        AvailabilityDto Availability,
+        bool SuppressChime);
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder app)
     {
@@ -587,6 +589,7 @@ public static class IdentityEndpoints
 
         var items = await db.OrganizationPeople
             .AsNoTracking()
+            .Include(u => u.Account)
             .Where(u => u.OrganizationId == actorUser!.OrganizationId)
             .OrderByDescending(u => u.CreatedAt)
             .Take(pageSize)
@@ -836,29 +839,43 @@ public static class IdentityEndpoints
         await db.SaveChangesAsync(ct);
     }
 
-    private static UserSummaryDto ToMemberSummaryDto(OrganizationMembership m) => new(
-        m.Id, m.UserName, m.DisplayName, m.Status.ToString(), m.TrustLevel.ToString(),
-        m.TrustLevel == TrustLevel.Unverified, m.OrgRole.ToString(), m.EmployeeId, false, false, false,
-        m.CustomStatus, m.AvatarObjectKey is null ? null : $"/api/organizations/{m.OrganizationId}/people/{m.Id}/avatar");
+    private static UserSummaryDto ToMemberSummaryDto(OrganizationMembership m)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var state = m.Account?.AvailabilityState ?? AvailabilityState.Available;
+        var expiresAt = m.Account?.AvailabilityExpiresAt;
+        return new(
+            m.Id, m.UserName, m.DisplayName, m.Status.ToString(), m.TrustLevel.ToString(),
+            m.TrustLevel == TrustLevel.Unverified, m.OrgRole.ToString(), m.EmployeeId, false, false, false,
+            m.CustomStatus, m.AvatarObjectKey is null ? null : $"/api/organizations/{m.OrganizationId}/people/{m.Id}/avatar",
+            AvailabilityResolver.Resolve(state, expiresAt, now),
+            AvailabilityResolver.IsChimeSuppressed(state, expiresAt, now));
+    }
 
     private static Task<bool> HasActiveAdminRoleAsync(NexusDbContext db, Guid userId, CancellationToken ct) =>
         db.OrganizationMemberships.AsNoTracking()
             .AnyAsync(m => m.Id == userId && m.Status == AccountStatus.Active && m.OrgRole != OrgRole.Member, ct);
 
-    private static UserSummaryDto ToSummaryDto(NexusUser u, bool requiresMfa = false) => new(
-        u.Id,
-        u.UserName ?? string.Empty,
-        u.DisplayName,
-        u.Status.ToString(),
-        TrustLevel.Unverified.ToString(),
-        true,
-        OrgRole.Member.ToString(),
-        null,
-        u.TwoFactorEnabled,
-        requiresMfa,
-        requiresMfa && !u.TwoFactorEnabled,
-        null,
-        null);
+    private static UserSummaryDto ToSummaryDto(NexusUser u, bool requiresMfa = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new(
+            u.Id,
+            u.UserName ?? string.Empty,
+            u.DisplayName,
+            u.Status.ToString(),
+            TrustLevel.Unverified.ToString(),
+            true,
+            OrgRole.Member.ToString(),
+            null,
+            u.TwoFactorEnabled,
+            requiresMfa,
+            requiresMfa && !u.TwoFactorEnabled,
+            null,
+            null,
+            AvailabilityResolver.Resolve(u.AvailabilityState, u.AvailabilityExpiresAt, now),
+            AvailabilityResolver.IsChimeSuppressed(u.AvailabilityState, u.AvailabilityExpiresAt, now));
+    }
 
     private static string ComputeSha256Hex(string input) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(input)));

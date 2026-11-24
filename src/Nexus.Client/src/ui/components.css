@@ -138,8 +138,26 @@
   flex-shrink: 0;
 }
 .nx-dot.online, .nx-dot.connected { background: var(--dot-online); }
+.nx-dot.available { background: var(--status-available); }
+.nx-dot.busy { background: var(--status-busy); }
+.nx-dot.away { background: var(--status-away); }
+.nx-dot.dnd {
+  position: relative;
+  background: var(--status-dnd);
+}
+.nx-dot.dnd::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1.5px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--text-on-brand);
+}
 .nx-dot.reconnecting { background: var(--dot-reconnecting); }
-.nx-dot.offline { background: var(--dot-offline); }
+.nx-dot.offline { background: var(--status-offline); }
 
 .nx-avatar-dot {
   position: absolute;

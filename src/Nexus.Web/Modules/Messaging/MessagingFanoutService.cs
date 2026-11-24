@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.People;
 
 namespace Nexus.Web.Modules.Messaging;
 
@@ -87,6 +89,87 @@ public sealed class MessagingFanoutService(
     public Task NotifyConversationAccessRevokedAsync(Guid userId, Guid conversationId, CancellationToken ct) =>
         hubContext.Clients.Group(MessagingHub.UserGroupName(db.OrganizationScopeId, userId))
             .SendAsync("ConversationAccessRevoked", new { conversationId, organizationId = db.ConversationOrganizationId }, ct);
+
+    public async Task NotifyAvailabilityChangedAsync(
+        Guid userId,
+        AvailabilityDto availability,
+        bool isOnline,
+        CancellationToken cancellationToken = default)
+    {
+        var myOrgIds = await db.OrganizationMemberships.AsNoTracking()
+            .Where(m => m.Id == userId && m.Status == AccountStatus.Active && m.Account.Status == AccountStatus.Active)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(cancellationToken);
+
+        var orgPeers = myOrgIds.Count == 0
+            ? []
+            : await db.OrganizationMemberships.AsNoTracking()
+                .Where(m => myOrgIds.Contains(m.OrganizationId) && m.Id != userId &&
+                            m.Status == AccountStatus.Active && m.Account.Status == AccountStatus.Active)
+                .Select(m => new { m.OrganizationId, m.Id })
+                .ToListAsync(cancellationToken);
+
+        var personalPeerIds = await PersonalConnections.AcceptedContactIds(db, userId)
+            .Union(
+                db.ConversationMembers.AsNoTracking()
+                    .Where(mine => mine.UserId == userId && mine.LeftAt == null)
+                    .Join(
+                        db.Conversations.AsNoTracking().Where(c => c.OrganizationId == null),
+                        mine => mine.ConversationId,
+                        c => c.Id,
+                        (mine, _) => mine.ConversationId)
+                    .Join(
+                        db.ConversationMembers.AsNoTracking().Where(peer => peer.UserId != userId && peer.LeftAt == null),
+                        convId => convId,
+                        peer => peer.ConversationId,
+                        (_, peer) => peer.UserId)
+                    .Where(peerId => !db.UserBlocks.Any(b => b.OrganizationId == Guid.Empty &&
+                        ((b.BlockerUserId == userId && b.BlockedUserId == peerId) ||
+                         (b.BlockerUserId == peerId && b.BlockedUserId == userId)))))
+            .Join(
+                db.Users.AsNoTracking().Where(u => u.Status == AccountStatus.Active),
+                id => id,
+                u => u.Id,
+                (id, _) => id)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var groups = new HashSet<string>(StringComparer.Ordinal)
+        {
+            MessagingHub.UserGroupName(Guid.Empty, userId)
+        };
+        foreach (var orgId in myOrgIds)
+        {
+            groups.Add(MessagingHub.UserGroupName(orgId, userId));
+        }
+        foreach (var peerId in personalPeerIds)
+        {
+            groups.Add(MessagingHub.UserGroupName(Guid.Empty, peerId));
+        }
+        foreach (var peer in orgPeers)
+        {
+            groups.Add(MessagingHub.UserGroupName(peer.OrganizationId, peer.Id));
+        }
+
+        var payload = new
+        {
+            userId,
+            availability,
+            isOnline,
+            updatedAt = DateTimeOffset.UtcNow
+        };
+
+        var groupList = groups.ToArray();
+        const int chunkSize = 500;
+        for (var offset = 0; offset < groupList.Length; offset += chunkSize)
+        {
+            var count = Math.Min(chunkSize, groupList.Length - offset);
+            var batch = offset == 0 && count == groupList.Length
+                ? groupList
+                : groupList[offset..(offset + count)];
+            await hubContext.Clients.Groups(batch).SendAsync("AvailabilityChanged", payload, cancellationToken);
+        }
+    }
 
     private async Task<List<Guid>> ResolveAuthorizedRecipientsAsync(
         Guid conversationId,

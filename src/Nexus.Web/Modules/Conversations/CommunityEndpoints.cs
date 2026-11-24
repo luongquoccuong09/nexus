@@ -384,6 +384,7 @@ public static class CommunityEndpoints
         Guid communityId,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        IPresenceTracker presence,
         string? cursor,
         int? limit,
         CancellationToken ct)
@@ -412,7 +413,7 @@ public static class CommunityEndpoints
 
         if (!PaginationGuard.TryDecodeCursor<PaginationGuard.NameCursor>(cursor, out var after) ||
             after is not null && (after.Name is null || after.Id == Guid.Empty)) return PaginationGuard.InvalidCursor();
-        var items = await db.CommunityMembers.AsNoTracking()
+        var rows = await db.CommunityMembers.AsNoTracking()
             .Where(m => m.CommunityId == communityId && m.LeftAt == null)
             .Join(db.OrganizationPeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => new
             {
@@ -422,7 +423,9 @@ public static class CommunityEndpoints
                 isUnverified = u.TrustLevel == TrustLevel.Unverified,
                 isActive = db.ActiveScopePeople.Any(active => active.Id == u.Id),
                 role = m.Role.ToString(),
-                joinedAt = m.JoinedAt
+                joinedAt = m.JoinedAt,
+                u.Account.AvailabilityState,
+                u.Account.AvailabilityExpiresAt
             })
             .Where(x => after == null || string.Compare(x.displayName, after.Name) > 0 ||
                 x.displayName == after.Name && x.userId.CompareTo(after.Id) > 0)
@@ -430,9 +433,22 @@ public static class CommunityEndpoints
             .Take(pageSize + 1)
             .ToListAsync(ct);
 
-        var hasMore = items.Count > pageSize;
-        if (hasMore) items.RemoveAt(pageSize);
-        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(items[^1].displayName, items[^1].userId)) : null;
+        var hasMore = rows.Count > pageSize;
+        if (hasMore) rows.RemoveAt(pageSize);
+        var now = DateTimeOffset.UtcNow;
+        var items = rows.Select(x => new
+        {
+            x.userId,
+            x.username,
+            x.displayName,
+            x.isUnverified,
+            x.isActive,
+            x.role,
+            x.joinedAt,
+            isOnline = presence.IsOnline(actor.OrganizationId, x.userId),
+            availability = AvailabilityResolver.Resolve(x.AvailabilityState, x.AvailabilityExpiresAt, now)
+        }).ToList();
+        var nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PaginationGuard.NameCursor(rows[^1].displayName, rows[^1].userId)) : null;
         return Results.Ok(new { items, nextCursor });
     }
 

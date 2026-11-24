@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Org;
 
 namespace Nexus.Web.Modules.Messaging;
@@ -14,7 +15,8 @@ namespace Nexus.Web.Modules.Messaging;
 public sealed class MessagingHub(
     NexusDbContext db,
     IAuthorizationService authz,
-    IPresenceTracker presence) : Hub
+    IPresenceTracker presence,
+    MessagingFanoutService fanout) : Hub
 {
     public static string UserGroupName(Guid organizationId, Guid userId) => $"scope:{organizationId:D}:user:{userId:D}";
 
@@ -33,8 +35,22 @@ public sealed class MessagingHub(
         {
             await SubscribeActiveOrganizationsAsync(userId, Context.ConnectionAborted);
         }
-        presence.OnConnected(ScopeId, userId, Context.ConnectionId);
+
+        var becameOnline = presence.OnConnected(ScopeId, userId, Context.ConnectionId);
         await base.OnConnectedAsync();
+
+        if (becameOnline)
+        {
+            var account = await db.Users.AsNoTracking()
+                .Where(u => u.Id == userId && u.Status == AccountStatus.Active)
+                .Select(u => new { u.AvailabilityState, u.AvailabilityExpiresAt })
+                .SingleOrDefaultAsync(Context.ConnectionAborted);
+            if (account is not null)
+            {
+                var availability = AvailabilityResolver.Resolve(account.AvailabilityState, account.AvailabilityExpiresAt, DateTimeOffset.UtcNow);
+                await fanout.NotifyAvailabilityChangedAsync(userId, availability, isOnline: true, Context.ConnectionAborted);
+            }
+        }
     }
 
     public async Task RefreshOrganizationSubscriptions()
@@ -65,7 +81,28 @@ public sealed class MessagingHub(
     {
         if (Context.User.TryGetUserId(out var userId))
         {
-            presence.OnDisconnected(ScopeId, userId, Context.ConnectionId);
+            var becameOffline = presence.OnDisconnected(ScopeId, userId, Context.ConnectionId);
+            if (becameOffline)
+            {
+                try
+                {
+                    var account = await db.Users.AsNoTracking()
+                        .Where(u => u.Id == userId && u.Status == AccountStatus.Active)
+                        .Select(u => new { u.AvailabilityState, u.AvailabilityExpiresAt })
+                        .SingleOrDefaultAsync(CancellationToken.None);
+                    if (account is not null)
+                    {
+                        var availability = AvailabilityResolver.Resolve(account.AvailabilityState, account.AvailabilityExpiresAt, DateTimeOffset.UtcNow);
+                        await fanout.NotifyAvailabilityChangedAsync(userId, availability, isOnline: false, CancellationToken.None);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
         }
 
         await base.OnDisconnectedAsync(exception);
