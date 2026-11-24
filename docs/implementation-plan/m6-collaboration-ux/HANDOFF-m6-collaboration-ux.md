@@ -100,6 +100,25 @@ The seven focused PostgreSQL 17 cases passed, including older cursor retries, st
 
 The isolated Edge walkthrough used two accounts and a second session for the marking account. In all six viewport and theme combinations it verified keyboard activation, privacy, Unread filtering, and clearing on reopening. The badge rendered locally in 2.1–3.8 ms and on the other session in 29.4–56.5 ms. A held request on the narrow dark layout confirmed that the local badge appeared before commit.
 
+## M6.6 Message search
+
+**Verified on November 24, 2026.** Search messages queries Personal Chat or one Organization, matches Vietnamese text with or without accents, and filters by sender, conversation or channel, dates, and approved attachments. Current membership, Official Community trust, recall status, and visible history are checked before pagination in PostgreSQL. Authorized result links reopen the exact message, reply, or post. Organization chat results open in an authorized context dialog.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-ef-10\dotnet-ef.exe'
+& $efCommand migrations add MessageSearchIndexes --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+npm.cmd --prefix src/Nexus.Client run build
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~RichChatMessageSearchTests --verbosity minimal
+node (Join-Path $env:TEMP 'nexus-m66-qa\search.mjs')
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+git diff --cached --check
+```
+
+PostgreSQL 17 verified two Organization scopes, current access, Official Community trust, recall filtering, rejoin and thread-root visibility, approved files, cursor ties, and use of a GIN search index in `EXPLAIN ANALYZE`. The standard gate passed 185 integration tests, 49 client tests, Release builds with zero warnings or errors, and all audits. The opt-in Docker Monitor smoke test was skipped.
+
+The two-account Edge walkthrough passed at `1440×900`, `390×844`, and `320×700` in both themes. Filtered results appeared in 117.1–137.0 ms. It also verified keyboard opening and dismissal, a live recall removing the result, and exact navigation to a Personal message, a workspace message, and a channel post.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

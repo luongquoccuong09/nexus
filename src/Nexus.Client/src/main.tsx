@@ -11,6 +11,7 @@ import {
   resolveContentLink
 } from './contentLinks';
 import type { CommunityFeedDelta } from './chat/types';
+import type { OrganizationMessageTarget } from './OrganizationMessageContext';
 import {
   AvailabilityChangedEvent,
   AvailabilityDto,
@@ -39,6 +40,8 @@ const ActivityWorkspace = lazy(() =>
 );
 const CommunitiesWorkspace = lazy(() => import('./communities'));
 const ChatWorkspace = lazy(() => import('./chat').then(module => ({ default: module.ChatWorkspace })));
+const MessageSearchDialog = lazy(() => import('./MessageSearchDialog'));
+const OrganizationMessageContext = lazy(() => import('./OrganizationMessageContext'));
 const MonitorWorkspace = lazy(() => import('./monitor/MonitorWorkspace'));
 const BlockedUsersSettings = lazy(() =>
   import('./blockedUsers').then(m => ({ default: m.BlockedUsersSettings }))
@@ -199,6 +202,9 @@ function App() {
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [searchRecalledIds, setSearchRecalledIds] = useState(new Set<string>());
+  const [organizationMessage, setOrganizationMessage] = useState<OrganizationMessageTarget | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
   const inviteAutoOpenedRef = useRef(false);
 
@@ -386,6 +392,10 @@ function App() {
       if (controller.signal.aborted) return;
       const nonce = ++jumpNonceRef.current;
       if (resolved.kind === 'message') {
+        if (resolved.organizationId) {
+          setOrganizationMessage({ ...resolved, organizationId: resolved.organizationId });
+          return;
+        }
         setActiveConvId(resolved.conversationId);
         setChatJumpTarget({
           conversationId: resolved.conversationId,
@@ -560,6 +570,9 @@ function App() {
   }, [refreshChatCandidates, peopleFilter]);
 
   const handleOrganizationAccessRevoked = useCallback((revokedOrgId: string) => {
+    setMessageSearchOpen(false);
+    setSearchRecalledIds(new Set());
+    setOrganizationMessage(current => current?.organizationId === revokedOrgId ? null : current);
     setOrganizations(prev => {
       const next = prev.filter(o => o.id !== revokedOrgId);
       if (peopleFilter === revokedOrgId) {
@@ -573,6 +586,13 @@ function App() {
   }, [refreshChatCandidates, peopleFilter]);
 
   const accountId = user?.id;
+  useEffect(() => {
+    if (!accountId) {
+      setMessageSearchOpen(false);
+      setSearchRecalledIds(new Set());
+      setOrganizationMessage(null);
+    }
+  }, [accountId]);
   const signOutChannelRef = useRef<BroadcastChannel | null>(null);
   useEffect(() => {
     if (!accountId || typeof BroadcastChannel === 'undefined') return;
@@ -1194,6 +1214,10 @@ function App() {
           </div>
 
           <div className="nx-topbar-right">
+            <Button variant="ghost" size="sm" iconOnly aria-label="Search messages" title="Search messages"
+              onClick={() => setMessageSearchOpen(true)}>
+              <Search size={16} aria-hidden="true" />
+            </Button>
             {unreadMentionCount > 0 && (
               <span role="status">
                 <Badge variant="role" ariaLabel={`${unreadMentionCount} unread mentions`}>
@@ -1272,6 +1296,10 @@ function App() {
                 onSelectConversation={setActiveConvId}
                 onNewChat={() => setNewChatOpen(true)}
                 onOpenContentLink={token => void openContentLink(token)}
+                onMessageRecalled={messageId => {
+                  if (messageSearchOpen) setSearchRecalledIds(current => new Set([...current, messageId]));
+                  setOrganizationMessage(current => current?.messageId === messageId ? null : current);
+                }}
                 onConnectionStateChange={setConnState}
                 onUnreadTotalChange={setUnreadTotal}
                 onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
@@ -1283,6 +1311,20 @@ function App() {
               />
             </Suspense>
           </div>
+          {messageSearchOpen && (
+            <Suspense fallback={null}>
+              <MessageSearchDialog organizations={organizations} recalledIds={searchRecalledIds} onClose={() => {
+                setMessageSearchOpen(false);
+                setSearchRecalledIds(new Set());
+              }}
+                onOpenMessage={token => void openContentLink(token)} />
+            </Suspense>
+          )}
+          {organizationMessage && (
+            <Suspense fallback={null}>
+              <OrganizationMessageContext target={organizationMessage} onClose={() => setOrganizationMessage(null)} />
+            </Suspense>
+          )}
           {newChatOpen && (
             <NewChatDialog
               currentUserId={user.id}

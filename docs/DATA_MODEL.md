@@ -32,7 +32,7 @@ Update this table whenever a migration adds or changes a table.
 ## 3. Search and indexing notes
 
 - **Vietnamese directory search (M1.10).** The Organization membership Directory uses PostgreSQL `public.immutable_unaccent` and GIN `pg_trgm` indexes on `organization_memberships(display_name)` and `organization_memberships(username)` and requires active account and membership rows.
-- **Message search (M6.6):** Must enforce current conversation/community membership **inside the SQL query**, never by post-filtering in memory.
+- **Message search (M6.6).** Migration `20261124154649_MessageSearchIndexes` adds partial full-text and trigram GIN indexes for active message bodies and channel post titles and bodies. Both use `public.immutable_unaccent`. The query joins current account, workspace, conversation, and community membership, and applies the history boundary before paginating.
 
 ## 4. Greenfield baseline migration
 

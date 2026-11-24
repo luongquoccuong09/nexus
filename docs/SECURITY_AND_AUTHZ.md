@@ -128,7 +128,7 @@ Preserve the intent of every security test; fix the implementation when a test f
 | `SEC-10` | Sanitized Markdown / XSS prevention | M2.9 | `src/Nexus.Client/tests/markdown.test.mjs` (`renderSafeMarkdown`, `isSafeHttpUrl`) |
 | `SEC-11` | File content-type / `attachment` + `nosniff` headers | M3.3 | `FilesM3Tests.M3_3_SEC04_SEC11_AuthorizedDownloads_SafeHeaders_SignedUrlCap_AndRemovalIsolation` |
 | `SEC-14` | Offsite encrypted backup & independent restore rehearsal | M8.3 | *Pending M8.3* |
-| `SEC-15` | Search/delta authorization enforcement | M0.4 / M2.12 | `AuthorizationMatrixTests` + `MessagingM2Tests` (`/changes` delta); SQL message search pending M6.6 |
+| `SEC-15` | Search/delta authorization enforcement | M0.4 / M2.12 / M6.6 | `AuthorizationMatrixTests`, `MessagingM2Tests` (`/changes` delta), and `RichChatMessageSearchTests` (SQL message search) |
 | `SEC-16` | Disabled account session & hub abort | M0.3 / M1.6 | `IdentityM1aTests.SEC08_SEC16_SEC20b_M1_8_AdminMfa_VerifyEmployee_Rename_ResetLink_AndDisable` |
 | `SEC-17` | Complete sync across disconnects/retries without loss or duplicates | M2.12 | `MessagingM2Tests.M2_5_M2_7_SEC17_DeltaSync_Reconcile_410Gone_AndMonotonicReadState` |
 | `SEC-18` | Member removal revokes further delivery and offline replay | M0.4 / M2.12 | `AuthorizationMatrixTests` + `MessagingM2Tests.M2_8_SEC18_GroupLifecycle_IdempotencyKey_RemovalRevokesAccess_RejoinHidesHistory_AndOwnershipTransfer` |

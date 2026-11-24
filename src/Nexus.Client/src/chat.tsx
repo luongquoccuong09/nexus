@@ -214,6 +214,7 @@ export function ChatWorkspace({
   onSelectConversation,
   onNewChat,
   onOpenContentLink,
+  onMessageRecalled,
   onConnectionStateChange,
   onUnreadTotalChange,
   onCommunityFeedChanged,
@@ -359,6 +360,8 @@ export function ChatWorkspace({
   const inFlightMessageIdsRef = useRef(new Map<string, MessageMutationDelta>());
   const confirmedMutations = useRef(new Map<string, { conversationId: string; delta: MessageMutationDelta }>());
   const [recalledMessageIds, setRecalledMessageIds] = useState(new Set<string>());
+  const onMessageRecalledRef = useRef(onMessageRecalled);
+  onMessageRecalledRef.current = onMessageRecalled;
   const [bookmarkPanel, setBookmarkPanel] = useState<{ conversationId?: string } | null>(null);
   const [bookmarkRevision, setBookmarkRevision] = useState(0);
   const [pendingBookmarks, setPendingBookmarks] = useState(new Map<string, PendingBookmark>());
@@ -465,6 +468,7 @@ export function ChatWorkspace({
     if (delta.type === 'message_recalled') {
       setRecalledMessageIds(current => new Set([...current, delta.messageId]));
       closeRecalledMedia(delta.messageId);
+      onMessageRecalledRef.current?.(delta.messageId);
     } else if (activeConvRef.current === conversationId) {
       setSharedLinkRevision(current => current + 1);
     }

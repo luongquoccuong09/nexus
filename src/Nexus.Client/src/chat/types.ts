@@ -239,6 +239,7 @@ export interface ChatWorkspaceProps {
   onSelectConversation: (id: string | null) => void;
   onNewChat: () => void;
   onOpenContentLink?: (token: string) => void;
+  onMessageRecalled?: (messageId: string) => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
   onCommunityFeedChanged: (conversationId?: string, delta?: CommunityFeedDelta | null) => void;

@@ -1382,3 +1382,25 @@ body.dark .nx-shared-tab.active {
     padding: 8px 10px;
   }
 }
+.nx-message-search-form,
+.nx-organization-message-context {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nx-message-search-dates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+  gap: var(--space-2);
+}
+
+.nx-message-search-dates input {
+  min-width: 0;
+  width: 100%;
+}
+
+.nx-organization-message-context article {
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+}

@@ -88,6 +88,10 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 - Marking unread advances the marker version and keeps `last_read_seq` monotonic. The user's own sessions receive the state through `ReadStateUpdated`. An older read request can advance `last_read_seq` with `GREATEST`; it can clear a marker only if it acknowledges the current marker version and reaches the marked sequence.
 - The SPA returns to the conversation list when it marks the active chat unread. Reopening a chat observes the marker version and acknowledges it when a qualifying row is displayed. A marker received in an already-open chat stays pending until the reader revisits it.
 
+### Message search (`M6.6`)
+
+- Every search page reads current server state for the requested scope. A result opens using its M6.25 content link, which resolves against current authorization again. An incoming recall removes the corresponding result from the open Search dialog.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |
