@@ -137,6 +137,27 @@ PostgreSQL 17 verified conversation title and peer search, current membership, t
 
 The two-account Edge walkthrough passed at `1440×900`, `390×844`, and `320×700` in both themes. It covered all four destination types, focus restoration, channel membership, composer shortcut precedence, and synthetic IME composition events. The input received focus 7.5–9.9 ms after the shortcut in the final run, measured between browser events.
 
+## M6.8 Optional DM read receipts
+
+**Verified on November 24, 2026.** Read receipts default to enabled and can be changed under Profile & security. A DM receipt is shared only between active, unblocked participants when both allow it. Setting and block changes send versioned private updates so existing clients clear or restore the indicator without loading history. Active Personal and Organization chats both enforce the same policy.
+
+```powershell
+dotnet tool install dotnet-ef --tool-path (Join-Path $env:TEMP 'nexus-m68-ef') --version 10.0.15
+$efCommand = Join-Path $env:TEMP 'nexus-m68-ef\dotnet-ef.exe'
+& $efCommand migrations add DmReadReceipts --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~DmReadReceiptsRespectReciprocityOnHttpAndSignalR --verbosity minimal
+node --test src/Nexus.Client/tests/dmReadReceipts.test.mjs
+npm.cmd --prefix src/Nexus.Client run build
+node (Join-Path $env:TEMP 'nexus-m68-qa\read-receipts.mjs')
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+git diff --cached --check
+```
+
+The focused PostgreSQL 17 case verified default enablement, both HTTP projections, SignalR recipients, preference changes across devices, blocking, Group privacy, and two Organization scopes. The standard gate passed 187 integration tests, 53 client tests, Release builds with zero warnings or errors, and all audits. The opt-in Docker Monitor smoke test was skipped.
+
+The Edge walkthrough used two accounts and an independent settings session at `1440×900`, `390×844`, and `320×700` in both themes. It verified visible reads and reciprocal privacy without history reloads. The indicators disappeared in 26.0–43.8 ms after pressing the settings shortcut or releasing the held request. The narrow dark run also observed the optimistic switch state before the server accepted the change.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

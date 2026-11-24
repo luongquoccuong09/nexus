@@ -92,6 +92,11 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 
 - Every search page reads current server state for the requested scope. A result opens using its M6.25 content link, which resolves against current authorization again. An incoming recall removes the corresponding result from the open Search dialog.
 
+### Reciprocal DM read receipts (`M6.8`)
+
+- Eligible DM peers receive a private SignalR receipt on a read cursor advance. The corresponding HTTP snapshots check current participant status, membership, blocks, and both preferences. Receipt fanout uses the DM's scope. Group and thread read state remain private.
+- Receipts carry a privacy version derived from both participants' account revisions. A preference or block change supersedes older snapshots and events. Receipt events are ephemeral, and reconnect refreshes authorized conversation summaries.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |

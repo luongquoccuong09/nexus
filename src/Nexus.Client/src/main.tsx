@@ -1,4 +1,4 @@
-import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLink, workspaceInvitation } from './scope';
+import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLink, protectedRequest, workspaceInvitation } from './scope';
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -12,6 +12,7 @@ import {
   resolveContentLink
 } from './contentLinks';
 import type { CommunityFeedDelta } from './chat/types';
+import type { DmReadReceiptPreference } from './chat/dmReadReceipts';
 import type { OrganizationMessageTarget } from './OrganizationMessageContext';
 import QuickSwitcher, { type QuickSwitchTarget } from './QuickSwitcher';
 import { isQuickSwitcherShortcut } from './quickSwitcherKeys';
@@ -72,6 +73,7 @@ interface UserSummary {
   availability?: AvailabilityDto;
   suppressChime?: boolean;
   canViewMonitor?: boolean;
+  dmReadReceipts?: DmReadReceiptPreference;
 }
 
 interface DirectoryProfile {
@@ -204,6 +206,9 @@ function App() {
   const [versionStale, setVersionStale] = useState(false);
   const [policy, setPolicy] = useState<RegistrationPolicy | null>(null);
   const [user, setUser] = useState<UserSummary | null>(null);
+  const [pendingDmReceipts, setPendingDmReceipts] = useState<boolean | null>(null);
+  const [dmReceiptsError, setDmReceiptsError] = useState('');
+  const dmReceiptRequest = useRef(false);
   const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
@@ -502,7 +507,8 @@ function App() {
       suppressChime: resolvedSuppressChime
     };
 
-    setUser(hydratedMe);
+    setUser(current => current?.id === hydratedMe.id && (current.dmReadReceipts?.version ?? -1) > (hydratedMe.dmReadReceipts?.version ?? -1)
+      ? { ...hydratedMe, dmReadReceipts: current.dmReadReceipts } : hydratedMe);
     setCustomStatusInput(hydratedMe.customStatus ?? '');
 
     if (!peopleFilterPickedRef.current && orgs.length > 0) {
@@ -591,6 +597,41 @@ function App() {
   }, [refreshChatCandidates, peopleFilter]);
 
   const accountId = user?.id;
+
+  const applyDmReceiptPreference = useCallback((preference: DmReadReceiptPreference) => {
+    setUser(current => current && preference.version >= (current.dmReadReceipts?.version ?? -1)
+      ? { ...current, dmReadReceipts: preference } : current);
+  }, []);
+
+  useEffect(() => {
+    if (!accountId || connState !== 'connected') return;
+    const controller = new AbortController();
+    void fetch('/api/auth/me', { signal: controller.signal })
+      .then(res => res.ok ? res.json() as Promise<UserSummary> : null)
+      .then(account => {
+        if (!controller.signal.aborted && account?.id === accountId && account.dmReadReceipts) {
+          applyDmReceiptPreference(account.dmReadReceipts);
+        }
+      }).catch(() => {});
+    return () => controller.abort();
+  }, [accountId, applyDmReceiptPreference, connState]);
+
+  async function updateDmReceiptPreference(enabled: boolean) {
+    if (dmReceiptRequest.current) return;
+    dmReceiptRequest.current = true;
+    setPendingDmReceipts(enabled);
+    setDmReceiptsError('');
+    try {
+      const res = await protectedRequest('/api/auth/me/dm-read-receipts', 'PUT', { enabled });
+      if (!res.ok) throw new Error();
+      applyDmReceiptPreference(await res.json() as DmReadReceiptPreference);
+    } catch {
+      setDmReceiptsError('Unable to update read receipts. Try again.');
+    } finally {
+      dmReceiptRequest.current = false;
+      setPendingDmReceipts(null);
+    }
+  }
   useEffect(() => {
     if (!accountId) {
       setMessageSearchOpen(false);
@@ -1354,6 +1395,8 @@ function App() {
                   if (messageSearchOpen) setSearchRecalledIds(current => new Set([...current, messageId]));
                   setOrganizationMessage(current => current?.messageId === messageId ? null : current);
                 }}
+                showDmReadReceipts={connState === 'connected' && user.dmReadReceipts?.enabled === true && pendingDmReceipts !== false}
+                onDmReadReceiptPreference={applyDmReceiptPreference}
                 onConnectionStateChange={setConnState}
                 onUnreadTotalChange={setUnreadTotal}
                 onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
@@ -1626,6 +1669,16 @@ function App() {
                 )}
 
                 <div className="nx-settings-grid">
+                  <Card title="Messaging privacy">
+                    <label className="nx-dm-receipts-setting">
+                      <input type="checkbox" role="switch" checked={pendingDmReceipts ?? user.dmReadReceipts?.enabled ?? true}
+                        disabled={pendingDmReceipts !== null} aria-describedby="nx-dm-read-receipts-help"
+                        onChange={event => void updateDmReceiptPreference(event.currentTarget.checked)} />
+                      DM read receipts
+                    </label>
+                    <p className="nx-muted" id="nx-dm-read-receipts-help">Direct messages show when they were read if both people allow read receipts.</p>
+                    {dmReceiptsError && <p className="nx-error" role="alert">{dmReceiptsError}</p>}
+                  </Card>
                   <Card title="Availability">
                     <AvailabilityPicker
                       variant="inline"

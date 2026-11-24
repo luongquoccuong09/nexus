@@ -6,6 +6,7 @@ using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.People;
 
@@ -85,6 +86,7 @@ public static class SafetyEndpoints
         Guid targetUserId,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId))
@@ -118,6 +120,7 @@ public static class SafetyEndpoints
             return Results.Forbid();
         }
 
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var exists = await db.UserBlocks.AnyAsync(
             b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && b.BlockedUserId == targetUserId, ct);
 
@@ -131,7 +134,10 @@ public static class SafetyEndpoints
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync(ct);
+            await DmReadReceipts.BumpPrivacyVersionAsync(db, actorId, ct);
         }
+        await transaction.CommitAsync(ct);
+        if (!exists) await fanout.NotifyDmReceiptPrivacyAsync(actorId, targetUserId, ct);
 
         return Results.NoContent();
     }
@@ -141,6 +147,7 @@ public static class SafetyEndpoints
         Guid targetUserId,
         [FromServices] NexusDbContext db,
         IAuthorizationService authz,
+        MessagingFanoutService fanout,
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId))
@@ -153,9 +160,13 @@ public static class SafetyEndpoints
         if (!authz.Can(actor.ToActorContext(), ResourceAction.ManageOwnBlockList,
             new ResourceContext(ResourceKind.UserAccount, db.OrganizationScopeId, TargetIsSelf: true))) return Results.Forbid();
 
-        await db.UserBlocks
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var changed = await db.UserBlocks
             .Where(b => b.OrganizationId == db.OrganizationScopeId && b.BlockerUserId == actorId && b.BlockedUserId == targetUserId)
             .ExecuteDeleteAsync(ct);
+        if (changed != 0) await DmReadReceipts.BumpPrivacyVersionAsync(db, actorId, ct);
+        await transaction.CommitAsync(ct);
+        if (changed != 0) await fanout.NotifyDmReceiptPrivacyAsync(actorId, targetUserId, ct);
 
         return Results.NoContent();
     }

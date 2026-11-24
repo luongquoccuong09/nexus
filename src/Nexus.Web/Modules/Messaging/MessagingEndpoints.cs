@@ -294,7 +294,8 @@ public static class MessagingEndpoints
             {
                 await db.Database.ExecuteSqlInterpolatedAsync($"""
                     UPDATE conversation_members
-                    SET last_read_seq = GREATEST(last_read_seq, {nextSeq})
+                    SET last_read_at = CASE WHEN last_read_seq < {nextSeq} THEN {now} ELSE last_read_at END,
+                        last_read_seq = GREATEST(last_read_seq, {nextSeq})
                     WHERE conversation_id = {conversationId} AND user_id = {actorId} AND left_at IS NULL
                     """, ct);
             }
@@ -331,6 +332,8 @@ public static class MessagingEndpoints
         if (parent is null)
         {
             await fanout.NotifyMessageCreatedAsync(conversationId, changeSeq, conv.Kind, conv.CommunityId, dto, ct);
+            if (conv.Kind == ConversationKind.Dm && !request.PreserveReadState)
+                await fanout.NotifyDmReadReceiptAsync(actorId, conversationId, ct);
         }
         else
         {
@@ -392,6 +395,9 @@ public static class MessagingEndpoints
         var items = await ProjectMessagesAsync(db, selectedMessages, actorId, ct);
 
         await snapshot.CommitAsync(ct);
+        var dmReceipt = conv.Kind == ConversationKind.Dm
+            ? (await DmReadReceipts.LoadAsync(db, actorId, [conversationId], ct)).GetValueOrDefault(conversationId)
+            : null;
         ctx.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
         {
@@ -401,7 +407,8 @@ public static class MessagingEndpoints
             nextBeforeSeq = items.Count > 0 ? items[0].Seq : (long?)null,
             nextAfterSeq = hasNewer && items.Count > 0 ? items[^1].Seq : (long?)null,
             changeSeq = conv.ChangeSeq,
-            lastReadSeq = member.LastReadSeq
+            lastReadSeq = member.LastReadSeq,
+            dmReadReceipt = dmReceipt
         });
     }
 
@@ -732,12 +739,15 @@ public static class MessagingEndpoints
 
         var latestMainSeq = conv.Kind == ConversationKind.Channel ? conv.NextSeq : conv.LatestMainSeq;
         var requested = Math.Clamp(request.LastReadSeq, 0L, latestMainSeq);
+        var advanced = requested > member.LastReadSeq;
+        var readAt = DateTimeOffset.UtcNow;
         var clear = member.ManualUnreadFromSeq is { } marker && requested >= marker &&
             request.ManualUnreadVersion == member.ManualUnreadVersion;
 
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE conversation_members
-            SET last_read_seq = GREATEST(last_read_seq, {requested}),
+            SET last_read_at = CASE WHEN last_read_seq < {requested} THEN {readAt} ELSE last_read_at END,
+                last_read_seq = GREATEST(last_read_seq, {requested}),
                 manual_unread_from_seq = CASE WHEN {clear} THEN NULL ELSE manual_unread_from_seq END,
                 manual_unread_version = manual_unread_version + CASE WHEN {clear} THEN 1 ELSE 0 END
             WHERE conversation_id = {conversationId} AND user_id = {actorId} AND left_at IS NULL
@@ -751,6 +761,8 @@ public static class MessagingEndpoints
         var state = await BuildReadStateAsync(db, conv, member, ct);
         await transaction.CommitAsync(ct);
         await NotifyReadStateAsync(fanout, actorId, state, ct);
+        if (advanced && conv.Kind == ConversationKind.Dm)
+            await fanout.NotifyDmReadReceiptAsync(actorId, conversationId, ct);
         return Results.Ok(state);
     }
 

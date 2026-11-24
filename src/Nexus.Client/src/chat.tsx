@@ -44,6 +44,7 @@ import { BookmarkKind, MessageBookmarkActions, PendingBookmark, ToggleBookmark }
 import type { OpenMessageMutation } from './chat/MessageMutationActions';
 import type { MessageMutationResult, MessageMutationTarget } from './chat/MessageMutationDialog';
 import type { ThreadDeltaReceiver, ThreadTarget } from './chat/ThreadPane';
+import { mergeDmReadReceipt, type DmReadReceipt, type DmReadReceiptPreference } from './chat/dmReadReceipts';
 import {
   QUICK_CHAT_REACTIONS,
   RECALLED_MESSAGE_LABEL,
@@ -97,6 +98,7 @@ interface ChatMessagePage {
   nextBeforeSeq: number | null;
   nextAfterSeq: number | null;
   lastReadSeq: number;
+  dmReadReceipt?: DmReadReceipt | null;
 }
 
 function computeReactionPopoverStyle(triggerEl: HTMLElement): CSSProperties {
@@ -215,6 +217,8 @@ export function ChatWorkspace({
   onNewChat,
   onOpenContentLink,
   onMessageRecalled,
+  showDmReadReceipts,
+  onDmReadReceiptPreference,
   onConnectionStateChange,
   onUnreadTotalChange,
   onCommunityFeedChanged,
@@ -279,6 +283,9 @@ export function ChatWorkspace({
   const sendingRef = useRef(new Set<string>());
   const staging = useRef(new Set<string>());
   const discarded = useRef(new Set<string>());
+  const knownDmReceipts = useRef(new Map<string, DmReadReceipt>());
+  const dmReceiptPreferenceCallback = useRef(onDmReadReceiptPreference);
+  dmReceiptPreferenceCallback.current = onDmReadReceiptPreference;
 
   // New group modal & Private self chat (M6.29)
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
@@ -476,6 +483,7 @@ export function ChatWorkspace({
 
   const discardConversation = useCallback((id: string) => {
     discarded.current.add(id);
+    knownDmReceipts.current.delete(id);
     uploadRequests.current.get(id)?.abort();
     messagesCacheRef.current.delete(id);
     cursorCacheRef.current.delete(id);
@@ -580,6 +588,16 @@ export function ChatWorkspace({
       if (controller.signal.aborted) return;
       conversationPages.current = { count: older ? conversationPages.current.count + pages : pages, next };
       setMoreConversations(next !== null);
+      for (const item of items) {
+        if (item.kind !== 'dm' || item.dmReadReceipt === undefined) continue;
+        if (!item.dmReadReceipt) {
+          knownDmReceipts.current.delete(item.id);
+          continue;
+        }
+        const receipt = mergeDmReadReceipt(knownDmReceipts.current.get(item.id), item.dmReadReceipt);
+        knownDmReceipts.current.set(item.id, receipt);
+        item.dmReadReceipt = receipt;
+      }
       setConversations(previous => {
         const readByConversation = new Map(previous.map(item => [item.id, item]));
         const merged = new Map(older ? previous.map(item => [item.id, item]) : []);
@@ -651,6 +669,16 @@ export function ChatWorkspace({
     return lastReadSeq;
   }, [discardConversation]);
 
+  const applyDmReadReceipt = useCallback((conversationId: string, incoming: DmReadReceipt | null) => {
+    if (discarded.current.has(conversationId)) return;
+    const current = knownDmReceipts.current.get(conversationId);
+    const next = incoming ? mergeDmReadReceipt(current, incoming) : null;
+    if (next) knownDmReceipts.current.set(conversationId, next);
+    else knownDmReceipts.current.delete(conversationId);
+    setConversations(items => items.map(item => item.id === conversationId && item.kind === 'dm' && item.dmReadReceipt !== next
+      ? { ...item, dmReadReceipt: next } : item));
+  }, []);
+
   const fetchMessagePage = useCallback(async (convId: string, query = ''): Promise<ChatMessagePage | null> => {
     while (activeConvRef.current === convId) {
       const res = await fetch(`/api/conversations/${convId}/messages?limit=50${query}`, { credentials: 'same-origin' });
@@ -660,6 +688,7 @@ export function ChatWorkspace({
       if (activeConvRef.current !== convId) return null;
       // A live delta can arrive ahead of the response for a page that was not loaded yet.
       if (data.changeSeq < (cursorCacheRef.current.get(convId) ?? 0)) continue;
+      if (data.dmReadReceipt !== undefined) applyDmReadReceipt(convId, data.dmReadReceipt);
       return {
         ...data,
         items: (data.items ?? []).map(message => {
@@ -674,7 +703,7 @@ export function ChatWorkspace({
       };
     }
     return null;
-  }, [discardConversation]);
+  }, [applyDmReadReceipt, discardConversation]);
 
   const loadMessagesFull = useCallback(async (convId: string) => {
     const data = await fetchMessagePage(convId);
@@ -1349,6 +1378,15 @@ export function ChatWorkspace({
       if (evt.manualUnreadFromSeq && unreadOnlyRef.current) scheduleConversationRefresh();
     });
 
+    const receiveDmReceipt = (event: { conversationId: string; receipt: DmReadReceipt }) => {
+      applyDmReadReceipt(event.conversationId, event.receipt);
+    };
+    connection.on('DmReadReceiptUpdated', receiveDmReceipt);
+    connection.on('DmReadReceiptPrivacyChanged', receiveDmReceipt);
+    connection.on('DmReadReceiptPreferenceChanged', (preference: DmReadReceiptPreference) => {
+      dmReceiptPreferenceCallback.current(preference);
+    });
+
     connection.on('ThreadStateUpdated', (evt: ThreadState) => {
       if (evt.parentMessageId && !discarded.current.has(evt.conversationId)) updateThreadState(evt);
     });
@@ -1396,7 +1434,11 @@ export function ChatWorkspace({
     });
 
     connection.onreconnecting(() => {
-      if (!disposed) connStateCbRef.current('reconnecting');
+      if (!disposed) {
+        knownDmReceipts.current.clear();
+        setConversations(items => items.map(item => item.dmReadReceipt ? { ...item, dmReadReceipt: null } : item));
+        connStateCbRef.current('reconnecting');
+      }
     });
     const onReconnected = () => {
       if (!disposed) {
@@ -1444,7 +1486,7 @@ export function ChatWorkspace({
       refresh.queued = false;
       void connection.stop();
     };
-  }, [applyConfirmedMutation, confirmBookmark, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
+  }, [applyConfirmedMutation, applyDmReadReceipt, confirmBookmark, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
 
   async function sendCurrentMessage() {
     const conversationId = selectedConversationId;
@@ -2007,6 +2049,9 @@ export function ChatWorkspace({
 
   const activeMessages = useMemo(() => messages.filter(message => message.conversationId === selectedConversationId
     && !message.parentMessageId), [messages, selectedConversationId]);
+  const receiptSeq = showDmReadReceipts && activeConv?.kind === 'dm' && !blockedPeer ? activeConv.dmReadReceipt?.peerLastReadSeq : undefined;
+  const seenMessageId = receiptSeq === undefined ? undefined : activeMessages.reduceRight<string | undefined>((id, message) =>
+    id ?? (message.senderId === currentUserId && message.seq <= receiptSeq && !message.pending && !message.deletedAt ? message.id : undefined), undefined);
   const confirmedOwnMessages = new Set(activeMessages.filter(message => message.senderId === currentUserId).map(message => message.clientMsgId));
   const visibleOutgoing = outgoing.filter(item => item.conversationId === selectedConversationId && !confirmedOwnMessages.has(item.clientMsgId));
   const openThreadTarget = rightDrawer === 'thread' && threadTarget?.conversationId === selectedConversationId ? threadTarget : null;
@@ -2869,6 +2914,9 @@ export function ChatWorkspace({
                             {replyCount === 1 ? '1 reply' : `${replyCount} replies`}
                             {hasUnreadReplies && <span> · Unread</span>}
                           </Button>
+                        )}
+                        {m.id === seenMessageId && !m.deletedAt && (
+                          <span className="nx-message-receipt nx-muted" role="status" aria-label="Seen by your chat partner">Seen</span>
                         )}
                       </div>
                     </div>

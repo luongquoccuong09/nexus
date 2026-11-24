@@ -77,6 +77,8 @@ public sealed class NexusUser : IdentityUser<Guid>
     public AccountStatus Status { get; set; } = AccountStatus.Active;
     public AvailabilityState AvailabilityState { get; set; } = AvailabilityState.Available;
     public DateTimeOffset? AvailabilityExpiresAt { get; set; }
+    public bool DmReadReceiptsEnabled { get; set; } = true;
+    public long DmReadReceiptsVersion { get; set; }
     public string? TermsVersion { get; set; }
     public DateTimeOffset? TermsAcceptedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -116,6 +118,8 @@ public sealed class NexusUserConfiguration : IEntityTypeConfiguration<NexusUser>
             .HasDefaultValue(AvailabilityState.Available)
             .IsRequired();
         builder.Property(x => x.AvailabilityExpiresAt).HasColumnName("availability_expires_at");
+        builder.Property(x => x.DmReadReceiptsEnabled).HasColumnName("dm_read_receipts_enabled").HasDefaultValue(true);
+        builder.Property(x => x.DmReadReceiptsVersion).HasColumnName("dm_read_receipts_version").HasDefaultValue(0L);
         builder.Property(x => x.TermsVersion).HasColumnName("terms_version").HasMaxLength(32);
         builder.Property(x => x.TermsAcceptedAt).HasColumnName("terms_accepted_at");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();

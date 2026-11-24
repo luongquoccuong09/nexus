@@ -103,6 +103,40 @@ public sealed class MessagingFanoutService(
             .SendAsync("ReadStateUpdated", payload, cancellationToken);
     }
 
+    public async Task NotifyDmReadReceiptAsync(Guid actorId, Guid conversationId, CancellationToken ct)
+    {
+        var pair = await DmReadReceipts.Pairs(db, actorId)
+            .Where(item => item.ConversationId == conversationId && item.MyLastReadSeq != null)
+            .SingleOrDefaultAsync(ct);
+        if (pair is not null)
+            await SendDmReadReceiptAsync("DmReadReceiptUpdated", pair, pair.PeerId, pair.ForPeer, ct);
+    }
+
+    public async Task NotifyDmReadReceiptPreferenceAsync(Guid actorId, DmReadReceiptPreference preference, CancellationToken ct)
+    {
+        await hubContext.Clients.Group(MessagingHub.UserGroupName(Guid.Empty, actorId))
+            .SendAsync("DmReadReceiptPreferenceChanged", preference, ct);
+        await NotifyDmReceiptPrivacyAsync(actorId, null, ct);
+    }
+
+    public async Task NotifyDmReceiptPrivacyAsync(Guid actorId, Guid? peerId, CancellationToken ct)
+    {
+        var query = DmReadReceipts.Pairs(db, actorId, allScopes: !peerId.HasValue);
+        if (peerId.HasValue) query = query.Where(item => item.PeerId == peerId.Value);
+        var pairs = await query.ToListAsync(ct);
+        foreach (var pair in pairs)
+        {
+            await Task.WhenAll(
+                SendDmReadReceiptAsync("DmReadReceiptPrivacyChanged", pair, actorId, pair.ForActor, ct),
+                SendDmReadReceiptAsync("DmReadReceiptPrivacyChanged", pair, pair.PeerId, pair.ForPeer, ct));
+        }
+    }
+
+    private Task SendDmReadReceiptAsync(string eventName, DmReadReceipts.Pair pair, Guid recipientId,
+        DmReadReceiptSnapshot receipt, CancellationToken ct) =>
+        hubContext.Clients.Groups([MessagingHub.UserGroupName(pair.OrganizationId ?? Guid.Empty, recipientId)])
+            .SendAsync(eventName, new { conversationId = pair.ConversationId, receipt }, ct);
+
     public async Task NotifyCommunityOwnershipChangedAsync(Guid communityId, CancellationToken ct)
     {
         var mainFeed = await db.Conversations.AsNoTracking()

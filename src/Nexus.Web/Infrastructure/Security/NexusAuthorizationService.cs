@@ -40,7 +40,7 @@ public sealed class NexusAuthorizationService : IAuthorizationService
                 resource.TargetIsActive &&
                 !resource.TargetIsSelf,
 
-            ResourceAction.ManageOwnBlockList =>
+            ResourceAction.ManageOwnBlockList or ResourceAction.ManageOwnDmReadReceipts =>
                 resource.Kind == ResourceKind.UserAccount && resource.TargetIsSelf,
 
             ResourceAction.GroupCreate =>

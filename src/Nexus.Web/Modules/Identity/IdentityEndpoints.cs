@@ -13,6 +13,7 @@ using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
+using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.Identity;
 
@@ -44,6 +45,7 @@ public static class IdentityEndpoints
     public sealed record VerifyAccountRequest(string EmployeeCode);
     public sealed record RenameAccountRequest(string DisplayName);
     public sealed record ChangeAccountStatusRequest(string Status);
+    public sealed record UpdateDmReadReceiptsRequest(bool? Enabled);
 
     public sealed record UserSummaryDto(
         Guid Id,
@@ -63,6 +65,7 @@ public static class IdentityEndpoints
         bool SuppressChime)
     {
         public bool CanViewMonitor { get; init; }
+        public DmReadReceiptPreference? DmReadReceipts { get; init; }
     }
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder app)
@@ -102,6 +105,8 @@ public static class IdentityEndpoints
             return Results.NoContent();
         });
         auth.MapGet("/me", HandleMeAsync);
+        auth.MapPut("/me/dm-read-receipts", HandleUpdateDmReadReceiptsAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         auth.MapPost("/change-password", HandleChangePasswordAsync);
         auth.MapPost("/reset-password", HandleRedeemResetLinkAsync).AllowAnonymous();
 
@@ -302,7 +307,31 @@ public static class IdentityEndpoints
         }
 
         var requiresMfa = await HasActiveAdminRoleAsync(db, user.Id, ct);
+        ctx.Response.Headers.CacheControl = "no-store";
         return Results.Ok(ToSummaryDto(user, requiresMfa) with { CanViewMonitor = MonitorEndpoints.CanView(ctx) });
+    }
+
+    private static async Task<IResult> HandleUpdateDmReadReceiptsAsync(HttpContext ctx, UpdateDmReadReceiptsRequest request,
+        [FromServices] NexusDbContext db, IAuthorizationService authz, MessagingFanoutService fanout, CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var userId)) return Results.Unauthorized();
+        var actor = await db.FindPersonalActorAsync(userId, ct);
+        if (actor is null || !authz.Can(actor.ToActorContext(), ResourceAction.ManageOwnDmReadReceipts,
+                new ResourceContext(ResourceKind.UserAccount, Guid.Empty, TargetIsSelf: true))) return Results.Forbid();
+        if (request.Enabled is not { } enabled) return Results.BadRequest(new { code = "enabled_required" });
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var users = db.Users.Where(item => item.Id == userId && item.Status == AccountStatus.Active);
+        var changed = await users.Where(item => item.DmReadReceiptsEnabled != enabled).ExecuteUpdateAsync(update => update
+            .SetProperty(item => item.DmReadReceiptsEnabled, enabled)
+            .SetProperty(item => item.DmReadReceiptsVersion, item => item.DmReadReceiptsVersion + 1), ct);
+        var preference = await users.Select(item => new DmReadReceiptPreference(item.DmReadReceiptsEnabled, item.DmReadReceiptsVersion))
+            .SingleOrDefaultAsync(ct);
+        if (preference is null) return Results.Forbid();
+        await transaction.CommitAsync(ct);
+        if (changed != 0) await fanout.NotifyDmReadReceiptPreferenceAsync(userId, preference, ct);
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(preference);
     }
 
     private static async Task<IResult> HandleChangePasswordAsync(
@@ -878,7 +907,10 @@ public static class IdentityEndpoints
             null,
             null,
             AvailabilityResolver.Resolve(u.AvailabilityState, u.AvailabilityExpiresAt, now),
-            AvailabilityResolver.IsChimeSuppressed(u.AvailabilityState, u.AvailabilityExpiresAt, now));
+            AvailabilityResolver.IsChimeSuppressed(u.AvailabilityState, u.AvailabilityExpiresAt, now))
+        {
+            DmReadReceipts = new(u.DmReadReceiptsEnabled, u.DmReadReceiptsVersion)
+        };
     }
 
     private static string ComputeSha256Hex(string input) =>

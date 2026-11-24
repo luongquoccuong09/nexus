@@ -86,6 +86,7 @@ public enum ResourceAction
     AdminManageRoles,
     AdminViewAuditLog,
     ManageOwnBlockList,
+    ManageOwnDmReadReceipts,
     MonitorRead,
     MonitorExecute,
     MessagePin

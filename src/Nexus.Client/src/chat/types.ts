@@ -3,6 +3,7 @@ import { AttachmentItem } from '../attachments/attachmentUtils';
 import { AvailabilityChangedEvent, AvailabilityDto, LiveAvailabilityEntry } from '../availability';
 import { ChatJumpTarget } from '../contentLinks';
 import { ProfileCardTarget } from '../ProfileCardModal';
+import type { DmReadReceipt, DmReadReceiptPreference } from './dmReadReceipts';
 
 export interface ConversationListItem {
   id: string;
@@ -15,6 +16,7 @@ export interface ConversationListItem {
   lastReadSeq: number;
   manualUnreadFromSeq?: number | null;
   manualUnreadVersion?: number;
+  dmReadReceipt?: DmReadReceipt | null;
   unreadCount: number;
   memberCount: number;
   updatedAt?: string;
@@ -240,6 +242,8 @@ export interface ChatWorkspaceProps {
   onNewChat: () => void;
   onOpenContentLink?: (token: string) => void;
   onMessageRecalled?: (messageId: string) => void;
+  showDmReadReceipts: boolean;
+  onDmReadReceiptPreference: (preference: DmReadReceiptPreference) => void;
   onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
   onUnreadTotalChange: (total: number) => void;
   onCommunityFeedChanged: (conversationId?: string, delta?: CommunityFeedDelta | null) => void;

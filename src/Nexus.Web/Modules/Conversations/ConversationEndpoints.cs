@@ -182,6 +182,7 @@ public static class ConversationEndpoints
 
         var membersByConv = activeMembers.GroupBy(x => x.ConversationId).ToDictionary(g => g.Key, g => g.ToList());
         var dmIds = memberships.Where(x => x.Conv.Kind == ConversationKind.Dm).Select(x => x.Conv.Id).ToHashSet();
+        var dmReceipts = await DmReadReceipts.LoadAsync(db, actorId, [..dmIds], ct);
         var dmPeerIds = activeMembers.Where(m => m.UserId != actorId && dmIds.Contains(m.ConversationId))
             .Select(m => m.UserId).Distinct().ToArray();
         var blockedPeerIds = dmPeerIds.Length == 0
@@ -259,6 +260,7 @@ public static class ConversationEndpoints
                 latestMainSeq = x.Conv.LatestMainSeq,
                 changeSeq = x.Conv.ChangeSeq,
                 lastReadSeq = x.Member.LastReadSeq,
+                dmReadReceipt = dmReceipts.GetValueOrDefault(x.Conv.Id),
                 manualUnreadFromSeq = x.Member.ManualUnreadFromSeq,
                 manualUnreadVersion = x.Member.ManualUnreadVersion,
                 unreadCount = unreadByConversation.GetValueOrDefault(x.Conv.Id),

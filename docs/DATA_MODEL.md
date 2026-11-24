@@ -33,6 +33,7 @@ Update this table whenever a migration adds or changes a table.
 
 - **Vietnamese directory search (M1.10).** The Organization membership Directory uses PostgreSQL `public.immutable_unaccent` and GIN `pg_trgm` indexes on `organization_memberships(display_name)` and `organization_memberships(username)` and requires active account and membership rows.
 - **Message search (M6.6).** Migration `20261124154649_MessageSearchIndexes` adds partial full-text and trigram GIN indexes for active message bodies and channel post titles and bodies. Both use `public.immutable_unaccent`. The query joins current account, workspace, conversation, and community membership, and applies the history boundary before paginating.
+- **DM read receipts (M6.8).** Migration `20261124161329_DmReadReceipts` adds the default-enabled setting and privacy version on `users`. `conversation_members.last_read_at` records advances to the private read cursor. Existing cursors retain an unknown read time until they advance.
 
 ## 4. Greenfield baseline migration
 

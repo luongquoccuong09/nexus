@@ -1430,3 +1430,16 @@ body.dark .nx-shared-tab.active {
   background: var(--bg-active);
   border-color: var(--brand-500);
 }
+
+.nx-dm-receipts-setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nx-message-receipt {
+  display: block;
+  text-align: end;
+  margin-top: var(--space-1);
+  font-size: 0.75rem;
+}

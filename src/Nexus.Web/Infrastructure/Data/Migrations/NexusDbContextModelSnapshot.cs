@@ -589,6 +589,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("joined_at");
 
+                    b.Property<DateTimeOffset?>("LastReadAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_read_at");
+
                     b.Property<long>("LastReadSeq")
                         .HasColumnType("bigint")
                         .HasColumnName("last_read_seq");
@@ -1009,6 +1013,18 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)")
                         .HasColumnName("display_name");
+
+                    b.Property<bool>("DmReadReceiptsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("dm_read_receipts_enabled");
+
+                    b.Property<long>("DmReadReceiptsVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("dm_read_receipts_version");
 
                     b.Property<string>("Email")
                         .HasMaxLength(256)

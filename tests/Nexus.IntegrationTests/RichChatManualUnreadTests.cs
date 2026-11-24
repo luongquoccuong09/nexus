@@ -17,6 +17,115 @@ public sealed class RichChatManualUnreadTests(PostgresContainerFixture pg)
     private const string Password = "Manual-unread-test-password!";
 
     [Fact]
+    public async Task DmReadReceiptsRespectReciprocityOnHttpAndSignalR()
+    {
+        await using var app = NexusHost.Build([
+            "--urls", "http://127.0.0.1:0", "--NexusDatabase:RequireTls=false",
+            "--NexusOrganizations:AllowCreation=true", "--NexusSecurity:RateLimitPermitsPerMinute=600",
+            $"--ConnectionStrings:Runtime={pg.RuntimeConnectionString}"
+        ]);
+        await app.StartAsync();
+        var origin = new Uri(Assert.Single(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses));
+        using var owner = Client(origin, out var ownerCookies);
+        using var peer = Client(origin, out var peerCookies);
+        using var otherDevice = Client(origin, out _);
+        using var outsider = Client(origin, out _);
+        var account = await Register(owner);
+        var partner = await Register(peer);
+        await Register(outsider);
+        var ownerId = account.GetProperty("id").GetGuid();
+        var peerId = partner.GetProperty("id").GetGuid();
+        Assert.True(account.GetProperty("dmReadReceipts").GetProperty("enabled").GetBoolean());
+        Assert.True(partner.GetProperty("dmReadReceipts").GetProperty("enabled").GetBoolean());
+        await Call(otherDevice, HttpMethod.Post, "/api/auth/login", HttpStatusCode.OK,
+            new { username = account.GetProperty("username").GetString(), password = Password });
+        await Call(owner, HttpMethod.Post, "/api/personal/contacts/requests", HttpStatusCode.Accepted,
+            new { username = partner.GetProperty("username").GetString() });
+        var contact = Assert.Single((await Get(peer, "/api/personal/contacts/requests")).GetProperty("items").EnumerateArray());
+        await Call(peer, HttpMethod.Put, $"/api/personal/contacts/requests/{contact.GetProperty("id").GetGuid()}",
+            HttpStatusCode.NoContent, new { accept = true });
+        const string personal = "/api/personal";
+        var dm = await Call(owner, HttpMethod.Post, personal + "/conversations/dm", HttpStatusCode.OK, new { targetUserId = peerId });
+        var dmId = dm.GetProperty("id").GetGuid();
+        var path = $"{personal}/conversations/{dmId}";
+
+        await using var ownerHub = Hub(origin, ownerCookies);
+        await using var peerHub = Hub(origin, peerCookies);
+        var ownerUpdates = new ConcurrentQueue<JsonElement>();
+        var peerUpdates = new ConcurrentQueue<JsonElement>();
+        var peerPrivacy = new ConcurrentQueue<JsonElement>();
+        var preferenceEvents = new ConcurrentQueue<JsonElement>();
+        ownerHub.On<JsonElement>("DmReadReceiptUpdated", value => ownerUpdates.Enqueue(value.Clone()));
+        peerHub.On<JsonElement>("DmReadReceiptUpdated", value => peerUpdates.Enqueue(value.Clone()));
+        peerHub.On<JsonElement>("DmReadReceiptPrivacyChanged", value => peerPrivacy.Enqueue(value.Clone()));
+        ownerHub.On<JsonElement>("DmReadReceiptPreferenceChanged", value => preferenceEvents.Enqueue(value.Clone()));
+        await ownerHub.StartAsync();
+        await peerHub.StartAsync();
+        var presence = app.Services.GetRequiredService<IPresenceTracker>();
+        for (var i = 0; i < 100 && !(presence.IsOnline(Guid.Empty, ownerId) && presence.IsOnline(Guid.Empty, peerId)); ++i)
+            await Task.Delay(25);
+
+        var sent = await Call(owner, HttpMethod.Post, path + "/messages", HttpStatusCode.Created,
+            new { clientMsgId = Guid.NewGuid().ToString("N"), body = "A reciprocal receipt", preserveReadState = true });
+        var seq = sent.GetProperty("seq").GetInt64();
+        await Call(peer, HttpMethod.Put, path + "/read", HttpStatusCode.OK, new { lastReadSeq = seq });
+        for (var i = 0; i < 100 && ownerUpdates.IsEmpty; ++i) await Task.Delay(25);
+        Assert.Equal(seq, Assert.Single(ownerUpdates).GetProperty("receipt").GetProperty("peerLastReadSeq").GetInt64());
+        Assert.Empty(peerUpdates);
+        var history = (await Get(owner, path + "/messages")).GetProperty("dmReadReceipt");
+        Assert.Equal(seq, history.GetProperty("peerLastReadSeq").GetInt64());
+        Assert.True(history.GetProperty("peerLastReadAt").TryGetDateTimeOffset(out _));
+
+        const string setting = "/api/auth/me/dm-read-receipts";
+        var disabled = await Call(otherDevice, HttpMethod.Put, setting, HttpStatusCode.OK, new { enabled = false });
+        Assert.False(disabled.GetProperty("enabled").GetBoolean());
+        for (var i = 0; i < 100 && (peerPrivacy.IsEmpty || preferenceEvents.IsEmpty); ++i) await Task.Delay(25);
+        Assert.False(Assert.Single(preferenceEvents).GetProperty("enabled").GetBoolean());
+        AssertHidden(Assert.Single(peerPrivacy).GetProperty("receipt"));
+        AssertHidden((await Get(peer, path + "/messages")).GetProperty("dmReadReceipt"));
+        AssertHidden((await Get(owner, path + "/messages")).GetProperty("dmReadReceipt"));
+        var list = await Get(peer, $"{personal}/conversations?conversationId={dmId}");
+        AssertHidden(Assert.Single(list.GetProperty("items").EnumerateArray()).GetProperty("dmReadReceipt"));
+        await Call(owner, HttpMethod.Put, path + "/read", HttpStatusCode.OK, new { lastReadSeq = seq });
+        Assert.Empty(peerUpdates);
+
+        await Call(owner, HttpMethod.Put, setting, HttpStatusCode.OK, new { enabled = true });
+        Assert.Equal(seq, (await Get(peer, path + "/messages")).GetProperty("dmReadReceipt").GetProperty("peerLastReadSeq").GetInt64());
+        await Call(peer, HttpMethod.Put, $"{personal}/people/blocks/{ownerId}", HttpStatusCode.NoContent);
+        AssertHidden((await Get(owner, path + "/messages")).GetProperty("dmReadReceipt"));
+        AssertHidden((await Get(peer, path + "/messages")).GetProperty("dmReadReceipt"));
+        await Call(peer, HttpMethod.Delete, $"{personal}/people/blocks/{ownerId}", HttpStatusCode.NoContent);
+        Assert.Equal(seq, (await Get(owner, path + "/messages")).GetProperty("dmReadReceipt").GetProperty("peerLastReadSeq").GetInt64());
+        await Call(outsider, HttpMethod.Get, path + "/messages", HttpStatusCode.Forbidden);
+
+        var orgA = await Organization(owner, "Receipt workspace A");
+        var orgB = await Organization(outsider, "Receipt workspace B");
+        var orgPath = $"/api/organizations/{orgA}";
+        var invite = await Call(owner, HttpMethod.Post, orgPath + "/invitations", HttpStatusCode.OK, new { });
+        await Call(peer, HttpMethod.Post, "/api/organizations/invitations/redeem", HttpStatusCode.OK,
+            new { token = invite.GetProperty("token").GetString() });
+        var workspaceDm = await Call(owner, HttpMethod.Post, orgPath + "/conversations/dm", HttpStatusCode.OK, new { targetUserId = peerId });
+        var workspaceDmId = workspaceDm.GetProperty("id").GetGuid();
+        var workspaceChat = $"{orgPath}/conversations/{workspaceDmId}";
+        await Send(owner, workspaceChat);
+        Assert.Equal(1, (await Get(peer, workspaceChat + "/messages")).GetProperty("dmReadReceipt").GetProperty("peerLastReadSeq").GetInt64());
+        await Call(outsider, HttpMethod.Get, $"/api/organizations/{orgB}/conversations/{workspaceDmId}/messages", HttpStatusCode.Forbidden);
+        await Call(owner, HttpMethod.Put, setting, HttpStatusCode.OK, new { enabled = false });
+        AssertHidden((await Get(peer, workspaceChat + "/messages")).GetProperty("dmReadReceipt"));
+
+        var group = await Call(owner, HttpMethod.Post, personal + "/conversations/groups", HttpStatusCode.Created,
+            new { title = "Group keeps read state private", memberUserIds = new[] { peerId } }, idempotency: true);
+        var groupPath = $"{personal}/conversations/{group.GetProperty("id").GetGuid()}";
+        Assert.Equal(JsonValueKind.Null, (await Get(peer, groupPath + "/messages")).GetProperty("dmReadReceipt").ValueKind);
+    }
+
+    private static void AssertHidden(JsonElement receipt)
+    {
+        Assert.False(receipt.TryGetProperty("peerLastReadSeq", out _));
+        Assert.False(receipt.TryGetProperty("peerLastReadAt", out _));
+    }
+
+    [Fact]
     public async Task ManualUnreadUsesRootHistory_AndOnlyAnObservedVersionClearsIt()
     {
         await using var app = NexusHost.Build([
@@ -153,7 +262,7 @@ public sealed class RichChatManualUnreadTests(PostgresContainerFixture pg)
         object? body = null, bool idempotency = false)
     {
         using var request = new HttpRequestMessage(method, path);
-        if (method != HttpMethod.Get && !path.StartsWith("/api/auth/", StringComparison.Ordinal))
+        if (method != HttpMethod.Get && path is not ("/api/auth/register" or "/api/auth/login"))
         {
             var csrf = await Get(client, "/api/auth/csrf");
             request.Headers.Add("X-CSRF-TOKEN", csrf.GetProperty("token").GetString());

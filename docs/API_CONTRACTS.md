@@ -37,6 +37,7 @@
 | `GET /api/auth/csrf`, `GET /api/auth/registration-policy` | Public (`AllowAnonymous`) | Antiforgery token & registration mode / trial confidentiality notice | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/reset-password` | Public (rate-limited) | Open trial registration with zero memberships, sign-in (generic `401` + TOTP challenge), one-time operator-issued reset link redemption | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/auth/change-password` | Authenticated (`Active`) | Profile with `isUnverified` flag, sign-out, password change revoking other sessions & aborting SignalR | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
+| `PUT /api/auth/me/dm-read-receipts` | Active account, CSRF | Sets the caller's account-wide DM receipt preference with `{ enabled }` and returns `{ enabled, version }` (M6.8). | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{id}`, `POST /api/auth/sessions/revoke-others` | Authenticated (`Active`) | Signed-in device list (`<= 50`) and remote sign-out | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/enable` | Authenticated (`Active`) | RFC 6238 TOTP authenticator enrollment + recovery codes | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
 | `GET /api/admin/accounts`, `POST /api/admin/accounts/{id}/{verify,rename,status}` | Verified Admin + TOTP MFA | Scoped member list (`<= 50`), employee verification, Directory rename and suspension within the Organization | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
@@ -99,6 +100,12 @@
 
 - `GET /api/conversations?q=` filters current chat memberships by group or Self Chat title, or by the DM peer's display name or username. The optional filter accepts up to 120 characters, ignores case and Vietnamese accents, and applies before cursor pagination.
 - The quick switcher uses the Personal conversation list, Organization member Community lists, and Personal chat candidates. Channel results resolve through the existing authorized channel link. `Ctrl+K` or `Cmd+K` opens the switcher from the workspace. A composer consumes its own link-insertion shortcut when focused.
+
+### DM read receipts (`M6.8`)
+
+- `GET /api/auth/me` includes the caller's `dmReadReceipts: { enabled, version }`. The preference defaults to enabled. Both participants must have receipts enabled in an active, unblocked DM.
+- Conversation lists and message history return `dmReadReceipt` with `version`, plus `peerLastReadSeq` and `peerLastReadAt` when authorized and known. The peer cursor and timestamp are omitted if either participant opts out or blocks the other. The caller's own read cursor stays available. Groups, channels, and Self Chat have no DM receipt.
+- `DmReadReceiptUpdated` sends `{ conversationId, receipt }` only to the eligible DM partner. `DmReadReceiptPrivacyChanged` sends the current receipt snapshot to both participants after a preference or block change, with just its version when private. `DmReadReceiptPreferenceChanged` sends the setting only to the caller's sessions.
 
 ### Sidebar organization and previews (`M6.26`)
 
