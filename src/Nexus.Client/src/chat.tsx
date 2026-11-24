@@ -1,5 +1,5 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, Mic, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
@@ -41,24 +41,87 @@ import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
 import { ChatMembersDrawer } from './chat/ChatDrawers';
 import { ChatModals } from './chat/ChatModals';
 import {
+  QUICK_CHAT_REACTIONS,
+  applyChatDelta,
+  applyReactionToMessage,
+  deltaFromConversationEvent
+} from './chat/chatDeltaReducer';
+import {
+  ChatDelta,
   ChatMessageItem,
   ChatWorkspaceProps,
   CommunityFeedDelta,
   ConversationCursor,
   ConversationListItem,
   DirectoryUserLite,
-  GroupMemberItem
+  GroupMemberItem,
+  ReactionSummary
 } from './chat/types';
 
 const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
 const LazyVoiceNoteRecorder = lazy(() => import('./voice/VoiceNoteRecorder'));
+const LazyEmojiPicker = lazy(() => import('./EmojiPicker'));
+
+const QUICK_REACTION_LABELS: Record<(typeof QUICK_CHAT_REACTIONS)[number], string> = {
+  '👍': 'thumbs up',
+  '❤️': 'heart',
+  '😂': 'laugh',
+  '🎉': 'celebrate',
+  '👀': 'eyes'
+};
+
+interface ChatMessagePage {
+  items: ChatMessageItem[];
+  changeSeq: number;
+  hasMore: boolean;
+  hasNewer: boolean;
+  nextBeforeSeq: number | null;
+  nextAfterSeq: number | null;
+  lastReadSeq: number;
+}
+
+function computeReactionPopoverStyle(triggerEl: HTMLElement): CSSProperties {
+  const rect = triggerEl.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const margin = 8;
+  const topSafe = 56;
+  const bottomSafe = vw <= 860 ? 68 : 8;
+  const popoverWidth = Math.min(336, Math.max(240, vw - margin * 2));
+  const left = Math.max(margin, Math.min(rect.left, vw - popoverWidth - margin));
+  const spaceBelow = vh - bottomSafe - rect.bottom - 6;
+  const spaceAbove = rect.top - topSafe - 6;
+
+  if (spaceBelow >= 280 || spaceBelow >= spaceAbove) {
+    const maxHeight = Math.min(340, Math.max(180, spaceBelow));
+    const maxTop = Math.max(topSafe, vh - bottomSafe - maxHeight);
+    const top = Math.max(topSafe, Math.min(rect.bottom + 6, maxTop));
+    return {
+      left: `${Math.round(left)}px`,
+      top: `${Math.round(top)}px`,
+      width: `${Math.round(popoverWidth)}px`,
+      maxHeight: `${Math.round(maxHeight)}px`
+    };
+  }
+  const maxHeight = Math.min(340, Math.max(180, spaceAbove));
+  const maxBottom = Math.max(bottomSafe, vh - topSafe - maxHeight);
+  const bottom = Math.max(bottomSafe, Math.min(vh - rect.top + 6, maxBottom));
+  return {
+    left: `${Math.round(left)}px`,
+    bottom: `${Math.round(bottom)}px`,
+    width: `${Math.round(popoverWidth)}px`,
+    maxHeight: `${Math.round(maxHeight)}px`
+  };
+}
 
 export type {
   AttachmentItem,
+  ChatDelta,
   ChatMessageItem,
   CommunityFeedDelta,
   ConversationListItem,
   DirectoryUserLite,
+  ReactionSummary,
   StorageQuotaSummary
 };
 
@@ -147,6 +210,17 @@ export function ChatWorkspace({
   const [draggedConvId, setDraggedConvId] = useState<string | null>(null);
   const sidebarOrg = useSidebarOrganization('chat', true, currentUserId);
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
+  const messagesRef = useRef<ChatMessageItem[]>(messages);
+  messagesRef.current = messages;
+  const currentUserIdRef = useRef(currentUserId);
+  currentUserIdRef.current = currentUserId;
+  const inFlightReactionKeysRef = useRef(new Set<string>());
+  const [pendingReactions, setPendingReactions] = useState<Record<string, Record<string, boolean>>>({});
+  const addReactionWrapRefs = useRef(new Map<string, HTMLSpanElement>());
+  const [reactionPicker, setReactionPicker] = useState<{
+    messageId: string;
+    style: CSSProperties;
+  } | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [nextBeforeSeq, setNextBeforeSeq] = useState<number | null>(null);
@@ -422,16 +496,27 @@ export function ChatWorkspace({
     return lastReadSeq as number;
   }, [discardConversation]);
 
-  const loadMessagesFull = useCallback(async (convId: string) => {
-    const res = await fetch(`/api/conversations/${convId}/messages?limit=50`, { credentials: 'same-origin' });
-    if ([401, 403, 404].includes(res.status)) {
-      discardConversation(convId);
-      return;
+  const fetchMessagePage = useCallback(async (convId: string, query = ''): Promise<ChatMessagePage | null> => {
+    while (activeConvRef.current === convId) {
+      const res = await fetch(`/api/conversations/${convId}/messages?limit=50${query}`, { credentials: 'same-origin' });
+      if ([401, 403, 404].includes(res.status)) discardConversation(convId);
+      if (!res.ok || activeConvRef.current !== convId) return null;
+      const data: ChatMessagePage = await res.json();
+      if (activeConvRef.current !== convId) return null;
+      // A live delta can arrive ahead of the response for a page that was not loaded yet.
+      if (data.changeSeq < (cursorCacheRef.current.get(convId) ?? 0)) continue;
+      return {
+        ...data,
+        items: (data.items ?? []).map(message => ({ ...message, reactionSnapshotSeq: data.changeSeq }))
+      };
     }
-    if (!res.ok) return;
-    const data = await res.json();
-    const serverItems: ChatMessageItem[] = data.items ?? [];
-    if (activeConvRef.current !== convId) return;
+    return null;
+  }, [discardConversation]);
+
+  const loadMessagesFull = useCallback(async (convId: string) => {
+    const data = await fetchMessagePage(convId);
+    if (!data || activeConvRef.current !== convId) return;
+    const serverItems = data.items;
     discarded.current.delete(convId);
     const nextLastRead = data.lastReadSeq ?? 0;
     const nextHasMore = Boolean(data.hasMore);
@@ -448,18 +533,16 @@ export function ChatWorkspace({
       cursorCacheRef.current.set(convId, data.changeSeq);
       void setConversationCursor(offlineScope, convId, data.changeSeq);
     }
-  }, [discardConversation, offlineScope]);
+  }, [fetchMessagePage, offlineScope]);
 
   const loadMessagesAround = useCallback(async (convId: string, seq: number): Promise<boolean> => {
-    const res = await fetch(`/api/conversations/${convId}/messages?aroundSeq=${seq}&limit=50`, { credentials: 'same-origin' });
-    if ([401, 403, 404].includes(res.status)) {
-      discardConversation(convId);
-      return false;
+    const data = await fetchMessagePage(convId, `&aroundSeq=${seq}`);
+    if (!data || activeConvRef.current !== convId) return false;
+    const serverItems = data.items;
+    if (!cursorCacheRef.current.has(convId)) {
+      cursorCacheRef.current.set(convId, data.changeSeq);
+      void setConversationCursor(offlineScope, convId, data.changeSeq);
     }
-    if (!res.ok) return false;
-    const data = await res.json();
-    if (activeConvRef.current !== convId) return false;
-    const serverItems: ChatMessageItem[] = data.items ?? [];
     discarded.current.delete(convId);
     const nextLastRead = data.lastReadSeq ?? 0;
     const nextHasMore = Boolean(data.hasMore);
@@ -476,19 +559,13 @@ export function ChatWorkspace({
     setNextAfterSeq(nextAfter);
     setMessages(serverItems);
     return true;
-  }, [discardConversation]);
+  }, [fetchMessagePage, offlineScope]);
 
   const loadNewerMessages = useCallback(async () => {
     if (!selectedConversationId || !nextAfterSeq) return;
-    const res = await fetch(
-      `/api/conversations/${selectedConversationId}/messages?afterSeq=${nextAfterSeq}&limit=50`,
-      { credentials: 'same-origin' }
-    );
-    if ([401, 403, 404].includes(res.status)) discardConversation(selectedConversationId);
-    if (!res.ok || activeConvRef.current !== selectedConversationId) return;
-    const data = await res.json();
-    if (activeConvRef.current !== selectedConversationId) return;
-    const newer: ChatMessageItem[] = data.items ?? [];
+    const data = await fetchMessagePage(selectedConversationId, `&afterSeq=${nextAfterSeq}`);
+    if (!data || activeConvRef.current !== selectedConversationId) return;
+    const newer = data.items;
     const nextHasNewer = Boolean(data.hasNewer);
     const nextAfter = typeof data.nextAfterSeq === 'number' ? data.nextAfterSeq : null;
     setHasNewerMessages(nextHasNewer);
@@ -510,19 +587,13 @@ export function ChatWorkspace({
         return merged;
       });
     }
-  }, [discardConversation, hasMoreOlder, lastReadSnapshot, nextAfterSeq, nextBeforeSeq, selectedConversationId]);
+  }, [fetchMessagePage, hasMoreOlder, lastReadSnapshot, nextAfterSeq, nextBeforeSeq, selectedConversationId]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!selectedConversationId || !nextBeforeSeq) return;
-    const res = await fetch(
-      `/api/conversations/${selectedConversationId}/messages?beforeSeq=${nextBeforeSeq}&limit=50`,
-      { credentials: 'same-origin' }
-    );
-    if ([401, 403, 404].includes(res.status)) discardConversation(selectedConversationId);
-    if (!res.ok || activeConvRef.current !== selectedConversationId) return;
-    const data = await res.json();
-    if (activeConvRef.current !== selectedConversationId) return;
-    const older: ChatMessageItem[] = data.items ?? [];
+    const data = await fetchMessagePage(selectedConversationId, `&beforeSeq=${nextBeforeSeq}`);
+    if (!data || activeConvRef.current !== selectedConversationId) return;
+    const older = data.items;
     setHasMoreOlder(Boolean(data.hasMore));
     setNextBeforeSeq(typeof data.nextBeforeSeq === 'number' ? data.nextBeforeSeq : null);
     if (older.length > 0) {
@@ -538,7 +609,7 @@ export function ChatWorkspace({
         return next;
       });
     }
-  }, [discardConversation, nextBeforeSeq, selectedConversationId]);
+  }, [fetchMessagePage, nextBeforeSeq, selectedConversationId]);
 
   const loadGroupMembers = useCallback(async (convId: string) => {
     if (activeConvRef.current === convId) await refreshGroupMembers.current();
@@ -658,24 +729,38 @@ export function ChatWorkspace({
 
       const data = await res.json();
       if (activeConvRef.current !== convId) return;
-      const events: Array<{ changeSeq: number; eventType: string; payload: ChatMessageItem }> = data.items ?? [];
-      if (events[0] && events[0].changeSeq > cursor + 1) {
-        await loadMessagesFull(convId);
-        return;
-      }
+      const events: Array<{ changeSeq: number; eventType: string; payload: unknown }> = data.items ?? [];
+      // A sequential SignalR delta can advance this cursor while HTTP is in flight.
+      cursor = Math.max(cursor, cursorCacheRef.current.get(convId) ?? 0);
+      const relevantEvents = events.filter(event => event.changeSeq > cursor);
 
-      const added = events
-        .filter(event => event.changeSeq > cursor && event.eventType === 'message.created' && event.payload)
-        .map(event => event.payload);
-      if (added.length > 0) {
-        setMessages(prev => {
-          const byId = new Map(prev.map(message => [message.id, message]));
-          for (const message of added) byId.set(message.id, message);
-          const next = [...byId.values()].sort((a, b) => a.seq - b.seq);
-          const cached = messagesCacheRef.current.get(convId);
-          if (cached) messagesCacheRef.current.set(convId, { ...cached, items: next });
-          return next;
-        });
+      const applySyncedEvents = (prev: ChatMessageItem[], includeCreated: boolean): ChatMessageItem[] => {
+        let next = prev;
+        for (const event of relevantEvents) {
+          if (event.eventType === 'message.created' && event.payload) {
+            const incomingMsg = event.payload as ChatMessageItem;
+            if (includeCreated && !next.some(message => message.id === incomingMsg.id)) {
+              next = [...next, incomingMsg].sort((a, b) => a.seq - b.seq);
+            }
+            continue;
+          }
+          const delta = deltaFromConversationEvent(event.eventType, event.payload);
+          if (delta) {
+            next = applyChatDelta(next, delta, currentUserIdRef.current, event.changeSeq);
+          }
+        }
+        return next;
+      };
+
+      if (relevantEvents.length > 0) {
+        const cached = messagesCacheRef.current.get(convId);
+        if (cached) {
+          const nextCached = applySyncedEvents(cached.items, true);
+          if (nextCached !== cached.items) {
+            messagesCacheRef.current.set(convId, { ...cached, items: nextCached });
+          }
+        }
+        setMessages(prev => applySyncedEvents(prev, !hasNewerRef.current));
       }
 
       const lastEventSeq = events.at(-1)?.changeSeq ?? cursor;
@@ -865,6 +950,7 @@ export function ChatWorkspace({
   useEffect(() => {
     setRightDrawer('none');
     setVoiceRecorderOpen(false);
+    setReactionPicker(null);
     setOwnershipTransfer(null);
     compositionActive.current = false;
     setMoreMenuOpen(false);
@@ -944,15 +1030,19 @@ export function ChatWorkspace({
       })
       .build();
 
-    connection.on('ConversationChanged', (evt: { conversationId: string; changeSeq: number; message?: ChatMessageItem | null }) => {
+    connection.on('ConversationChanged', (evt: {
+      conversationId: string;
+      changeSeq: number;
+      message?: ChatMessageItem | null;
+      delta?: ChatDelta | null;
+    }) => {
       const incoming = evt.message;
       const isActive = evt.conversationId === activeConvRef.current;
 
       if (incoming) {
         const mergeMessage = (prev: ChatMessageItem[]) => {
-          const byId = new Map(prev.map(m => [m.id, m]));
-          byId.set(incoming.id, incoming);
-          return [...byId.values()].sort((a, b) => a.seq - b.seq);
+          if (prev.some(message => message.id === incoming.id)) return prev;
+          return [...prev, incoming].sort((a, b) => a.seq - b.seq);
         };
 
         const cached = messagesCacheRef.current.get(evt.conversationId);
@@ -997,6 +1087,27 @@ export function ChatWorkspace({
           void syncDeltaRef.current(evt.conversationId).catch(() => {});
         }
         if (!foundInList) scheduleConversationRefresh();
+        return;
+      }
+
+      if (evt.delta) {
+        const delta = evt.delta;
+        const knownSeq = cursorCacheRef.current.get(evt.conversationId);
+        if (knownSeq !== undefined && evt.changeSeq <= knownSeq) return;
+
+        if (knownSeq !== undefined && evt.changeSeq === knownSeq + 1) {
+          const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, evt.changeSeq);
+          const cached = messagesCacheRef.current.get(evt.conversationId);
+          if (cached) {
+            messagesCacheRef.current.set(evt.conversationId, { ...cached, items: apply(cached.items) });
+          }
+          if (isActive) setMessages(apply);
+          cursorCacheRef.current.set(evt.conversationId, evt.changeSeq);
+          void setConversationCursor(offlineScope, evt.conversationId, evt.changeSeq);
+          return;
+        }
+
+        if (isActive) void syncDeltaRef.current(evt.conversationId).catch(() => {});
         return;
       }
 
@@ -1243,6 +1354,74 @@ export function ChatWorkspace({
     setNotice(result.ok ? 'Message link copied.' : 'Unable to copy link automatically.');
   }
 
+  function focusAddReactionButton(messageId: string) {
+    requestAnimationFrame(() => {
+      addReactionWrapRefs.current.get(messageId)?.querySelector('button')?.focus();
+    });
+  }
+
+  function handleToggleReactionPicker(messageId: string, triggerEl: HTMLElement) {
+    if (reactionPicker?.messageId === messageId) {
+      setReactionPicker(null);
+      return;
+    }
+    setReactionPicker({
+      messageId,
+      style: computeReactionPopoverStyle(triggerEl)
+    });
+  }
+
+  async function handleToggleMessageReaction(message: ChatMessageItem, rawEmoji: string) {
+    const emoji = rawEmoji.trim();
+    if (!emoji || message.pending || message.deletedAt) return;
+
+    const key = `${message.id}:${emoji}`;
+    if (inFlightReactionKeysRef.current.has(key)) return;
+    inFlightReactionKeysRef.current.add(key);
+
+    const latestMessage = messagesRef.current.find(item => item.id === message.id) ?? message;
+    const nextReacted = !latestMessage.reactions?.find(r => r.emoji === emoji)?.reactedByMe;
+
+    setError('');
+    setPendingReactions(pending => ({
+      ...pending,
+      [message.id]: { ...pending[message.id], [emoji]: nextReacted }
+    }));
+
+    try {
+      const res = await protectedRequest(
+        personalApiPath(`/api/conversations/${message.conversationId}/messages/${message.id}/reactions/${encodeURIComponent(emoji)}`),
+        nextReacted ? 'PUT' : 'DELETE'
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (activeConvRef.current === message.conversationId) {
+          setError(typeof errData.message === 'string' && errData.message ? errData.message : 'Unable to update reaction.');
+        }
+        return;
+      }
+      const { changeSeq } = await res.json();
+      if (activeConvRef.current === message.conversationId && changeSeq > (cursorCacheRef.current.get(message.conversationId) ?? 0)) {
+        await requestConversationDelta(message.conversationId);
+      }
+    } catch (err) {
+      if (activeConvRef.current === message.conversationId) {
+        setError(err instanceof Error && err.message ? err.message : 'Unable to update reaction.');
+        void requestConversationDelta(message.conversationId).catch(() => {});
+      }
+    } finally {
+      inFlightReactionKeysRef.current.delete(key);
+      setPendingReactions(pending => {
+        const next = { ...pending };
+        const messageReactions = { ...next[message.id] };
+        delete messageReactions[emoji];
+        if (Object.keys(messageReactions).length > 0) next[message.id] = messageReactions;
+        else delete next[message.id];
+        return next;
+      });
+    }
+  }
+
   function handleComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (
       selectedConversationId &&
@@ -1483,6 +1662,61 @@ export function ChatWorkspace({
   const visibleOutgoing = outgoing.filter(item => item.conversationId === selectedConversationId && !confirmedOwnMessages.has(item.clientMsgId));
   const reading = useChatReading(activeConv?.id ?? null, visible, activeMessages, visibleOutgoing.length,
     activeConv?.lastReadSeq ?? 0, markRead, reconnectCount);
+
+  useEffect(() => {
+    if (!reactionPicker) return;
+    const targetId = reactionPicker.messageId;
+
+    const handleOutsideClick = (ev: MouseEvent) => {
+      const wrap = addReactionWrapRefs.current.get(targetId);
+      if (!wrap || !wrap.contains(ev.target as Node)) {
+        setReactionPicker(null);
+      }
+    };
+
+    const handleEsc = (ev: globalThis.KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        setReactionPicker(null);
+        requestAnimationFrame(() => {
+          addReactionWrapRefs.current.get(targetId)?.querySelector('button')?.focus();
+        });
+      }
+    };
+
+    const updatePosition = () => {
+      const wrap = addReactionWrapRefs.current.get(targetId);
+      const btn = wrap?.querySelector('button');
+      const feed = reading.feedRef.current;
+      if (!btn || !feed) {
+        setReactionPicker(null);
+        return;
+      }
+      const btnRect = btn.getBoundingClientRect();
+      const feedRect = feed.getBoundingClientRect();
+      if (btnRect.bottom < feedRect.top || btnRect.top > feedRect.bottom) {
+        setReactionPicker(null);
+        return;
+      }
+      setReactionPicker(prev =>
+        prev && prev.messageId === targetId
+          ? { messageId: targetId, style: computeReactionPopoverStyle(btn) }
+          : prev
+      );
+    };
+
+    const feed = reading.feedRef.current;
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEsc);
+    window.addEventListener('resize', updatePosition);
+    feed?.addEventListener('scroll', updatePosition, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEsc);
+      window.removeEventListener('resize', updatePosition);
+      feed?.removeEventListener('scroll', updatePosition);
+    };
+  }, [reactionPicker?.messageId, reading.feedRef]);
 
   const filteredConvs = useMemo(() => {
     const q = convSearch.trim().toLowerCase();
@@ -2035,12 +2269,20 @@ export function ChatWorkspace({
                 const showDate = curDate && curDate !== prevDate;
                 const isOwn = m.senderId === currentUserId;
                 const compact = Boolean(prev && !showDate && !showDivider && prev.senderId === m.senderId);
+                const isInteractiveMessage = !m.pending && !m.deletedAt;
+                const isPickerOpen = isInteractiveMessage && reactionPicker?.messageId === m.id;
+                const optimisticMessage = Object.entries(pendingReactions[m.id] ?? {}).reduce(
+                  (message, [emoji, reacted]) => applyReactionToMessage(message, { emoji, reacted, isMine: true }),
+                  m
+                );
+                const reactions = isInteractiveMessage ? (optimisticMessage.reactions ?? []) : [];
+                const reactedSet = new Set(reactions.filter(r => r.reactedByMe).map(r => r.emoji));
 
                 return (
                   <div key={m.id} className="nx-msg-group-wrap">
                     {showDate && <div className="nx-date-sep">{curDate}</div>}
                     {showDivider && <div className="nx-new-divider" role="separator">New messages</div>}
-                    <div className={`nx-msg-row ${isOwn ? 'own' : ''} ${compact ? 'compact' : ''} ${m.pending ? 'pending' : ''}`}>
+                    <div className={`nx-msg-row ${isOwn ? 'own' : ''} ${compact ? 'compact' : ''} ${m.pending ? 'pending' : ''} ${isPickerOpen ? 'picker-open' : ''}`}>
                       {!isOwn && (
                         compact
                           ? <div className="nx-msg-avatar-spacer" />
@@ -2067,39 +2309,104 @@ export function ChatWorkspace({
                             </button>
                           )
                       )}
-                      <div
-                        className={`nx-msg-bubble ${highlightedMessageId === m.id ? 'nx-highlight-target' : ''}`}
-                        data-message-seq={m.seq}
-                        data-message-id={m.id}
-                        tabIndex={-1}
-                      >
-                        <div className="nx-msg-head">
-                          {!compact && (
-                            <>
-                              {isOwn ? (
-                                <strong>You</strong>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="nx-profile-trigger nx-name-trigger"
-                                  onClick={() =>
-                                    onOpenProfileCard({
-                                      userId: m.senderId,
-                                      organizationId: null,
-                                      fallbackDisplayName: m.senderDisplayName
-                                    })
-                                  }
+                      <div className="nx-msg-main">
+                        <div className="nx-msg-bubble-line">
+                          <div
+                            className={`nx-msg-bubble ${highlightedMessageId === m.id ? 'nx-highlight-target' : ''}`}
+                            data-message-seq={m.seq}
+                            data-message-id={m.id}
+                            tabIndex={-1}
+                          >
+                            {!compact && (
+                              <div className="nx-msg-head">
+                                {isOwn ? (
+                                  <strong>You</strong>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="nx-profile-trigger nx-name-trigger"
+                                    onClick={() =>
+                                      onOpenProfileCard({
+                                        userId: m.senderId,
+                                        organizationId: null,
+                                        fallbackDisplayName: m.senderDisplayName
+                                      })
+                                    }
+                                  >
+                                    <strong>{m.senderDisplayName}</strong>
+                                  </button>
+                                )}
+                                <span className="nx-msg-time">
+                                  {m.pending ? 'Sending…' : formatTime(m.createdAt)}
+                                </span>
+                              </div>
+                            )}
+                            {m.body && (
+                              <div
+                                className="nx-msg-body"
+                                onClick={handleInlineContentLinkClick}
+                                dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(m.body) }}
+                              />
+                            )}
+                            {m.attachments && m.attachments.length > 0 && (
+                              <AttachmentGallery attachments={m.attachments} onPreviewImage={setLightboxImage} />
+                            )}
+                          </div>
+                          {isInteractiveMessage && (
+                            <div className="nx-msg-hover-bar" role="group" aria-label="Message actions">
+                              {QUICK_CHAT_REACTIONS.map(emoji => {
+                                const reactedByMe = reactedSet.has(emoji);
+                                return (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    className={`nx-hover-react-btn ${reactedByMe ? 'active' : ''}`}
+                                    aria-label={`React with ${QUICK_REACTION_LABELS[emoji]} ${emoji}`}
+                                    title={`React with ${QUICK_REACTION_LABELS[emoji]}`}
+                                    aria-pressed={reactedByMe}
+                                    onClick={() => void handleToggleMessageReaction(m, emoji)}
+                                  >
+                                    <span aria-hidden="true">{emoji}</span>
+                                  </button>
+                                );
+                              })}
+                              <span
+                                className="nx-msg-react-add-wrap"
+                                ref={el => {
+                                  if (el) addReactionWrapRefs.current.set(m.id, el);
+                                  else addReactionWrapRefs.current.delete(m.id);
+                                }}
+                              >
+                                <Button
+                                  variant={isPickerOpen ? 'primary' : 'ghost'}
+                                  size="sm"
+                                  iconOnly
+                                  aria-label="Add reaction"
+                                  title="Add reaction"
+                                  aria-haspopup="dialog"
+                                  aria-expanded={isPickerOpen}
+                                  onClick={e => handleToggleReactionPicker(m.id, e.currentTarget)}
                                 >
-                                  <strong>{m.senderDisplayName}</strong>
-                                </button>
-                              )}
-                              <span className="nx-msg-time">
-                                {m.pending ? 'Sending…' : formatTime(m.createdAt)}
+                                  <Plus size={13} aria-hidden="true" />
+                                </Button>
+                                {isPickerOpen && reactionPicker && (
+                                  <div className="nx-msg-reaction-popover" style={reactionPicker.style}>
+                                    <Suspense fallback={<div className="nx-emoji-loading" role="status">Loading emoji…</div>}>
+                                      <LazyEmojiPicker
+                                        onSelect={emoji => {
+                                          setReactionPicker(null);
+                                          void handleToggleMessageReaction(m, emoji);
+                                          focusAddReactionButton(m.id);
+                                        }}
+                                        onClose={() => {
+                                          setReactionPicker(null);
+                                          focusAddReactionButton(m.id);
+                                        }}
+                                      />
+                                    </Suspense>
+                                  </div>
+                                )}
                               </span>
-                            </>
-                          )}
-                          {!m.pending && !m.deletedAt && (
-                            <span className="nx-msg-actions">
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -2110,18 +2417,26 @@ export function ChatWorkspace({
                               >
                                 <Link2 size={13} aria-hidden="true" />
                               </Button>
-                            </span>
+                            </div>
                           )}
                         </div>
-                        {m.body && (
-                          <div
-                            className="nx-msg-body"
-                            onClick={handleInlineContentLinkClick}
-                            dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(m.body) }}
-                          />
-                        )}
-                        {m.attachments && m.attachments.length > 0 && (
-                          <AttachmentGallery attachments={m.attachments} onPreviewImage={setLightboxImage} />
+                        {reactions.length > 0 && (
+                          <div className="nx-reactions-row" role="group" aria-label="Message reactions">
+                            {reactions.map(r => (
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                className={`nx-react-pill ${r.reactedByMe ? 'active' : ''}`}
+                                aria-pressed={r.reactedByMe}
+                                aria-label={`${r.emoji} reaction, ${r.count} ${r.count === 1 ? 'person' : 'people'}${r.reactedByMe ? ', you reacted' : ''}`}
+                                title={r.reactedByMe ? `Remove ${r.emoji} reaction` : `React with ${r.emoji}`}
+                                onClick={() => void handleToggleMessageReaction(m, r.emoji)}
+                              >
+                                <span aria-hidden="true">{r.emoji}</span>
+                                <span className="nx-react-count">{r.count}</span>
+                              </button>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>

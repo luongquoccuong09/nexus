@@ -32,6 +32,21 @@ export interface ConversationListItem {
   } | null;
 }
 
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+}
+
+export type ChatDelta = {
+  type: 'reaction';
+  messageId: string;
+  seq?: number;
+  emoji: string;
+  userId: string;
+  reacted: boolean;
+};
+
 export interface ChatMessageItem {
   id: string;
   conversationId: string;
@@ -45,6 +60,8 @@ export interface ChatMessageItem {
   deletedAt?: string | null;
   pending?: boolean;
   attachments?: AttachmentItem[];
+  reactions?: ReactionSummary[];
+  reactionSnapshotSeq?: number;
 }
 
 export interface DirectoryUserLite {

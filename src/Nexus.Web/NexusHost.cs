@@ -93,12 +93,14 @@ public static class NexusHost
         app.MapSidebarEndpoints();
         app.MapCommunityEndpoints();
         app.MapMessagingEndpoints();
+        app.MapMessageReactionsEndpoints();
         app.MapCommunityFeedEndpoints();
         app.MapFilesEndpoints();
         app.MapSharedContentEndpoints();
         app.MapPeopleSafetyEndpoints(OrganizationScope.PersonalApi);
         app.MapConversationEndpoints(OrganizationScope.PersonalApi);
         app.MapMessagingEndpoints(OrganizationScope.PersonalApi);
+        app.MapMessageReactionsEndpoints(OrganizationScope.PersonalApi);
         app.MapFilesEndpoints(OrganizationScope.PersonalApi);
         app.MapSharedContentEndpoints(OrganizationScope.PersonalApi);
         app.MapHub<MessagingHub>(OrganizationScope.Hub);

@@ -30,6 +30,14 @@ public sealed class ConversationEventEntity
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+public sealed class MessageReactionEntity
+{
+    public Guid MessageId { get; set; }
+    public Guid UserId { get; set; }
+    public required string Emoji { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<MessageEntity>
 {
     public void Configure(EntityTypeBuilder<MessageEntity> builder)
@@ -84,5 +92,30 @@ public sealed class ConversationEventEntityConfiguration : IEntityTypeConfigurat
 
         builder.HasIndex(x => x.CreatedAt)
             .HasDatabaseName("ix_conversation_events_created_at");
+    }
+}
+
+public sealed class MessageReactionEntityConfiguration : IEntityTypeConfiguration<MessageReactionEntity>
+{
+    public void Configure(EntityTypeBuilder<MessageReactionEntity> builder)
+    {
+        builder.ToTable("message_reactions", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_message_reactions_emoji_non_empty",
+                "char_length(btrim(emoji)) >= 1 AND char_length(emoji) <= 32");
+        });
+        builder.HasKey(x => new { x.MessageId, x.UserId, x.Emoji });
+
+        builder.Property(x => x.MessageId).HasColumnName("message_id").IsRequired();
+        builder.Property(x => x.UserId).HasColumnName("user_id").IsRequired();
+        builder.Property(x => x.Emoji).HasColumnName("emoji").HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
+
+        builder.HasOne<MessageEntity>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(x => x.UserId)
+            .HasDatabaseName("ix_message_reactions_user_id");
     }
 }

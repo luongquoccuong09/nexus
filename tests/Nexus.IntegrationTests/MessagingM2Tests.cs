@@ -16,6 +16,7 @@ using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.IntegrationTests;
 
@@ -132,6 +133,9 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
 
         await hubA.StartAsync();
         await hubB.StartAsync();
+        var orgId = await OrganizationFixtureHandler.GetIdAsync(app.Services);
+        var presence = app.Services.GetRequiredService<IPresenceTracker>();
+        await WaitUntilAsync(() => presence.IsOnline(orgId, userB.Id));
         await hubC.StartAsync();
         await hubAdmin.StartAsync();
 
@@ -313,6 +317,9 @@ public sealed class MessagingM2Tests(PostgresContainerFixture pg)
         await using var hubB = await BuildMessagingHub(app, cookiesB);
         hubB.On<JsonElement>("ReadStateUpdated", payload => readUpdates.Enqueue(payload.Clone()));
         await hubB.StartAsync();
+        var orgId = await OrganizationFixtureHandler.GetIdAsync(app.Services);
+        var presence = app.Services.GetRequiredService<IPresenceTracker>();
+        await WaitUntilAsync(() => presence.IsOnline(orgId, userB.Id));
 
         using var read3 = await clientB.PutAsJsonAsync($"/api/conversations/{dmId}/read", new { lastReadSeq = 3 });
         Assert.Equal(HttpStatusCode.OK, read3.StatusCode);

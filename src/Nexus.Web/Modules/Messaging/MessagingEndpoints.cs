@@ -27,6 +27,8 @@ public static class MessagingEndpoints
     public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null, bool PreserveReadState = false);
     public sealed record MarkReadRequest(long LastReadSeq);
 
+    public sealed record ReactionSummaryDto(string Emoji, int Count, bool ReactedByMe);
+
     public sealed record MessageDto(
         Guid Id,
         Guid ConversationId,
@@ -39,7 +41,8 @@ public static class MessagingEndpoints
         DateTimeOffset CreatedAt,
         DateTimeOffset? EditedAt,
         DateTimeOffset? DeletedAt,
-        IReadOnlyList<AttachmentDto>? Attachments = null);
+        IReadOnlyList<AttachmentDto>? Attachments = null,
+        IReadOnlyList<ReactionSummaryDto>? Reactions = null);
 
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
@@ -320,6 +323,8 @@ public static class MessagingEndpoints
             return PaginationGuard.InvalidCursor();
         }
 
+        // Pair the reaction summaries with the change cursor from the same snapshot.
+        await using var snapshot = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         var conv = await db.Conversations.AsNoTracking()
             .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var member = await db.ConversationMembers.AsNoTracking()
@@ -416,6 +421,32 @@ public static class MessagingEndpoints
                 .GroupBy(a => a.MessageId!.Value)
                 .ToDictionary(g => g.Key, g => g.Select(FilesEndpoints.ToDto).ToList());
 
+        var activeMsgIds = selectedMessages
+            .Where(m => !m.DeletedAt.HasValue)
+            .Select(m => m.Id)
+            .ToArray();
+        var reactionsByMsg = activeMsgIds.Length == 0
+            ? new Dictionary<Guid, List<ReactionSummaryDto>>()
+            : (await db.MessageReactions.AsNoTracking()
+                .Where(r => activeMsgIds.Contains(r.MessageId))
+                .GroupBy(r => new { r.MessageId, r.Emoji })
+                .Select(g => new
+                {
+                    g.Key.MessageId,
+                    g.Key.Emoji,
+                    FirstCreatedAt = g.Min(r => r.CreatedAt),
+                    Count = g.Count(),
+                    MyCount = g.Count(r => r.UserId == actorId)
+                })
+                .ToListAsync(ct))
+                .GroupBy(r => r.MessageId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy(r => r.FirstCreatedAt)
+                        .ThenBy(r => r.Emoji, StringComparer.Ordinal)
+                        .Select(r => new ReactionSummaryDto(r.Emoji, r.Count, r.MyCount > 0))
+                        .ToList());
+
         var items = selectedMessages.Select(m =>
         {
             var hasSender = senderMap.TryGetValue(m.SenderId, out var sender);
@@ -433,9 +464,13 @@ public static class MessagingEndpoints
                 m.DeletedAt,
                 m.DeletedAt.HasValue
                     ? []
-                    : attachmentsByMsg.GetValueOrDefault(m.Id) ?? []);
+                    : attachmentsByMsg.GetValueOrDefault(m.Id) ?? [],
+                m.DeletedAt.HasValue
+                    ? []
+                    : reactionsByMsg.GetValueOrDefault(m.Id) ?? []);
         }).ToList();
 
+        await snapshot.CommitAsync(ct);
         return Results.Ok(new
         {
             items,
@@ -672,7 +707,11 @@ public static class MessagingEndpoints
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{conversationId:N}\n{body}{attSuffix}")));
     }
 
-    private static MessageDto ToMessageDto(MessageEntity m, OrganizationMembership sender, IReadOnlyList<AttachmentDto>? attachments = null) => new(
+    private static MessageDto ToMessageDto(
+        MessageEntity m,
+        OrganizationMembership sender,
+        IReadOnlyList<AttachmentDto>? attachments = null,
+        IReadOnlyList<ReactionSummaryDto>? reactions = null) => new(
         m.Id,
         m.ConversationId,
         m.Seq,
@@ -684,5 +723,6 @@ public static class MessagingEndpoints
         m.CreatedAt,
         m.EditedAt,
         m.DeletedAt,
-        attachments ?? []);
+        attachments ?? [],
+        reactions ?? []);
 }

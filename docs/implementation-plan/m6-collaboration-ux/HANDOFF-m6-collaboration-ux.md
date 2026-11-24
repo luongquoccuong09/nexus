@@ -1,5 +1,32 @@
 # M6 — Collaboration UX Handoff
 
+## M6.1 Quick reactions and hover actions
+
+**Verified on November 24, 2026.** The chat action bar supports the five quick reactions, the existing Emoji picker, and **Copy link to message**. It appears on hover and keyboard focus, and the controls are visible on narrow and touch layouts. The picker restores focus to **Add reaction** on Escape or selection.
+
+The scoped PUT and DELETE serialize with group membership changes, persist one `conversation_events` row per state change, and send a direct SignalR delta to active recipients who can see the target message. The client keeps the pending change separate from confirmed state and reapplies authorized gaps through `/changes`. The `ChatMessageReactions` migration and the updated history query support reaction counts and the caller's own reactions in one page-level aggregate.
+
+```powershell
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~RichChatM61Tests
+npm.cmd --prefix src/Nexus.Client run build
+npm.cmd --prefix src/Nexus.Client run test
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+git diff --cached --check
+```
+
+PostgreSQL 17 Testcontainers covered Personal DM, Group and Self Chat, two Organization scopes, concurrent idempotent PUTs, CSRF, blocked DMs, replay, and revoked or pre-join history (`SEC-17`, `SEC-18`, `SEC-19`). The full pipeline passed 178 integration tests, 45 client tests, the Release builds with zero warnings or errors, and the security, UI and knowledge audits. The opt-in Docker Monitor smoke test was skipped by the standard run.
+
+The live check served the production Vite bundle from `Nexus.Web` on `127.0.0.1:5191` against a disposable PostgreSQL 17 container with the standard local migration and runtime roles. The host ran `dotnet .\bin\Release\net10.0\Nexus.Web.dll --migrate` and `dotnet .\bin\Release\net10.0\Nexus.Web.dll --urls http://127.0.0.1:5191 --webroot D:\develop\nexus-workplace\src\Nexus.Client\dist` from `src/Nexus.Web`. The temporary browser fixture used two authenticated Edge contexts against that host.
+
+```powershell
+$qaRoot = Join-Path $env:TEMP 'nexus-m61-qa'
+npm.cmd install --prefix $qaRoot playwright
+node (Join-Path $qaRoot 'quick-react.mjs')
+```
+
+At `1440×900`, `390×844`, and `320×700` in Light and Dark, click-to-render took 1.8–2.9 ms locally and 35.7–92.7 ms for the peer. Tab, Enter, Space and Escape worked with visible focus. There was no horizontal overflow, duplicate count, flicker, or unexpected console or network error. The peer applied reactions without reloading history or requesting `/changes` in the sequential case. A held request verified that the local change rendered before the server received it and repeat activation sent a single PUT. The picker applied a ZWJ emoji, and history preserved it across reload.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

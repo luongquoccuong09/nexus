@@ -1271,6 +1271,36 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("messages", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Emoji")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("emoji");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("MessageId", "UserId", "Emoji");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_message_reactions_user_id");
+
+                    b.ToTable("message_reactions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_message_reactions_emoji_non_empty", "char_length(btrim(emoji)) >= 1 AND char_length(emoji) <= 32");
+                        });
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.PollEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2541,6 +2571,21 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()
                         .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

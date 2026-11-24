@@ -28,6 +28,17 @@ public sealed class MessagingFanoutService(
         CancellationToken cancellationToken = default) =>
         NotifyConversationChangedInternalAsync(conversationId, changeSeq, conversationKind, communityId, message, cancellationToken);
 
+    public async Task NotifyChatDeltaAsync(
+        Guid conversationId,
+        long changeSeq,
+        long messageSeq,
+        object delta,
+        CancellationToken ct)
+    {
+        var recipients = await ResolveChatRecipientsAsync(conversationId, messageSeq, ct);
+        await SendConversationChangedAsync(recipients, new { conversationId, changeSeq, message = (object?)null, delta }, ct);
+    }
+
     private async Task NotifyConversationChangedInternalAsync(
         Guid conversationId,
         long changeSeq,
@@ -37,9 +48,12 @@ public sealed class MessagingFanoutService(
         CancellationToken cancellationToken)
     {
         var recipientIds = await ResolveAuthorizedRecipientsAsync(conversationId, conversationKind, communityId, cancellationToken);
-        if (recipientIds.Count == 0) return;
+        await SendConversationChangedAsync(recipientIds, new { conversationId, changeSeq, message }, cancellationToken);
+    }
 
-        var payload = new { conversationId, changeSeq, message };
+    private async Task SendConversationChangedAsync(List<Guid> recipientIds, object payload, CancellationToken cancellationToken)
+    {
+        if (recipientIds.Count == 0) return;
         var groups = recipientIds.Select(id => MessagingHub.UserGroupName(db.OrganizationScopeId, id)).ToArray();
         await hubContext.Clients.Groups(groups).SendAsync("ConversationChanged", payload, cancellationToken);
     }
@@ -210,12 +224,16 @@ public sealed class MessagingFanoutService(
             return ownerId == Guid.Empty ? [] : [ownerId];
         }
 
-        return await db.ConversationMembers
+        return await ResolveChatRecipientsAsync(conversationId, null, ct);
+    }
+
+    private Task<List<Guid>> ResolveChatRecipientsAsync(Guid conversationId, long? messageSeq, CancellationToken ct) =>
+        db.ConversationMembers
             .AsNoTracking()
-            .Where(m => m.ConversationId == conversationId && m.LeftAt == null)
+            .Where(m => m.ConversationId == conversationId && m.LeftAt == null &&
+                        (messageSeq == null || m.VisibleFromSeq < messageSeq))
             .Join(db.ActiveScopePeople.AsNoTracking(), m => m.UserId, u => u.Id, (m, u) => u.Id)
             .ToListAsync(ct);
-    }
 
     private async Task<List<Guid>> ResolveCommunityRecipientsAsync(Guid communityId, CancellationToken ct)
     {

@@ -75,6 +75,7 @@ public sealed class NexusDbContext
     public DbSet<UserSidebarSectionEntity> UserSidebarSections => Set<UserSidebarSectionEntity>();
     public DbSet<UserSidebarItemEntity> UserSidebarItems => Set<UserSidebarItemEntity>();
     public DbSet<MessageEntity> Messages => Set<MessageEntity>();
+    public DbSet<MessageReactionEntity> MessageReactions => Set<MessageReactionEntity>();
     public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
     public DbSet<ChannelPostEntity> ChannelPosts => Set<ChannelPostEntity>();
     public DbSet<PostCommentEntity> PostComments => Set<PostCommentEntity>();

@@ -403,7 +403,7 @@
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  max-width: 78%;
+  max-width: 96%;
 }
 
 .nx-msg-row.own {
@@ -414,6 +414,32 @@
 .nx-msg-row.compact { margin-top: -2px; }
 .nx-msg-avatar-spacer { width: 32px; flex-shrink: 0; }
 
+.nx-msg-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nx-msg-row.own .nx-msg-main {
+  align-items: flex-end;
+}
+
+.nx-msg-bubble-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.nx-msg-row.own .nx-msg-bubble-line {
+  flex-direction: row-reverse;
+}
+
 .nx-msg-bubble {
   background: var(--bg-msg-other);
   border: 1px solid var(--border-soft);
@@ -421,7 +447,187 @@
   padding: 8px 13px;
   box-shadow: var(--shadow-sm);
   min-width: 90px;
+  max-width: min(620px, 100%);
   word-break: break-word;
+}
+
+.nx-msg-bubble:has(~ .nx-msg-hover-bar) {
+  max-width: min(620px, calc(100% - 224px));
+}
+
+.nx-msg-hover-bar {
+  position: static;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  max-width: 100%;
+  transition: opacity 0.14s ease;
+}
+
+.nx-msg-row:hover .nx-msg-hover-bar,
+.nx-msg-row:focus-within .nx-msg-hover-bar,
+.nx-msg-row.picker-open .nx-msg-hover-bar,
+.nx-msg-bubble:focus ~ .nx-msg-hover-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nx-hover-react-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+
+.nx-hover-react-btn:hover {
+  background: var(--bg-hover);
+}
+
+.nx-hover-react-btn:active {
+  transform: scale(0.92);
+}
+
+.nx-hover-react-btn:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.nx-hover-react-btn.active {
+  background: var(--brand-100);
+  border-color: var(--brand-600);
+}
+
+.nx-msg-hover-bar .nx-btn.sm.icon-only {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+
+.nx-msg-react-add-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nx-msg-reaction-popover {
+  position: fixed;
+  z-index: 85;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.nx-msg-reaction-popover .nx-emoji-picker {
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.nx-msg-reaction-popover .nx-emoji-grid-scroll {
+  min-height: 72px;
+}
+
+.nx-msg-main .nx-reactions-row {
+  max-width: 100%;
+}
+
+.nx-msg-row.own .nx-msg-main .nx-reactions-row {
+  justify-content: flex-end;
+}
+
+.nx-msg-main .nx-react-pill {
+  border-color: var(--border);
+  padding: 2px 8px;
+  min-height: 26px;
+  font-family: inherit;
+}
+
+.nx-msg-main .nx-react-pill:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.nx-msg-main .nx-react-pill.active {
+  border-color: var(--brand-600);
+}
+
+@media (max-width: 860px), (hover: none) {
+  .nx-msg-row {
+    max-width: 88%;
+  }
+
+  .nx-msg-bubble-line {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .nx-msg-row.own .nx-msg-bubble-line {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .nx-msg-bubble,
+  .nx-msg-bubble:has(~ .nx-msg-hover-bar) {
+    max-width: 100%;
+  }
+
+  .nx-msg-hover-bar {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    flex-wrap: wrap;
+    max-width: 100%;
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (max-width: 480px) {
+  .nx-msg-feed {
+    padding: 14px 10px 12px;
+  }
+
+  .nx-msg-row {
+    max-width: 94%;
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-msg-hover-bar,
+  .nx-hover-react-btn,
+  .nx-hover-react-btn:active,
+  .nx-msg-hover-bar .nx-btn {
+    transition: none;
+    transform: none;
+  }
 }
 
 .nx-msg-row.own .nx-msg-bubble {

@@ -136,7 +136,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 
 ### Rich chat
 
-- [ ] **M6.1** Quick reactions and hover actions (UX-01) with PUT/DELETE and change events.
+- [x] **M6.1** Quick reactions and hover actions (UX-01) with PUT/DELETE and change events.
 - [ ] **M6.2** Threads (UX-02) with parent_message_id, reply counts, following and unread state. ⚑ D05
 - [ ] **M6.3** Edit/recall (UX-05) with version, If-Match, the D12 time limit and a recalled-message marker. ⚑ D12
 - [ ] **M6.4** Pin and save messages (UX-03/04) with PUT/DELETE.

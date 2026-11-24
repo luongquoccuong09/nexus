@@ -45,7 +45,7 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 
 1. **SignalR groups per account and scope.**
    - On connect to `/hubs/personal/messaging` (single-window default), the server authenticates the session and binds the connection to `scope:{Guid.Empty}:user:{currentUserId}` plus `scope:{orgId}:user:{currentUserId}` for each active Organization membership (refreshable via `RefreshOrganizationSubscriptions()`). Scoped `/hubs/organizations/{orgId}/messaging` hubs remain supported and verify membership on connect.
-   - After PostgreSQL commit, the server reads current authorized recipients from PostgreSQL and broadcasts via batched `Clients.Groups(...)`: `{ conversationId, changeSeq, message? }` for chat messages and `{ conversationId, delta? }` for community feed updates. Clients apply sequential `change_seq == localChangeSeq + 1` payloads directly into in-memory caches and fall back to `GET /changes?after=N` on any gap or reconnect. Revoking an Organization membership immediately removes live connections from `scope:{orgId}:user:{memberId}`, aborts scoped org hub connections, and pushes `OrganizationAccessRevoked`.
+   - After PostgreSQL commit, the server reads current authorized recipients from PostgreSQL and broadcasts via batched `Clients.Groups(...)`: `{ conversationId, changeSeq, message?, delta? }` for chat and `{ conversationId, delta? }` for community feed updates. Clients apply sequential `change_seq == localChangeSeq + 1` payloads directly into in-memory caches and fall back to `GET /changes?after=N` on a gap or reconnect. Revoking an Organization membership immediately removes live connections from `scope:{orgId}:user:{memberId}`, aborts scoped org hub connections, and pushes `OrganizationAccessRevoked`.
 2. **Crash between DB commit and SignalR broadcast:**
    - Because SignalR is best-effort, a server crash or network drop after commit means clients may miss the nudge.
    - Recovery relies on two mechanisms:
@@ -54,9 +54,15 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 3. **Client delta application:**
    - Apply events strictly in ascending `change_seq` order.
    - Discard any event with `change_seq <= localChangeSeq`.
-   - If the first returned event has `change_seq > localChangeSeq + 1` (gap detected), fetch the missing range or fall back to full conversation reload.
+   - When a SignalR event arrives across a gap, fetch `/changes` from the local cursor. The server can omit events outside the member's history and still advance `nextAfter` across them. A `410 Gone` response triggers a fresh snapshot.
    - Advance `localChangeSeq` in IndexedDB **only after** applying the batch cleanly.
    - Always recheck membership on delta reads and offline queue replay (`SEC-18`).
+
+### Chat reactions (`M6.1`)
+
+- A reaction PUT or DELETE takes the conversation lock shared with group membership changes. A state change advances `change_seq` and writes `message.reaction.added` or `message.reaction.removed` in the same transaction as the reaction row. Both events carry `{ messageId, seq, emoji, userId, reacted }`. Repeated requests with the same desired state allocate no event. Reactions leave the chronological message sequence and conversation sort date intact.
+- SignalR sends the same transition as a chat delta with `type: "reaction"`. Live fanout and `/changes` enforce `seq > visible_from_seq` for the target message. The server aggregates history summaries in one query per page and returns them with a cursor from the same snapshot.
+- The SPA displays the pending reaction on the target message immediately and allows one request per message and emoji at a time. SignalR and replay update the confirmed state. A failed request clears the pending change. Replay skips deltas already included in the target message's history snapshot so a live update or delayed history response cannot double-count reactions.
 
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
