@@ -77,12 +77,13 @@ public static class CommunityAccessHelper
             }
         }
 
-        var kind = conv.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
+        var kind = conv.Kind.ToResourceKind();
         var ctx = new ResourceContext(
             kind,
             actor.OrganizationId,
             MembershipRole: member?.Role,
-            IsBlocked: isBlocked);
+            IsBlocked: isBlocked,
+            TargetIsSelf: conv.Kind == ConversationKind.Self && conv.CreatedByUserId == actor.Id);
 
         return new ResolvedConversationAccess(conv, null, ctx, member?.VisibleFromSeq ?? 0);
     }

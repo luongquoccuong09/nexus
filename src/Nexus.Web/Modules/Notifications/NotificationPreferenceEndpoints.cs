@@ -130,7 +130,8 @@ internal static class NotificationPreferenceEndpoints
         var role = await db.ConversationMembers.AsNoTracking().Where(member =>
                 member.ConversationId == conversationId && member.UserId == userId && member.LeftAt == null)
             .Select(member => (ResourceRole?)member.Role).SingleOrDefaultAsync(ct);
-        var kind = conversation.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        return authz.Can(account?.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, MembershipRole: role));
+        var kind = conversation.Kind.ToResourceKind();
+        var targetIsSelf = conversation.Kind == ConversationKind.Self && conversation.CreatedByUserId == userId;
+        return authz.Can(account?.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, MembershipRole: role, TargetIsSelf: targetIsSelf));
     }
 }

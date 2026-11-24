@@ -3111,7 +3111,8 @@ body {
     gap: 8px;
     padding: 2px 4px 2px 0;
   }
-  .nx-stage-profile-btn .nx-avatar {
+  .nx-stage-profile-btn .nx-avatar,
+  .nx-stage-title > .nx-avatar {
     width: 32px;
     height: 32px;
     font-size: 12px;

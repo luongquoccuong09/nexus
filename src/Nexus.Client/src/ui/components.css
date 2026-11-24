@@ -129,6 +129,12 @@
   border-radius: 10px;
   background: linear-gradient(135deg, var(--group-start), var(--group-end));
 }
+.nx-avatar.self {
+  border-radius: 10px;
+  background: var(--brand-100);
+  color: var(--badge-role-text);
+  border: 1px solid var(--border);
+}
 
 .nx-dot {
   width: 8px;

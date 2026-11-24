@@ -10,7 +10,20 @@ public enum ConversationKind
 {
     Dm,
     Group,
-    Channel
+    Channel,
+    Self
+}
+
+public static class ConversationKindExtensions
+{
+    public static ResourceKind ToResourceKind(this ConversationKind kind) => kind switch
+    {
+        ConversationKind.Dm => ResourceKind.Dm,
+        ConversationKind.Group => ResourceKind.GroupChat,
+        ConversationKind.Channel => ResourceKind.CommunityChannel,
+        ConversationKind.Self => ResourceKind.SelfChat,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unsupported conversation kind.")
+    };
 }
 
 public sealed class ConversationEntity
@@ -47,7 +60,15 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
 {
     public void Configure(EntityTypeBuilder<ConversationEntity> builder)
     {
-        builder.ToTable("conversations");
+        builder.ToTable("conversations", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_conversations_kind",
+                "kind IN ('Dm', 'Group', 'Channel', 'Self')");
+            table.HasCheckConstraint(
+                "ck_conversations_self_invariants",
+                "kind <> 'Self' OR (organization_id IS NULL AND community_id IS NULL AND dm_key = 'self:' || replace(created_by_user_id::text, '-', ''))");
+        });
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");

@@ -539,7 +539,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasIndex("OrganizationId", "UpdatedAt")
                         .HasDatabaseName("ix_conversations_org_updated");
 
-                    b.ToTable("conversations", (string)null);
+                    b.ToTable("conversations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_conversations_kind", "kind IN ('Dm', 'Group', 'Channel', 'Self')");
+
+                            t.HasCheckConstraint("ck_conversations_self_invariants", "kind <> 'Self' OR (organization_id IS NULL AND community_id IS NULL AND dm_key = 'self:' || replace(created_by_user_id::text, '-', ''))");
+                        });
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.ConversationMemberEntity", b =>

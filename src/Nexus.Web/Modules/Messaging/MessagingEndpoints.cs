@@ -123,8 +123,9 @@ public static class MessagingEndpoints
             }
         }
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        var resource = new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, IsBlocked: isBlocked);
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        var resource = new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, IsBlocked: isBlocked, TargetIsSelf: targetIsSelf);
         var allowed = conv is not null && authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, resource);
 
         if (!allowed)
@@ -216,8 +217,11 @@ public static class MessagingEndpoints
 
         db.Messages.Add(message);
         db.ConversationEvents.Add(evt);
-        await MentionOutbox.EnqueueAsync(db, authz, actor, resource, conversationId, null,
-            MentionOutbox.MessageKind, message.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
+        if (conv!.Kind != ConversationKind.Self)
+        {
+            await MentionOutbox.EnqueueAsync(db, authz, actor, resource, conversationId, null,
+                MentionOutbox.MessageKind, message.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
+        }
 
         try
         {
@@ -306,8 +310,9 @@ public static class MessagingEndpoints
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role)))
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf)))
         {
             return Results.Forbid();
         }
@@ -451,8 +456,9 @@ public static class MessagingEndpoints
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.DeltaSync, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role)))
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.DeltaSync, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf)))
         {
             return Results.Forbid();
         }
@@ -535,7 +541,9 @@ public static class MessagingEndpoints
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
-                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == db.ConversationOrganizationId),
+                db.Conversations.AsNoTracking().Where(c =>
+                    c.OrganizationId == db.ConversationOrganizationId &&
+                    (c.Kind != ConversationKind.Self || c.CreatedByUserId == actorId)),
                 m => m.ConversationId,
                 c => c.Id,
                 (m, c) => new
@@ -573,8 +581,9 @@ public static class MessagingEndpoints
         var member = await db.ConversationMembers.AsNoTracking()
             .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role)))
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf)))
         {
             return Results.Forbid();
         }

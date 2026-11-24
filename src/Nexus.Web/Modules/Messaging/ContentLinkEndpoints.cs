@@ -196,8 +196,9 @@ public static class ContentLinkEndpoints
             return Unavailable();
         }
 
-        var kind = conv.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        var resource = new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role);
+        var kind = conv.Kind.ToResourceKind();
+        var targetIsSelf = conv.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        var resource = new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf);
         if (!authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, resource))
         {
             return Unavailable();

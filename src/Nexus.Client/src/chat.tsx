@@ -1,7 +1,7 @@
-import { chatFetch as fetch, messagingHub, personalApiPath } from "./scope";
+import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, ChevronDown, ChevronRight, Download, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Download, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { renderSafeMarkdown } from './markdown';
 import { ChatJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
 import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
@@ -301,8 +301,10 @@ export function ChatWorkspace({
   const staging = useRef(new Set<string>());
   const discarded = useRef(new Set<string>());
 
-  // New group modal
+  // New group modal & Private self chat (M6.29)
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
+  const [openingSelfChat, setOpeningSelfChat] = useState(false);
+  const openingSelfChatRef = useRef(false);
   const [newGroupTitle, setNewGroupTitle] = useState('');
   const [newGroupSearch, setNewGroupSearch] = useState('');
   const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
@@ -1409,6 +1411,52 @@ export function ChatWorkspace({
     }
   }
 
+  async function handleOpenSelfChat() {
+    const existing = conversations.find(c => c.kind === 'self');
+    if (existing) {
+      if (rightDrawer === 'members') setRightDrawer('none');
+      onSelectConversation(existing.id);
+      requestAnimationFrame(() => composerRef.current?.focus());
+      return;
+    }
+    if (openingSelfChatRef.current) return;
+    openingSelfChatRef.current = true;
+    setOpeningSelfChat(true);
+    setError('');
+    try {
+      const res = await protectedRequest(personalApiPath('/api/conversations/self'), 'POST');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setError(typeof err.message === 'string' && err.message ? err.message : 'Unable to open Notes to self.');
+        return;
+      }
+      const data = await res.json();
+      const selfConv: ConversationListItem = {
+        id: data.id,
+        kind: 'self',
+        title: typeof data.title === 'string' && data.title ? data.title : 'Notes to self',
+        role: 'Owner',
+        nextSeq: typeof data.nextSeq === 'number' ? data.nextSeq : 0,
+        changeSeq: typeof data.changeSeq === 'number' ? data.changeSeq : 0,
+        lastReadSeq: typeof data.nextSeq === 'number' ? data.nextSeq : 0,
+        unreadCount: 0,
+        memberCount: 1,
+        updatedAt: new Date().toISOString(),
+        lastMessagePreview: null,
+        peer: null
+      };
+      setConversations(prev => (prev.some(c => c.id === selfConv.id) ? prev : [selfConv, ...prev]));
+      if (rightDrawer === 'members') setRightDrawer('none');
+      onSelectConversation(selfConv.id);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    } catch {
+      setError('Unable to open Notes to self.');
+    } finally {
+      openingSelfChatRef.current = false;
+      setOpeningSelfChat(false);
+    }
+  }
+
   async function handleCreateGroup(e: FormEvent) {
     e.preventDefault();
     const title = newGroupTitle.trim();
@@ -1550,7 +1598,14 @@ export function ChatWorkspace({
 
   const activeConv = conversations.find(c => c.id === selectedConversationId) ?? null;
   const activeId = activeConv?.id;
+  const isSelfConv = activeConv?.kind === 'self';
   const blockedPeer = activeConv?.peer?.isBlockedByMe ?? false;
+
+  useEffect(() => {
+    if (isSelfConv && rightDrawer === 'members') {
+      setRightDrawer('none');
+    }
+  }, [isSelfConv, rightDrawer]);
 
   useLayoutEffect(() => {
     const input = composerRef.current;
@@ -1583,9 +1638,10 @@ export function ChatWorkspace({
     return conversations.filter(c => {
       if (unreadOnly && c.unreadCount <= 0) return false;
       if (chatFilter === 'dm' && c.kind !== 'dm') return false;
-      if (chatFilter === 'group' && c.kind === 'dm') return false;
+      if (chatFilter === 'group' && c.kind !== 'group') return false;
       if (!q) return true;
       return c.title.toLowerCase().includes(q)
+        || (c.kind === 'self' && ('notes to self'.includes(q) || 'self'.includes(q)))
         || (c.peer?.username ?? '').toLowerCase().includes(q)
         || (c.lastMessagePreview?.bodyPreview ?? '').toLowerCase().includes(q);
     });
@@ -1631,10 +1687,12 @@ export function ChatWorkspace({
     });
   }, [nonHiddenConvs, sidebarOrg.itemByTargetId, sidebarOrg.sections]);
 
+  const visibleSelfConvs = useMemo(() => sortBySidebarOrder(ungroupedConvs.filter(c => c.kind === 'self')), [sortBySidebarOrder, ungroupedConvs]);
   const visibleDmConvs = useMemo(() => sortBySidebarOrder(ungroupedConvs.filter(c => c.kind === 'dm')), [sortBySidebarOrder, ungroupedConvs]);
-  const visibleGroupConvs = useMemo(() => sortBySidebarOrder(ungroupedConvs.filter(c => c.kind !== 'dm')), [sortBySidebarOrder, ungroupedConvs]);
+  const visibleGroupConvs = useMemo(() => sortBySidebarOrder(ungroupedConvs.filter(c => c.kind !== 'dm' && c.kind !== 'self')), [sortBySidebarOrder, ungroupedConvs]);
   const visibleConvCount = favoriteConvs.length
     + customSectionGroups.reduce((sum, g) => sum + g.items.length, 0)
+    + visibleSelfConvs.length
     + visibleDmConvs.length
     + visibleGroupConvs.length
     + hiddenConvs.length;
@@ -1642,6 +1700,7 @@ export function ChatWorkspace({
   const renderConvItem = (c: ConversationListItem, groupList: ConversationListItem[]) => {
     const isActive = c.id === selectedConversationId;
     const isDm = c.kind === 'dm';
+    const isSelf = c.kind === 'self';
     const pref = sidebarOrg.itemByTargetId.get(c.id);
     const groupIds = groupList.map(item => item.id);
     const idx = groupIds.indexOf(c.id);
@@ -1650,10 +1709,12 @@ export function ChatWorkspace({
       ? resolveUserAvailability(c.peer.id, c.peer, availabilityMap, nowMs)
       : null;
     const previewText = preview
-      ? `${preview.senderDisplayName}: ${preview.bodyPreview}`
-      : isDm
-        ? (peerStatus ? `${peerStatus.label}${peerStatus.expiryText ? ` · ${peerStatus.expiryText}` : ''}` : `@${c.peer?.username ?? 'direct'}`)
-        : `${c.memberCount} ${c.memberCount === 1 ? 'member' : 'members'}`;
+      ? (isSelf ? preview.bodyPreview : `${preview.senderDisplayName}: ${preview.bodyPreview}`)
+      : isSelf
+        ? 'Private notes and files'
+        : isDm
+          ? (peerStatus ? `${peerStatus.label}${peerStatus.expiryText ? ` · ${peerStatus.expiryText}` : ''}` : `@${c.peer?.username ?? 'direct'}`)
+          : `${c.memberCount} ${c.memberCount === 1 ? 'member' : 'members'}`;
 
     return (
       <div
@@ -1685,17 +1746,24 @@ export function ChatWorkspace({
           className={`nx-conv-item ${isActive ? 'active' : ''}`}
           onClick={() => onSelectConversation(c.id)}
         >
-          <Avatar
-            displayName={c.title}
-            avatarUrl={isDm ? c.peer?.avatarUrl : null}
-            variant={isDm ? 'user' : 'group'}
-            presence={peerStatus?.dotTone}
-          />
+          {isSelf ? (
+            <span className="nx-avatar self" aria-hidden="true">
+              <Bookmark size={16} />
+            </span>
+          ) : (
+            <Avatar
+              displayName={c.title}
+              avatarUrl={isDm ? c.peer?.avatarUrl : null}
+              variant={isDm ? 'user' : 'group'}
+              presence={peerStatus?.dotTone}
+            />
+          )}
           <div className="nx-conv-meta">
             <div className="nx-conv-top">
               <span className="nx-conv-name">
                 {pref?.isFavorite && <Star size={12} aria-label="Favorite" />}
                 <span>{c.title}</span>
+                {isSelf && <Badge variant="role">Private</Badge>}
               </span>
               {c.unreadCount > 0 && <span className="nx-unread-pill">{c.unreadCount > 99 ? '99+' : c.unreadCount}</span>}
             </div>
@@ -1731,6 +1799,9 @@ export function ChatWorkspace({
             </Button>
             <Button size="sm" onClick={() => setShowNewGroupModal(true)}>
               <Plus size={14} aria-hidden="true" /> Create group chat
+            </Button>
+            <Button size="sm" disabled={openingSelfChat} onClick={() => void handleOpenSelfChat()}>
+              <Bookmark size={14} aria-hidden="true" /> Notes to self
             </Button>
             <Button
               variant="ghost"
@@ -1826,6 +1897,12 @@ export function ChatWorkspace({
                   )}
                 </div>
               ))}
+              {visibleSelfConvs.length > 0 && (
+                <>
+                  <div className="nx-section-label">Personal</div>
+                  {visibleSelfConvs.map(c => renderConvItem(c, visibleSelfConvs))}
+                </>
+              )}
               {visibleDmConvs.length > 0 && (
                 <>
                   <div className="nx-section-label">Direct messages ({visibleDmConvs.length})</div>
@@ -1945,7 +2022,21 @@ export function ChatWorkspace({
                       </div>
                     </button>
                   );
-                })() : (
+                })() : isSelfConv ? (
+                  <>
+                    <span className="nx-avatar self" aria-hidden="true">
+                      <Bookmark size={16} />
+                    </span>
+                    <div className="nx-stage-identity">
+                      <h3>
+                        <span className="nx-stage-name">{activeConv.title}</span>
+                      </h3>
+                      <div className="nx-stage-subtitle">
+                        <span className="nx-stage-status-label">Private notes and files · Only visible to you</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
                   <>
                     <Avatar
                       displayName={activeConv.title}
@@ -1967,7 +2058,9 @@ export function ChatWorkspace({
               </div>
 
               <div className="nx-inline-actions nx-stage-actions">
-                <ConversationNotificationButton key={activeConv.id} conversationId={activeConv.id} />
+                {!isSelfConv && (
+                  <ConversationNotificationButton key={activeConv.id} conversationId={activeConv.id} />
+                )}
                 <Button
                   variant={rightDrawer === 'files' ? 'primary' : 'default'}
                   size="sm"
@@ -2047,7 +2140,7 @@ export function ChatWorkspace({
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : !isSelfConv ? (
                   <Button
                     variant={rightDrawer === 'members' ? 'primary' : 'default'}
                     size="sm"
@@ -2061,7 +2154,7 @@ export function ChatWorkspace({
                     <Users size={15} aria-hidden="true" />
                     <span className="nx-stage-action-label">Members ({activeConv.memberCount})</span>
                   </Button>
-                )}
+                ) : null}
               </div>
             </header>
 
@@ -2075,8 +2168,12 @@ export function ChatWorkspace({
 
               {activeMessages.length === 0 && visibleOutgoing.length === 0 && (
                 <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', padding: '32px 16px' }}>
-                  <MessageSquare size={28} aria-hidden="true" />
-                  <p style={{ margin: '8px 0 0' }}>No messages yet. Say hello!</p>
+                  {isSelfConv ? <Bookmark size={28} aria-hidden="true" /> : <MessageSquare size={28} aria-hidden="true" />}
+                  <p style={{ margin: '8px 0 0' }}>
+                    {isSelfConv
+                      ? 'Save private notes, links, and files here. Only visible to you.'
+                      : 'No messages yet. Say hello!'}
+                  </p>
                 </div>
               )}
 
@@ -2337,7 +2434,17 @@ export function ChatWorkspace({
                   ref={composerRef}
                   rows={1}
                   aria-label="Message"
-                  placeholder={blockedPeer ? undefined : loadingDraft ? 'Loading draft…' : uploadingFiles ? 'Uploading…' : 'Write a message…'}
+                  placeholder={
+                    blockedPeer
+                      ? undefined
+                      : loadingDraft
+                        ? 'Loading draft…'
+                        : uploadingFiles
+                          ? 'Uploading…'
+                          : isSelfConv
+                            ? 'Write a note to yourself…'
+                            : 'Write a message…'
+                  }
                   disabled={blockedPeer || loadingDraft}
                   value={composer}
                   onCompositionStart={() => { compositionActive.current = true; }}
@@ -2368,7 +2475,7 @@ export function ChatWorkspace({
       </section>
 
       {/* Group Members Drawer */}
-      {activeConv && activeConv.kind !== 'dm' && rightDrawer === 'members' && (
+      {activeConv && activeConv.kind !== 'dm' && activeConv.kind !== 'self' && rightDrawer === 'members' && (
         <aside className="nx-drawer" aria-label="Group members">
           <div className="nx-drawer-head">
             <strong ref={groupMembersHeading} tabIndex={-1}>{loadingMembers ? 'Members' : `Members (${groupMembers.length})`}</strong>

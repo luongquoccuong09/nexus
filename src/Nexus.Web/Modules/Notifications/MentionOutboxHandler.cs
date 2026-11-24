@@ -106,6 +106,11 @@ internal sealed class MentionOutboxHandler(
                     Visibility: community.Visibility, PostingPolicy: conversation.PostingPolicy))).ToArray();
         }
 
+        if (conversation.Kind == ConversationKind.Self)
+        {
+            return [];
+        }
+
         if (source.Seq is not { } seq)
         {
             return [];

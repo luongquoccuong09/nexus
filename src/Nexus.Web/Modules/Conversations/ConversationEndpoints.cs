@@ -20,12 +20,19 @@ public static class ConversationEndpoints
     public sealed record TransferOwnershipRequest(Guid NewOwnerUserId);
     public sealed record SetAdminRoleRequest(bool IsAdmin);
 
+    public const string SelfChatDefaultTitle = "Notes to self";
+
     public static IEndpointRouteBuilder MapConversationEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
         var group = app.MapGroup(prefix + "/conversations");
 
         group.MapGet("/", HandleListConversationsAsync);
         group.MapPost("/dm", HandleOpenDmAsync);
+        if (string.Equals(prefix, OrganizationScope.PersonalApi, StringComparison.Ordinal))
+        {
+            group.MapPost("/self", HandleOpenSelfChatAsync)
+                .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
+        }
         group.MapPost("/groups", HandleCreateGroupAsync)
             .AddEndpointFilter<IdempotencyEndpointFilter>();
 
@@ -38,6 +45,8 @@ public static class ConversationEndpoints
 
         return app;
     }
+
+    public static string BuildSelfKey(Guid userId) => $"self:{userId:N}";
 
     public static string BuildDmKey(Guid a, Guid b)
     {
@@ -82,7 +91,10 @@ public static class ConversationEndpoints
             .AsNoTracking()
             .Where(m => m.UserId == actorId && m.LeftAt == null)
             .Join(
-                db.Conversations.AsNoTracking().Where(c => c.OrganizationId == db.ConversationOrganizationId && c.Kind != ConversationKind.Channel),
+                db.Conversations.AsNoTracking().Where(c =>
+                    c.OrganizationId == db.ConversationOrganizationId &&
+                    c.Kind != ConversationKind.Channel &&
+                    (c.Kind != ConversationKind.Self || c.CreatedByUserId == actorId)),
                 m => m.ConversationId,
                 c => c.Id,
                 (m, c) => new { Member = m, Conv = c });
@@ -220,7 +232,11 @@ public static class ConversationEndpoints
             {
                 id = x.Conv.Id,
                 kind = x.Conv.Kind.ToString().ToLowerInvariant(),
-                title = x.Conv.Kind == ConversationKind.Dm ? (peer?.DisplayName ?? "Direct Message") : (x.Conv.Title ?? "Group"),
+                title = x.Conv.Kind == ConversationKind.Self
+                    ? (x.Conv.Title ?? SelfChatDefaultTitle)
+                    : x.Conv.Kind == ConversationKind.Dm
+                        ? (peer?.DisplayName ?? "Direct Message")
+                        : (x.Conv.Title ?? "Group"),
                 role = x.Member.Role.ToString(),
                 nextSeq = x.Conv.NextSeq,
                 changeSeq = x.Conv.ChangeSeq,
@@ -389,6 +405,114 @@ public static class ConversationEndpoints
         });
     }
 
+    private static async Task<IResult> HandleOpenSelfChatAsync(
+        HttpContext ctx,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        MessagingFanoutService fanout,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        if (!db.IsPersonalScope)
+        {
+            return Results.Forbid();
+        }
+
+        var actor = db.OrganizationActor ?? await db.FindPersonalActorAsync(actorId, ct);
+        if (actor is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var allowed = authz.Can(
+            actor.ToActorContext(),
+            ResourceAction.ConversationRead,
+            new ResourceContext(
+                ResourceKind.SelfChat,
+                Guid.Empty,
+                MembershipRole: ResourceRole.Owner,
+                TargetIsSelf: true));
+
+        if (!allowed)
+        {
+            return Results.Forbid();
+        }
+
+        var selfKey = BuildSelfKey(actorId);
+        var existing = await db.Conversations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(c => c.OrganizationId == null && c.DmKey == selfKey && c.Kind == ConversationKind.Self, ct);
+
+        if (existing is not null)
+        {
+            return Results.Ok(new
+            {
+                id = existing.Id,
+                kind = "self",
+                title = existing.Title ?? SelfChatDefaultTitle,
+                nextSeq = existing.NextSeq,
+                changeSeq = existing.ChangeSeq,
+                created = false
+            });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var newConvId = Guid.CreateVersion7();
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        var inserted = await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO conversations (id, organization_id, kind, community_id, is_community_main_feed, posting_policy, title, dm_key, next_seq, change_seq, min_available_change_seq, created_by_user_id, created_at, updated_at)
+            VALUES ({newConvId}, {(Guid?)null}, {"Self"}, NULL, {false}, {"Members"}, {SelfChatDefaultTitle}, {selfKey}, {0L}, {1L}, {1L}, {actorId}, {now}, {now})
+            ON CONFLICT (organization_id, dm_key) WHERE dm_key IS NOT NULL DO NOTHING
+            """, ct);
+
+        var conv = await db.Conversations
+            .SingleAsync(c => c.OrganizationId == null && c.DmKey == selfKey && c.Kind == ConversationKind.Self, ct);
+
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO conversation_members (conversation_id, user_id, role, last_read_seq, visible_from_seq, muted, joined_at, left_at)
+            VALUES ({conv.Id}, {actorId}, {"Owner"}, {0L}, {0L}, {false}, {now}, NULL)
+            ON CONFLICT (conversation_id, user_id) DO NOTHING
+            """, ct);
+
+        if (inserted > 0)
+        {
+            db.ConversationEvents.Add(new ConversationEventEntity
+            {
+                Id = Guid.CreateVersion7(),
+                ConversationId = conv.Id,
+                ChangeSeq = 1,
+                EventType = "conversation.created",
+                ActorUserId = actorId,
+                PayloadJson = JsonSerializer.Serialize(new { kind = "self", title = conv.Title ?? SelfChatDefaultTitle }),
+                CreatedAt = now
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+
+        if (inserted > 0)
+        {
+            await fanout.NotifyConversationChangedAsync(conv.Id, conv.ChangeSeq, ConversationKind.Self, null, null, ct);
+        }
+
+        return Results.Ok(new
+        {
+            id = conv.Id,
+            kind = "self",
+            title = conv.Title ?? SelfChatDefaultTitle,
+            nextSeq = conv.NextSeq,
+            changeSeq = conv.ChangeSeq,
+            created = inserted > 0
+        });
+    }
+
     private static async Task<IResult> HandleCreateGroupAsync(
         HttpContext ctx,
         CreateGroupRequest request,
@@ -517,8 +641,9 @@ public static class ConversationEndpoints
         var conv = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
         var myMembership = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-        if (conv is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: myMembership?.Role)))
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+        if (conv is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: myMembership?.Role, TargetIsSelf: targetIsSelf)))
         {
             return Results.Forbid();
         }

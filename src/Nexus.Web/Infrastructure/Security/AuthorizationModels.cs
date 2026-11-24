@@ -35,6 +35,7 @@ public enum ResourceKind
     AuditLog,
     Dm,
     GroupChat,
+    SelfChat,
     Community,
     CommunityChannel
 }

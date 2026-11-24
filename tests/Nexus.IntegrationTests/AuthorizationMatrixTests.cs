@@ -103,6 +103,22 @@ public sealed class AuthorizationMatrixTests
         yield return ["HRAdmin can view HR-scoped audit log", VerifiedHrAdmin, ResourceAction.AdminViewAuditLog, new ResourceContext(ResourceKind.AuditLog, OrgA, IsHrAuditScope: true), true];
         yield return ["HRAdmin denied non-HR audit log", VerifiedHrAdmin, ResourceAction.AdminViewAuditLog, new ResourceContext(ResourceKind.AuditLog, OrgA, IsHrAuditScope: false), false];
 
+        // --- Private Self Chat (M6.29) ---
+        var personalUser = new ActorContext(Guid.NewGuid(), Guid.Empty, AccountStatus.Active, TrustLevel.Unverified, OrgRole.Member);
+        var disabledPersonalUser = new ActorContext(Guid.NewGuid(), Guid.Empty, AccountStatus.Disabled, TrustLevel.Unverified, OrgRole.Member);
+        yield return ["Self chat owner can read self chat", personalUser, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), true];
+        yield return ["Self chat owner can send messages", personalUser, ResourceAction.MessageSend, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), true];
+        yield return ["Self chat owner can upload files", personalUser, ResourceAction.FileUpload, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), true];
+        yield return ["Self chat owner can download files", personalUser, ResourceAction.FileDownload, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), true];
+        yield return ["Self chat owner can delta sync", personalUser, ResourceAction.DeltaSync, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), true];
+        yield return ["Self chat non-owner denied read", personalUser, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: false), false];
+        yield return ["Self chat Member role denied read", personalUser, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Member, TargetIsSelf: true), false];
+        yield return ["Self chat in org scope denied read", VerifiedSystemAdmin, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.SelfChat, OrgA, ResourceRole.Owner, TargetIsSelf: true), false];
+        yield return ["Disabled user denied self chat", disabledPersonalUser, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
+        yield return ["Self chat owner denied GroupAddMember", personalUser, ResourceAction.GroupAddMember, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
+        yield return ["Self chat owner denied GroupLeave", personalUser, ResourceAction.GroupLeave, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
+        yield return ["Self chat owner denied MentionChannelOrAll", personalUser, ResourceAction.MentionChannelOrAll, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
+
         // --- Default deny on unmapped / mismatched combinations ---
         yield return ["Default deny: unknown action enum value", VerifiedSystemAdmin, (ResourceAction)9999, new ResourceContext(ResourceKind.Organization, OrgA), false];
         yield return ["Default deny: AdminImportDirectory against Dm resource", VerifiedHrAdmin, ResourceAction.AdminImportDirectory, new ResourceContext(ResourceKind.Dm, OrgA, ResourceRole.Owner), false];

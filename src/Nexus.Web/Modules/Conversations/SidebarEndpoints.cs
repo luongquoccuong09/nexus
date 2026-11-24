@@ -100,6 +100,7 @@ public static class SidebarEndpoints
                     db.Conversations.Any(c =>
                         c.Id == m.ConversationId &&
                         c.Kind != ConversationKind.Channel &&
+                        (c.Kind != ConversationKind.Self || c.CreatedByUserId == actorId) &&
                         (c.OrganizationId == null ||
                          db.OrganizationMemberships.Any(om =>
                              om.OrganizationId == c.OrganizationId &&
@@ -447,8 +448,9 @@ public static class SidebarEndpoints
                 : await db.FindPersonalActorAsync(actorId, ct);
             if (actor is null) return false;
 
-            var kind = conv.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
-            return authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role));
+            var kind = conv.Kind.ToResourceKind();
+            var targetIsSelf = conv.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
+            return authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf));
         }
 
         var community = await db.Communities.AsNoTracking()

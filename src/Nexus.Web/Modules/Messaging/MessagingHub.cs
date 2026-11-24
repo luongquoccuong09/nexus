@@ -133,11 +133,12 @@ public sealed class MessagingHub(
             .Where(m => m.ConversationId == conversationId && m.UserId == userId && m.LeftAt == null)
             .SingleOrDefaultAsync(Context.ConnectionAborted);
 
-        var kind = conv?.Kind == ConversationKind.Dm ? ResourceKind.Dm : ResourceKind.GroupChat;
+        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
+        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == userId;
         var allowed = conv is not null && authz.Can(
             actor.ToActorContext(),
             ResourceAction.MessageSend,
-            new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role));
+            new ResourceContext(kind, actor.OrganizationId, MembershipRole: member?.Role, TargetIsSelf: targetIsSelf));
 
         if (!allowed)
         {

@@ -201,6 +201,15 @@ public sealed class MessagingFanoutService(
             return await ResolveCommunityRecipientsAsync(communityId.Value, ct);
         }
 
+        if (kind == ConversationKind.Self)
+        {
+            var ownerId = await db.Conversations.AsNoTracking()
+                .Where(c => c.Id == conversationId && c.OrganizationId == null && c.Kind == ConversationKind.Self)
+                .Join(db.Users.AsNoTracking().Where(u => u.Status == AccountStatus.Active), c => c.CreatedByUserId, u => u.Id, (c, _) => c.CreatedByUserId)
+                .SingleOrDefaultAsync(ct);
+            return ownerId == Guid.Empty ? [] : [ownerId];
+        }
+
         return await db.ConversationMembers
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId && m.LeftAt == null)

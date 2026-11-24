@@ -154,6 +154,10 @@ public sealed class NexusAuthorizationService : IAuthorizationService
         return resource.Kind switch
         {
             ResourceKind.Dm or ResourceKind.GroupChat => true,
+            ResourceKind.SelfChat =>
+                resource.OrganizationId == Guid.Empty &&
+                resource.MembershipRole == ResourceRole.Owner &&
+                resource.TargetIsSelf,
             ResourceKind.Community or ResourceKind.CommunityChannel =>
                 !resource.IsOfficial || actor.TrustLevel == TrustLevel.Verified,
             _ => false
