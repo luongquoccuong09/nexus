@@ -20,6 +20,11 @@ public sealed class NexusAuthorizationService : IAuthorizationService
 
         return action switch
         {
+            ResourceAction.MonitorRead => resource.Kind == ResourceKind.Monitor &&
+                resource.OrganizationId == Guid.Empty && actor.CanMonitor,
+            ResourceAction.MonitorExecute => resource.Kind == ResourceKind.Monitor &&
+                resource.OrganizationId == Guid.Empty && actor.CanMonitor && actor.CanRunLoadTests,
+
             ResourceAction.DirectorySearch =>
                 resource.Kind == ResourceKind.Organization,
 

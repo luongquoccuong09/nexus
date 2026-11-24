@@ -55,6 +55,7 @@ Feature modules inside `src/Nexus.Web/Modules/`:
 | **Files** | `src/Nexus.Web/Modules/Files/` | Two-stage uploads, magic-byte checks, signed/streamed downloads, quotas, ClamAV quarantine/scan | M3 |
 | **Notifications** | `src/Nexus.Web/Modules/Notifications/` | Transactional outbox worker, mentions, notification center, mute/quiet hours, Web Push (VAPID), email digest | M4 |
 | **Admin** | `src/Nexus.Web/Modules/Admin/` | Account/role management, audit log, emergency ownership transfer, retention/break-glass, aggregate metrics | M7 |
+| **Monitor** | `src/Nexus.Web/Modules/Monitor/` | Deployment-scoped telemetry, run coordination, audit events and aggregate results. The independent `src/Nexus.LoadRunner/` owns sandbox provisioning and real workload traffic. | M8.2, M8.5 |
 
 ## 2. Current runtime entry points (M0.1 / M0.3 / M0.4 / M0.6)
 

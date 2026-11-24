@@ -1,0 +1,88 @@
+# Started only by Nexus.LoadRunner with a run-specific project name.
+services:
+  sandbox-db:
+    image: postgres:17-alpine
+    cpus: 1.0
+    mem_limit: 768m
+    environment:
+      POSTGRES_DB: nexus_sandbox
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: nexus_sandbox_postgres_local
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./postgres/init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nexus_sandbox"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    image: ${NEXUS_SANDBOX_IMAGE:?Set the approved Nexus sandbox image}
+    cpus: 1.0
+    mem_limit: 768m
+    depends_on:
+      sandbox-db:
+        condition: service_healthy
+    environment:
+      NexusDatabase__RequireTls: "false"
+      ConnectionStrings__Migration: "Host=sandbox-db;Port=5432;Database=nexus_sandbox;Username=nexus_migrator;Password=nexus_migrator_dev_only"
+    command: ["--migrate"]
+
+  seed:
+    image: ${NEXUS_SANDBOX_IMAGE:?Set the approved Nexus sandbox image}
+    cpus: 2.0
+    mem_limit: 768m
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      NexusSandbox__Enabled: "true"
+      NexusSandbox__Users: ${NEXUS_SANDBOX_USERS:-1}
+      NexusSandbox__Password: ${NEXUS_SANDBOX_PASSWORD:-unused}
+      NexusDatabase__RequireTls: "false"
+      ConnectionStrings__Runtime: "Host=sandbox-db;Port=5432;Database=nexus_sandbox;Username=nexus_runtime;Password=nexus_runtime_dev_only"
+      NexusStorage__Provider: Local
+    command: ["--seed-monitor-sandbox"]
+
+  web:
+    image: ${NEXUS_SANDBOX_IMAGE:?Set the approved Nexus sandbox image}
+    cpus: 2.0
+    mem_limit: 768m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      NexusDatabase__RequireTls: "false"
+      ConnectionStrings__Runtime: "Host=sandbox-db;Port=5432;Database=nexus_sandbox;Username=nexus_runtime;Password=nexus_runtime_dev_only;Maximum Pool Size=60"
+      NexusStorage__Provider: Local
+      NexusStorage__LocalRootPath: /app/App_Data/storage
+      NexusSecurity__RateLimitPermitsPerMinute: ${NEXUS_SANDBOX_RATE:-120}
+      NexusIdentity__LoginRateLimitPerMinutePerIp: ${NEXUS_SANDBOX_LOGIN_RATE:-20}
+      NexusBuild__Commit: ${NEXUS_SANDBOX_COMMIT:-}
+    volumes:
+      - storage:/app/App_Data/storage
+
+  ingress:
+    image: ${NEXUS_SANDBOX_IMAGE:?Set the approved Nexus sandbox image}
+    command: ["--monitor-sandbox-ingress"]
+    cpus: 0.5
+    mem_limit: 256m
+    cap_drop: [ALL]
+    ports:
+      - "127.0.0.1::8080"
+    environment:
+      NexusSandbox__Ingress: "true"
+    depends_on:
+      - web
+    networks:
+      - default
+      - edge
+
+networks:
+  default:
+    internal: true
+  edge: {}
+
+volumes:
+  database:
+  storage:

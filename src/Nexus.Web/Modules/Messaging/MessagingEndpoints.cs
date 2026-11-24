@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Conversations;
@@ -274,6 +275,7 @@ public static class MessagingEndpoints
             throw;
         }
 
+        NexusMeters.MessageCreated();
         // Fan out lightweight (conversationId, changeSeq) signal to user:{id} groups after commit (M2.4).
         var committedAt = Stopwatch.GetTimestamp();
         if (conv is not null)
@@ -286,6 +288,7 @@ public static class MessagingEndpoints
         }
         var commitMs = Stopwatch.GetElapsedTime(requestStarted, committedAt).TotalMilliseconds;
         var fanoutMs = Stopwatch.GetElapsedTime(committedAt).TotalMilliseconds;
+        NexusMeters.RecordFanout(fanoutMs);
         ctx.Response.Headers.Append("Server-Timing", FormattableString.Invariant($"message_commit;dur={commitMs:F1}, message_fanout;dur={fanoutMs:F1}"));
 
         return Results.Created($"{OrganizationScope.ApiPath(db.ConversationOrganizationId)}/conversations/{conversationId}/messages/{message.Id}", dto);

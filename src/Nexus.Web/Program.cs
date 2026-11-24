@@ -1,6 +1,7 @@
 using Nexus.Web;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Monitor;
 
 if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -38,6 +39,19 @@ if (args.Contains("--issue-account-reset", StringComparer.OrdinalIgnoreCase))
     var username = recoveryApp.Configuration["AccountRecovery:Username"]
         ?? throw new InvalidOperationException("AccountRecovery:Username is required.");
     Console.WriteLine(await IdentityBootstrapService.IssueAccountRecoveryAsync(recoveryApp.Services, username));
+    return;
+}
+
+if (args.Contains("--monitor-sandbox-ingress", StringComparer.OrdinalIgnoreCase))
+{
+    await SandboxIngress.RunAsync();
+    return;
+}
+
+if (args.Contains("--seed-monitor-sandbox", StringComparer.OrdinalIgnoreCase))
+{
+    await using var sandboxApp = NexusHost.Build(args);
+    await SandboxSeeder.SeedAsync(sandboxApp);
     return;
 }
 

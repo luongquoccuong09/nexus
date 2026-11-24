@@ -9,6 +9,7 @@ namespace Nexus.Web.Infrastructure.Security;
 /// </summary>
 public interface IUserConnectionRegistry
 {
+    int ActiveConnectionCount { get; }
     void Register(Guid userId, HubCallerContext callerContext);
     void Unregister(Guid userId, string connectionId);
     IReadOnlyList<string> GetUserConnectionIds(Guid userId);
@@ -19,6 +20,8 @@ public interface IUserConnectionRegistry
 public sealed class InMemoryUserConnectionRegistry : IUserConnectionRegistry
 {
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, HubCallerContext>> _connections = new();
+
+    public int ActiveConnectionCount => _connections.Values.Sum(connections => connections.Count);
 
     public void Register(Guid userId, HubCallerContext callerContext)
     {

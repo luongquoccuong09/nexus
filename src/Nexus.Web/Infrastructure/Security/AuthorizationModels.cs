@@ -37,7 +37,8 @@ public enum ResourceKind
     GroupChat,
     SelfChat,
     Community,
-    CommunityChannel
+    CommunityChannel,
+    Monitor
 }
 
 public enum Visibility
@@ -84,7 +85,9 @@ public enum ResourceAction
     AdminDisableOrEnableAccount,
     AdminManageRoles,
     AdminViewAuditLog,
-    ManageOwnBlockList
+    ManageOwnBlockList,
+    MonitorRead,
+    MonitorExecute
 }
 
 public sealed record ActorContext(
@@ -92,7 +95,11 @@ public sealed record ActorContext(
     Guid OrganizationId,
     AccountStatus Status,
     TrustLevel TrustLevel,
-    OrgRole OrgRole = OrgRole.Member);
+    OrgRole OrgRole = OrgRole.Member)
+{
+    public bool CanMonitor { get; init; }
+    public bool CanRunLoadTests { get; init; }
+}
 
 public sealed record ResourceContext(
     ResourceKind Kind,

@@ -1399,6 +1399,98 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("post_reactions", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Monitor.MonitorAudit", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "OccurredAt");
+
+                    b.ToTable("monitor_audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Monitor.MonitorRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool?>("Cleaned")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Configuration")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("Generation")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("HeartbeatAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Latest")
+                        .HasColumnType("jsonb");
+
+                    b.Property<uint>("Revision")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<bool>("StopRequested")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Active")
+                        .IsUnique()
+                        .HasDatabaseName("ux_monitor_one_active")
+                        .HasFilter("\"Active\" = true");
+
+                    b.HasIndex("CreatedAt", "Id");
+
+                    b.ToTable("monitor_runs", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Notifications.ConversationNotificationPreference", b =>
                 {
                     b.Property<Guid>("ConversationId")

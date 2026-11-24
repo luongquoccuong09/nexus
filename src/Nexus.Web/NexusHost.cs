@@ -8,6 +8,7 @@ using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
+using Nexus.Web.Modules.Monitor;
 using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
@@ -25,6 +26,7 @@ public static class NexusHost
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.AddNexusObservability(additionalLogSink);
+        builder.AddMonitor();
         builder.Services.AddNexusSecurityDefaults(builder.Configuration, builder.Environment.IsDevelopment());
         builder.Services.AddNexusDatabase(builder.Configuration);
         builder.Services.AddNexusStorage(builder.Configuration);
@@ -77,6 +79,7 @@ public static class NexusHost
         app.UseMiddleware<OrganizationScope>();
 
         app.MapNexusOperationalEndpoints();
+        app.MapMonitor();
         app.MapIdentityEndpoints();
         app.MapContentLinkEndpoints();
         app.MapNotificationEndpoints();

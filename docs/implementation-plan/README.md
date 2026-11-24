@@ -15,6 +15,7 @@ This directory holds the master [`ROADMAP.md`](ROADMAP.md) plus milestone-scoped
 | **M5 — Communities & Channels** | [`m5-communities/`](m5-communities/) | [`PLAN-m5-communities.md`](m5-communities/PLAN-m5-communities.md)<br>[`HANDOFF-m5.md`](m5-communities/HANDOFF-m5.md) | **Done** on `develop` (`M5.0`–`M5.6` Teams Communities hierarchy per P0-D04 verified with Testcontainers PostgreSQL 17) |
 | **M6 — Collaboration UX** | [`m6-collaboration-ux/`](m6-collaboration-ux/) | [`PLAN-m6-collaboration-ux.md`](m6-collaboration-ux/PLAN-m6-collaboration-ux.md)<br>[`HANDOFF-m6-collaboration-ux.md`](m6-collaboration-ux/HANDOFF-m6-collaboration-ux.md) | M6.16, M6.17, and M6.20–M6.22 verified. M6.18 and M6.19 await native browser checks. M6.23–M6.34 open. |
 | **M6 — Calendar & Meetings** | [`m6-calendar-meetings/`](m6-calendar-meetings/) | [`PLAN-m6-calendar-meetings.md`](m6-calendar-meetings/PLAN-m6-calendar-meetings.md) | Planned (`M6.10`–`M6.15`, `M6.35`–`M6.39`). Start with M6.10 component evaluation. |
+| **M8 — Hardening & IT gate** | [`m8-hardening/`](m8-hardening/) | [`Monitor sandbox runbook`](m8-hardening/RUNBOOK-monitor-sandbox.md) · [`Monitor handoff`](m8-hardening/HANDOFF-monitor.md) | Self-service sandbox and monitoring in local verification. Production alerting and capacity gates remain open. |
 
 ## Management rules
 

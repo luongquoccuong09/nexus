@@ -20,9 +20,10 @@ public static class HealthEndpoints
             ResponseWriter = WriteHealthJsonAsync
         }).AllowAnonymous();
 
-        app.MapGet("/api/version", () => new
+        app.MapGet("/api/version", (IConfiguration config) => new
         {
-            version = typeof(NexusHost).Assembly.GetName().Version!.ToString(3)
+            version = typeof(NexusHost).Assembly.GetName().Version!.ToString(3),
+            commit = config["NexusBuild:Commit"] is { Length: 40 } sha && sha.All(Uri.IsHexDigit) ? sha : null
         }).AllowAnonymous();
 
         return app;

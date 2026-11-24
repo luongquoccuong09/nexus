@@ -2,7 +2,7 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
+import { Activity, Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
@@ -38,6 +38,7 @@ const ActivityWorkspace = lazy(() =>
   import('./activity').then(m => ({ default: m.ActivityWorkspace }))
 );
 const CommunitiesWorkspace = lazy(() => import('./communities'));
+const MonitorWorkspace = lazy(() => import('./monitor/MonitorWorkspace'));
 const BlockedUsersSettings = lazy(() =>
   import('./blockedUsers').then(m => ({ default: m.BlockedUsersSettings }))
 );
@@ -62,6 +63,7 @@ interface UserSummary {
   avatarUrl?: string | null;
   availability?: AvailabilityDto;
   suppressChime?: boolean;
+  canViewMonitor?: boolean;
 }
 
 interface DirectoryProfile {
@@ -205,12 +207,16 @@ function App() {
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
   const loginUsernameRef = useRef<HTMLInputElement | null>(null);
 
-  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'communities' | 'directory' | 'security' | 'hr'>(() => {
+  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'communities' | 'directory' | 'security' | 'hr' | 'monitor'>(() => {
     if (personalContactLink) return 'directory';
     if (initialOrganizationId) return 'communities';
     const view = new URLSearchParams(window.location.search).get('view');
     return view === 'security' || view === 'activity' ? view : 'chat';
   });
+  const hideMonitor = useCallback(() => {
+    setUser(current => current ? { ...current, canViewMonitor: false } : current);
+    setWorkspaceTab('chat');
+  }, []);
   const [communitiesVisited, setCommunitiesVisited] = useState(() => workspaceTab === 'communities');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -1048,6 +1054,7 @@ function App() {
     workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'People' :
     workspaceTab === 'security' ? 'Profile & security' :
+    workspaceTab === 'monitor' ? 'Monitor' :
     'HR import';
 
   return (
@@ -1115,6 +1122,14 @@ function App() {
             <Shield size={20} aria-hidden="true" />
             <span>Profile &amp; security</span>
           </button>
+
+          {user.canViewMonitor && (
+            <button type="button" className={`nx-rail-btn ${workspaceTab === 'monitor' ? 'active' : ''}`}
+              aria-current={workspaceTab === 'monitor' ? 'page' : undefined} onClick={() => setWorkspaceTab('monitor')}>
+              <Activity size={20} aria-hidden="true" />
+              <span>Monitor</span>
+            </button>
+          )}
 
           {hrOrganizations.length > 0 && (
             <button
@@ -1209,6 +1224,11 @@ function App() {
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         <main className="nx-main-area">
+          {workspaceTab === 'monitor' && user.canViewMonitor && (
+            <Suspense fallback={<div role="status">Loading Monitor…</div>}>
+              <MonitorWorkspace onDenied={hideMonitor} />
+            </Suspense>
+          )}
           {workspaceTab === 'activity' && (
             <Suspense fallback={<div className="nx-empty-side" role="status">Loading Activity…</div>}>
               <ActivityWorkspace

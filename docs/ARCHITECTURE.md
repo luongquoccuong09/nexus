@@ -80,6 +80,10 @@ Boundary rules:
 2. Quarantine and scan via ClamAV (fail closed before real data).
 3. Download endpoints check the account, scope and resource membership before streaming from private storage. Application download links repeat the checks on every request. Downloads use `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
 
+### 3.4 Monitor and sandbox runs (M8.2 / M8.5)
+
+Nexus.Web serves deployment-authorized telemetry and coordinates runs through PostgreSQL. The [independent runner decision](decisions/2026-11-24-m8-d01-monitor-runner-isolation.md) assigns Docker lifecycle and workload execution to `Nexus.LoadRunner`. It polls outbound over HTTPS and drives real application endpoints in a disposable sandbox. Run summaries and lifecycle events persist in PostgreSQL. Exported OpenTelemetry signals use a dedicated metrics backend.
+
 ## 4. Deployment topology (target M0.8 / M8.4)
 
 - **Demo (M0.8):** Single containerized `Nexus.Web` serving API + SPA, connected to PostgreSQL (Data Protection keys and sessions persisted in DB) and private storage.

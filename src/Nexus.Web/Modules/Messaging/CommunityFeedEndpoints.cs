@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
@@ -462,6 +463,7 @@ public static partial class CommunityFeedEndpoints
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        NexusMeters.PostCreated();
 
         var attachmentDtos = pendingAttachments
             .OrderBy(a => a.CreatedAt)

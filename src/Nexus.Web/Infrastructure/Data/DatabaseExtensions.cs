@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Nexus.Web.Infrastructure.Security;
+using Npgsql;
 
 namespace Nexus.Web.Infrastructure.Data;
 
@@ -26,8 +27,9 @@ public static class DatabaseExtensions
 
         services.AddHttpContextAccessor();
 
-        services.AddDbContext<NexusDbContext>(options =>
-            options.UseNpgsql(dbOptions.RuntimeConnectionString));
+        services.AddSingleton(_ => new NpgsqlDataSourceBuilder(dbOptions.RuntimeConnectionString) { Name = "nexus-runtime" }.Build());
+        services.AddDbContext<NexusDbContext>((provider, options) =>
+            options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
 
         // Replace default in-memory status lookup with PostgreSQL-backed lookup when DB is configured.
         services.AddSingleton<IAccountStatusLookup, DatabaseAccountStatusLookup>();

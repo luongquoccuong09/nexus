@@ -17,6 +17,8 @@ RUN dotnet publish src/Nexus.Web/Nexus.Web.csproj -c Release -o /app/publish --n
 
 # Stage 3: Minimal non-root runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+ARG NEXUS_COMMIT=""
+LABEL org.opencontainers.image.revision=$NEXUS_COMMIT
 WORKDIR /app
 COPY --from=server-build /app/publish ./
 COPY --from=client-build /src/Nexus.Client/dist ./wwwroot

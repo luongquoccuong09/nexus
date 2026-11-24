@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
@@ -63,6 +64,7 @@ public static partial class CommunityFeedEndpoints
         await MentionOutbox.EnqueueAsync(db, authz, actor, access.Resource, post.ConversationId, access.Community,
             MentionOutbox.CommentKind, comment.Id, body, comment.CreatedAt, push.PublicKey is not null || digest.IsEnabled, ct);
         await db.SaveChangesAsync(ct);
+        NexusMeters.CommentCreated();
 
         var commentDto = new
         {
@@ -117,11 +119,12 @@ public static partial class CommunityFeedEndpoints
         }
 
         var now = DateTimeOffset.UtcNow;
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
+        var created = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO post_reactions (post_id, user_id, emoji, created_at)
             VALUES ({postId}, {actorId}, {decodedEmoji}, {now})
             ON CONFLICT (post_id, user_id, emoji) DO NOTHING
             """, ct);
+        if (created > 0) NexusMeters.ReactionCreated();
 
         if (access.Community is not null)
         {

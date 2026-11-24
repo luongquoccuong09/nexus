@@ -49,9 +49,13 @@ public static class ObservabilityExtensions
                 })
                 .AddHttpClientInstrumentation(options =>
                     options.FilterHttpRequestMessage = request => !request.Options.TryGetValue(WebPushTransport.PrivateEndpoint, out _)))
-            .WithMetrics(metrics => metrics
-                .AddAspNetCoreInstrumentation()
-                .AddHttpClientInstrumentation());
+            .WithMetrics(metrics =>
+            {
+                metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+                    .AddMeter("System.Runtime", "Npgsql", NexusMeters.Name);
+                if (builder.Configuration.GetValue<bool>("NexusObservability:ExportMetrics"))
+                    metrics.AddOtlpExporter();
+            });
 
         return builder;
     }

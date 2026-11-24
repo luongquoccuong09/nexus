@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
+using Nexus.Web.Infrastructure.Observability;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
@@ -304,6 +305,7 @@ public static class FilesEndpoints
         db.Attachments.Add(entity);
         await db.SaveChangesAsync(ct);
 
+        NexusMeters.UploadCreated();
         var quota = await BuildQuotaSummaryAsync(db, actorId, conversationId, policy, ct);
         return Results.Created($"{OrganizationScope.ApiPath(entity.OrganizationId)}/files/{entity.Id}/download", new
         {

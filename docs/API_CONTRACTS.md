@@ -31,7 +31,7 @@
 
 | Method & path | Auth | Response | Owner |
 |---|---|---|---|
-| `GET /api/version` | Public (`AllowAnonymous`) | `{ "version": "<major.minor.build>" }` — client reloads when version changes across deploys (M2.6) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
+| `GET /api/version` | Public (`AllowAnonymous`) | `{ "version": "<major.minor.build>", "commit": null }` — Commit contains the configured full SHA when available. Client reload remains keyed to version (M2.6). | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
 | `GET /healthz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — process liveness probe (excluded from rate limiting) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
 | `GET /readyz` | Public (`AllowAnonymous`) | `{ "status": "Healthy", "checks": [...] }` — dependency readiness probe (includes PostgreSQL check) | `src/Nexus.Web/Infrastructure/Observability/HealthEndpoints.cs` |
 | `GET /api/auth/csrf`, `GET /api/auth/registration-policy` | Public (`AllowAnonymous`) | Antiforgery token & registration mode / trial confidentiality notice | `src/Nexus.Web/Modules/Identity/IdentityEndpoints.cs` |
@@ -99,6 +99,21 @@ Group Chat and Community transfer endpoints accept `{ newOwnerUserId }` from the
 ### Operator-issued password reset
 
 `POST /api/auth/reset-password` accepts `{ token, newPassword }` in the JSON body. An unknown, expired, or redeemed code returns `400 invalid_reset_token`. Password validation failures return `400 password_policy_failed` and leave the code redeemable. A successful reset consumes the code and revokes existing BFF sessions in the same transaction as the password update. It returns `{ reset: true }` and the user signs in again.
+
+### Deployment Monitor
+
+All paths below are under `/api/monitor`. The user-facing read endpoints require a deployment Monitor grant. Mutations require the execution grant, verified MFA, and antiforgery.
+
+| Endpoint | Contract |
+|---|---|
+| `GET /capabilities` | Environment label, execution grant, MFA state, and runner configuration status. |
+| `GET /performance?range=5m` | Deployment aggregate samples. Ranges are `5m`, `15m`, and `1h`. |
+| `GET /runs` | Up to 50 newest runs per page. Pass `nextCursor` as `before` for the next page. |
+| `POST /runs` | Submit `requestId` and a typed `configuration`. The API accepts the reserved sandbox profiles and returns `202` for an idempotent start or `409` for a conflicting start. |
+| `GET /runs/{id}`, `GET /runs/{id}/performance` | Run state, sanitized lifecycle events, and sandbox aggregate samples. |
+| `POST /runs/{id}/stop` | Persist an idempotent stop request and return `202`. The runner reports the terminal result and cleanup. |
+| `GET /runs/{id}/report?format=json` | Download a filtered run report. `html` returns the same model as a standalone HTML report. |
+| `POST /runner/claim`, `POST /runner/runs/{id}/heartbeat`, `POST /runner/runs/{id}/result` | The dedicated machine principal claims, renews, and reports a matching lease generation. |
 
 ## 3. SignalR hub contract
 

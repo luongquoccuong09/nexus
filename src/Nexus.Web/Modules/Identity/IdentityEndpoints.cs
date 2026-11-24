@@ -1,4 +1,5 @@
 using Nexus.Web.Modules.Org;
+using Nexus.Web.Modules.Monitor;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -59,7 +60,10 @@ public static class IdentityEndpoints
         string? CustomStatus,
         string? AvatarUrl,
         AvailabilityDto Availability,
-        bool SuppressChime);
+        bool SuppressChime)
+    {
+        public bool CanViewMonitor { get; init; }
+    }
 
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder app)
     {
@@ -298,7 +302,7 @@ public static class IdentityEndpoints
         }
 
         var requiresMfa = await HasActiveAdminRoleAsync(db, user.Id, ct);
-        return Results.Ok(ToSummaryDto(user, requiresMfa));
+        return Results.Ok(ToSummaryDto(user, requiresMfa) with { CanViewMonitor = MonitorEndpoints.CanView(ctx) });
     }
 
     private static async Task<IResult> HandleChangePasswordAsync(

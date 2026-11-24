@@ -7,6 +7,7 @@ namespace Nexus.Web.Modules.Messaging;
 /// </summary>
 public interface IPresenceTracker
 {
+    int OnlineAccountCount { get; }
     bool OnConnected(Guid organizationId, Guid userId, string connectionId);
     bool OnDisconnected(Guid organizationId, Guid userId, string connectionId);
     bool IsOnline(Guid userId);
@@ -25,6 +26,8 @@ public sealed class InMemoryPresenceTracker : IPresenceTracker
 
     private readonly ConcurrentDictionary<Guid, UserConnectionState> _users = new();
     private readonly ConcurrentDictionary<(Guid UserId, Guid ConversationId), DateTimeOffset> _typingLastSent = new();
+
+    public int OnlineAccountCount => _users.Count;
 
     public bool OnConnected(Guid organizationId, Guid userId, string connectionId)
     {

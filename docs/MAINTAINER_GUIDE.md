@@ -117,6 +117,10 @@ pwsh -File ./scripts/audit/Build-KnowledgeIndex.ps1 -Check
 - Health endpoints: `/healthz` (liveness), `/readyz` (readiness), `/api/version` (client reload trigger).
 - Detailed deployment, backup, restore, key-rotation, and incident runbooks will be added under `docs/implementation-plan/m8-hardening/` before pilot launch (M8.6).
 
+### Monitor and load testing
+
+The [Monitor sandbox runbook](implementation-plan/m8-hardening/RUNBOOK-monitor-sandbox.md) covers deployment grants, local or remote runner setup, benchmark operation, recovery, and optional OTLP export.
+
 ### Operator-issued password reset
 
 Run the recovery command from a trusted operator terminal using the deployment's runtime configuration. The command prints one reset code that expires in 30 minutes.

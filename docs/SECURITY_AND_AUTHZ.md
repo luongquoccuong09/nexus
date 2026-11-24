@@ -72,6 +72,17 @@ Per updated [`P0-D04`](decisions/2026-11-23-p0-d04-community-channel-hierarchy.m
 - **On removal (`left_at` set):** Deny all subsequent reads, searches, delta syncs, and file downloads for that conversation/community immediately (`SEC-18`). Retain messages previously authored by the removed user for remaining members.
 - **On rejoining:** A rejoining member receives access starting from their new `visible_from_seq` (the conversation's `next_seq` at rejoin time for Groups/Private Communities; full current channel history for Public Communities unless restricted).
 
+### 2.5 Deployment Monitor (`ResourceKind.Monitor`)
+
+| Actor | Read metrics, history, and reports | Run / Stop |
+|---|---|---|
+| Active account with deployment reader grant | Allow | Deny |
+| Active account with deployment operator grant | Allow | Allow with verified MFA and antiforgery |
+| Organization administrator without a deployment grant | Deny | Deny |
+| Disabled or revoked session | Deny | Deny |
+
+The user policy checks deployment grants independently of Organization membership. The Monitor DTOs contain aggregate measurements, configured profile values, and allowlisted lifecycle events. The machine endpoints use a dedicated runner credential over TLS, with a Development loopback exception. The machine principal receives one sandbox lease and may report only against its matching generation. The worker provisions isolated localhost Docker projects. `Nexus.Web` has no Docker access or shell execution endpoint.
+
 ## 3. Domain Authorization Contract (`M0.4`)
 
 Implemented in `src/Nexus.Web/Infrastructure/Security/`:
