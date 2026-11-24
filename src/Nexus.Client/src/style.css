@@ -1373,6 +1373,8 @@ body {
 
 .nx-att-thumb-img {
   display: block;
+  min-width: 48px;
+  min-height: 48px;
   max-width: 340px;
   max-height: 260px;
   object-fit: cover;
@@ -1888,6 +1890,30 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.nx-post-composer.drag-over {
+  outline: 2px dashed var(--brand-600);
+  outline-offset: -4px;
+  background: var(--brand-50);
+}
+
+.nx-channel-file-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.nx-channel-file-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-channel-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .nx-post-title-input {
@@ -3173,6 +3199,9 @@ body {
   .nx-community-stage-header .nx-inline-actions {
     width: 100%;
     gap: 4px;
+  }
+  .nx-community-stage-header .nx-stage-action-label {
+    display: none;
   }
   .nx-community-stage-header .nx-btn.sm {
     padding: 5px 8px;

@@ -1,5 +1,5 @@
 import { orgApiPath, orgFetch, protectedRequest } from './scope';
-import { FormEvent, MouseEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, MouseEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArrowLeft,
@@ -11,13 +11,17 @@ import {
   ChevronRight,
   Compass,
   Download,
+  ExternalLink,
   Eye,
+  FileText,
+  FolderOpen,
   FolderPlus,
   Hash,
   Link2,
   Lock,
   Megaphone,
   MessageSquare,
+  Paperclip,
   Pencil,
   Pin,
   Plus,
@@ -30,9 +34,10 @@ import {
   Star,
   Trash2,
   UserPlus,
-  Users
+  Users,
+  X
 } from 'lucide-react';
-import { CommunityFeedDelta } from './chat';
+import { AttachmentItem, CommunityFeedDelta, StorageQuotaSummary } from './chat';
 import { CommunityJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
 import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
 import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from './sidebarControls';
@@ -160,8 +165,22 @@ interface ChannelPostDto {
   createdAt: string;
   comments: PostCommentDto[];
   reactions: PostReactionDto[];
+  attachments?: AttachmentItem[];
   poll?: PostPollDto | null;
   pending?: boolean;
+}
+
+interface ChannelFileItem extends AttachmentItem {
+  postId?: string | null;
+  postTitle?: string | null;
+  uploaderDisplayName?: string | null;
+  sourceLink?: string | null;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 interface CommunityMemberDto {
@@ -316,12 +335,39 @@ export function CommunitiesWorkspace({
   const [feedChannelDescription, setFeedChannelDescription] = useState<string | null>(null);
   const [loadingPosts, setLoadingPosts] = useState(false);
 
-  const [membersOpen, setMembersOpen] = useState(false);
+  const [rightDrawer, setRightDrawer] = useState<'none' | 'members' | 'files'>('none');
+  const membersOpen = rightDrawer === 'members';
+  const filesOpen = rightDrawer === 'files';
+  const rightDrawerRef = useRef(rightDrawer);
+  rightDrawerRef.current = rightDrawer;
+  const setMembersOpen = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setRightDrawer(prev => {
+      const nextBool = typeof next === 'function' ? next(prev === 'members') : next;
+      return nextBool ? 'members' : (prev === 'members' ? 'none' : prev);
+    });
+  }, []);
   const [ownershipTransfer, setOwnershipTransfer] = useState<OwnershipTransfer | null>(null);
   const communityMembersHeading = useRef<HTMLHeadingElement | null>(null);
+  const channelFilesHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const filesBtnWrapRef = useRef<HTMLSpanElement | null>(null);
   const [addMemberUserId, setAddMemberUserId] = useState('');
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [mappedDeptId, setMappedDeptId] = useState('');
+
+  // M6.31 Channel Files drawer & Feed post attachments state
+  const [channelFiles, setChannelFiles] = useState<ChannelFileItem[]>([]);
+  const [loadingChannelFiles, setLoadingChannelFiles] = useState(false);
+  const [channelFilesError, setChannelFilesError] = useState<'refresh' | 'older' | null>(null);
+  const [channelFilesNext, setChannelFilesNext] = useState<{ before: string; beforeId: string } | null>(null);
+  const [channelFilesQuota, setChannelFilesQuota] = useState<StorageQuotaSummary | null>(null);
+  const channelFilesReqRef = useRef<AbortController | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [isComposerDragOver, setIsComposerDragOver] = useState(false);
+  const [quotaWarning, setQuotaWarning] = useState('');
+  const [lightboxImage, setLightboxImage] = useState<AttachmentItem | null>(null);
+  const postFileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadControllerRef = useRef<AbortController | null>(null);
 
   // Composer state
   const [postTitle, setPostTitle] = useState('');
@@ -635,6 +681,97 @@ export function CommunitiesWorkspace({
     }
   }, [refreshAddCandidates, refreshMemberList]);
 
+  const loadChannelFiles = useCallback(async (orgId: string, conversationId: string, older = false) => {
+    if (older && !channelFilesNext) return;
+    channelFilesReqRef.current?.abort();
+    const controller = new AbortController();
+    channelFilesReqRef.current = controller;
+    setLoadingChannelFiles(true);
+    setChannelFilesError(null);
+    try {
+      const params = new URLSearchParams({ limit: '50' });
+      if (older && channelFilesNext) {
+        params.set('before', channelFilesNext.before);
+        params.set('beforeId', channelFilesNext.beforeId);
+      }
+      const res = await orgFetch(orgId, `/api/channels/${conversationId}/files?${params}`, {
+        credentials: 'same-origin',
+        signal: controller.signal
+      });
+      if (controller.signal.aborted || activeFeedRef.current !== conversationId) return;
+      if ([401, 403, 404].includes(res.status)) {
+        setChannelFiles([]);
+        setChannelFilesNext(null);
+        setChannelFilesQuota(null);
+        setChannelFilesError(older ? 'older' : 'refresh');
+        return;
+      }
+      if (!res.ok) throw new Error('Unable to load channel files.');
+      const data = await res.json();
+      if (controller.signal.aborted || activeFeedRef.current !== conversationId) return;
+      const incoming: ChannelFileItem[] = data.items ?? [];
+      setChannelFiles(prev => {
+        const merged = new Map(older ? prev.map(item => [item.id, item]) : []);
+        for (const item of incoming) merged.set(item.id, item);
+        return [...merged.values()];
+      });
+      setChannelFilesNext(
+        data.hasMore && data.nextBefore && data.nextBeforeId
+          ? { before: data.nextBefore, beforeId: data.nextBeforeId }
+          : null
+      );
+      setChannelFilesQuota(data.quota ?? null);
+    } catch {
+      if (!controller.signal.aborted && activeFeedRef.current === conversationId) {
+        setChannelFilesError(older ? 'older' : 'refresh');
+      }
+    } finally {
+      if (channelFilesReqRef.current === controller) {
+        channelFilesReqRef.current = null;
+        if (!controller.signal.aborted && activeFeedRef.current === conversationId) {
+          setLoadingChannelFiles(false);
+        }
+      }
+    }
+  }, [channelFilesNext]);
+
+  const loadChannelFilesRef = useRef(loadChannelFiles);
+  loadChannelFilesRef.current = loadChannelFiles;
+
+  useEffect(() => {
+    uploadControllerRef.current?.abort();
+    uploadControllerRef.current = null;
+    channelFilesReqRef.current?.abort();
+    channelFilesReqRef.current = null;
+    setUploadingFiles(false);
+    setPendingAttachments([]);
+    setQuotaWarning('');
+    setIsComposerDragOver(false);
+    setChannelFiles([]);
+    setChannelFilesNext(null);
+    setChannelFilesError(null);
+    setChannelFilesQuota(null);
+    if (rightDrawerRef.current === 'files' && selectedConversationId && activeOrgId) {
+      void loadChannelFilesRef.current(activeOrgId, selectedConversationId, false);
+    }
+  }, [activeOrgId, selectedConversationId]);
+
+  useEffect(() => {
+    if (!filesOpen) return;
+    requestAnimationFrame(() => channelFilesHeadingRef.current?.focus());
+    const handleEsc = (ev: globalThis.KeyboardEvent) => {
+      if (ev.key === 'Escape' && !lightboxImage) {
+        ev.preventDefault();
+        setRightDrawer('none');
+        requestAnimationFrame(() => {
+          filesBtnWrapRef.current?.querySelector('button')?.focus();
+        });
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [filesOpen, lightboxImage]);
+
   useEffect(() => {
     if (!membersOpen || !activeOrgId || orgDepartmentsByOrg[activeOrgId]) return;
     const controller = new AbortController();
@@ -786,6 +923,41 @@ export function CommunitiesWorkspace({
       if (!targetId) return;
 
       if (delta && changedConversationId) {
+        if (delta.type === 'post_created' && delta.post) {
+          const incoming = delta.post;
+          updateFeedPosts(changedConversationId, prev => {
+            if (prev.some(p => p.id === incoming.id)) return prev;
+            const nextPost: ChannelPostDto = {
+              id: incoming.id,
+              conversationId: incoming.conversationId || changedConversationId,
+              authorUserId: incoming.authorUserId,
+              authorDisplayName: incoming.authorDisplayName,
+              authorAvatarUrl: incoming.authorAvatarUrl ?? null,
+              title: incoming.title ?? null,
+              body: incoming.body,
+              isAnnouncement: Boolean(incoming.isAnnouncement),
+              requiresAcknowledgment: Boolean(incoming.requiresAcknowledgment),
+              acknowledgedCount: incoming.acknowledgedCount ?? 0,
+              totalRecipients: incoming.totalRecipients ?? 0,
+              acknowledgedByMe: Boolean(incoming.acknowledgedByMe),
+              isPinned: Boolean(incoming.isPinned),
+              createdAt: incoming.createdAt,
+              comments: [],
+              reactions: [],
+              attachments: incoming.attachments ?? [],
+              poll: null
+            };
+            const pinned = prev.filter(p => p.isPinned);
+            const regular = prev.filter(p => !p.isPinned);
+            return [...pinned, nextPost, ...regular];
+          });
+          if (rightDrawerRef.current === 'files' && activeFeedRef.current === changedConversationId && incoming.attachments?.length) {
+            const orgId = communityOrgByConvRef.current.get(changedConversationId);
+            if (orgId) void loadChannelFilesRef.current(orgId, changedConversationId, false);
+          }
+          return;
+        }
+
         if (delta.type === 'community_updated' && delta.communityId) {
           patchCommunityInState(delta.communityId, comm => ({
             ...comm,
@@ -1256,9 +1428,143 @@ export function CommunitiesWorkspace({
     }
   }
 
+  async function uploadPostAttachments(fileList: File[]) {
+    const targetConvId = selectedConversationId;
+    const targetOrgId = activeOrgId ?? (targetConvId ? communityOrgByConvRef.current.get(targetConvId) : undefined);
+    if (!targetConvId || !targetOrgId || !canPost || activeIsArchived || fileList.length === 0 || uploadingFiles) return;
+
+    if (pendingAttachments.length + fileList.length > 10) {
+      setError('You can attach up to 10 files per post.');
+      return;
+    }
+
+    setError('');
+    setQuotaWarning('');
+    const controller = new AbortController();
+    uploadControllerRef.current = controller;
+    setUploadingFiles(true);
+
+    try {
+      const csrfRes = await window.fetch('/api/auth/csrf', { signal: controller.signal });
+      const csrfData = csrfRes.ok ? await csrfRes.json().catch(() => ({})) : {};
+      const csrfToken = typeof csrfData.token === 'string' ? csrfData.token : '';
+
+      for (const file of fileList) {
+        const form = new FormData();
+        form.append('clientUploadId', crypto.randomUUID());
+        form.append('file', file, file.name || 'pasted-image.png');
+
+        const headers: Record<string, string> = {};
+        if (csrfToken) headers['X-CSRF-TOKEN'] = csrfToken;
+
+        const res = await orgFetch(targetOrgId, `/api/conversations/${targetConvId}/attachments`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers,
+          body: form,
+          signal: controller.signal
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (controller.signal.aborted || activeFeedRef.current !== targetConvId) return;
+
+        if (!res.ok) {
+          if (!surfaceArchivedConflictIfNeeded(res, data, targetConvId)) {
+            setError(data.message || `Failed to upload ${file.name}.`);
+          }
+          continue;
+        }
+
+        const rawAtt = (data.attachment ?? data) as Partial<AttachmentItem> & { width?: number | null; height?: number | null };
+        if (rawAtt?.id) {
+          const normalized: AttachmentItem = {
+            id: rawAtt.id,
+            conversationId: rawAtt.conversationId ?? targetConvId,
+            messageId: rawAtt.messageId ?? null,
+            postId: rawAtt.postId ?? null,
+            uploaderUserId: rawAtt.uploaderUserId ?? currentUserId,
+            clientUploadId: rawAtt.clientUploadId ?? '',
+            fileName: rawAtt.fileName ?? file.name,
+            contentType: rawAtt.contentType ?? file.type,
+            sizeBytes: typeof rawAtt.sizeBytes === 'number' ? rawAtt.sizeBytes : file.size,
+            sha256Hex: rawAtt.sha256Hex ?? '',
+            imageWidth: rawAtt.imageWidth ?? rawAtt.width ?? null,
+            imageHeight: rawAtt.imageHeight ?? rawAtt.height ?? null,
+            state: rawAtt.state ?? 'pending',
+            scanStatus: rawAtt.scanStatus ?? 'clean',
+            downloadUrl: rawAtt.downloadUrl ?? '',
+            thumbnailUrl: rawAtt.thumbnailUrl ?? null,
+            previewUrl: rawAtt.previewUrl ?? null,
+            createdAt: rawAtt.createdAt ?? new Date().toISOString()
+          };
+          setPendingAttachments(prev => (prev.some(a => a.id === normalized.id) ? prev : [...prev, normalized]));
+        }
+        if (data.quota) {
+          setChannelFilesQuota(data.quota as StorageQuotaSummary);
+        }
+        if (typeof data.quotaWarning === 'string' && data.quotaWarning) {
+          setQuotaWarning(data.quotaWarning);
+        }
+      }
+    } catch {
+      if (!controller.signal.aborted && activeFeedRef.current === targetConvId) {
+        setError('Upload interrupted. Try attaching the file again.');
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) {
+        uploadControllerRef.current = null;
+        setUploadingFiles(false);
+      }
+    }
+  }
+
+  function handlePostFileInputChange(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = '';
+    if (files.length > 0) {
+      void uploadPostAttachments(files);
+    }
+  }
+
+  function handlePostComposerPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!canPost || activeIsArchived) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const pastedFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) pastedFiles.push(f);
+      }
+    }
+    if (pastedFiles.length > 0) {
+      e.preventDefault();
+      void uploadPostAttachments(pastedFiles);
+    }
+  }
+
+  function handlePostComposerDragOver(e: DragEvent<HTMLFormElement>) {
+    if (!canPost || activeIsArchived) return;
+    if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault();
+      setIsComposerDragOver(true);
+    }
+  }
+
+  function handlePostComposerDrop(e: DragEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setIsComposerDragOver(false);
+    if (!canPost || activeIsArchived) return;
+    const dropped = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [];
+    if (dropped.length > 0) {
+      void uploadPostAttachments(dropped);
+    }
+  }
+
   async function handleCreatePost(e: FormEvent) {
     e.preventDefault();
-    if (!selectedConversationId || !postBody.trim() || posting) return;
+    if (!selectedConversationId || (!postBody.trim() && pendingAttachments.length === 0) || posting || uploadingFiles) return;
     setError('');
     setNotice('');
     setPosting(true);
@@ -1272,6 +1578,7 @@ export function CommunitiesWorkspace({
     const savedPollQuestion = pollQuestion;
     const savedPollOptions = pollOptions;
     const savedPollAllowMultiple = pollAllowMultiple;
+    const savedAttachments = pendingAttachments;
 
     const cleanedPollOptions = pollOptions.map(o => o.trim()).filter(Boolean);
     const pollPayload = includePoll && pollQuestion.trim() && cleanedPollOptions.length >= 2
@@ -1314,6 +1621,7 @@ export function CommunitiesWorkspace({
         : null,
       comments: [],
       reactions: [],
+      attachments: savedAttachments,
       pending: true
     };
 
@@ -1332,6 +1640,8 @@ export function CommunitiesWorkspace({
     setPollQuestion('');
     setPollOptions(['', '']);
     setPollAllowMultiple(false);
+    setPendingAttachments([]);
+    setQuotaWarning('');
 
     try {
       const targetOrgId = activeOrgId ?? communityOrgByConvRef.current.get(targetConvId);
@@ -1345,7 +1655,8 @@ export function CommunitiesWorkspace({
           body: savedBody.trim(),
           isAnnouncement: canManage && savedIsAnnouncement,
           requiresAcknowledgment: canManage && savedIsAnnouncement && savedRequiresAck,
-          poll: pollPayload
+          poll: pollPayload,
+          attachmentIds: savedAttachments.length > 0 ? savedAttachments.map(a => a.id) : undefined
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -1360,6 +1671,7 @@ export function CommunitiesWorkspace({
         setPollQuestion(savedPollQuestion);
         setPollOptions(savedPollOptions);
         setPollAllowMultiple(savedPollAllowMultiple);
+        setPendingAttachments(savedAttachments);
         if (!surfaceArchivedConflictIfNeeded(res, data, targetConvId)) {
           setError(data.message || 'Unable to publish post.');
         }
@@ -1367,6 +1679,7 @@ export function CommunitiesWorkspace({
       }
 
       inFlightPostIdsRef.current.delete(tempPostId);
+      const serverAttachments: AttachmentItem[] = Array.isArray(data.attachments) ? data.attachments : savedAttachments;
       updateFeedPosts(targetConvId, prev => {
         if (data.id && prev.some(p => p.id === data.id)) {
           return prev.filter(p => p.id !== tempPostId);
@@ -1377,11 +1690,15 @@ export function CommunitiesWorkspace({
                 ...p,
                 id: data.id ?? p.id,
                 createdAt: data.createdAt ?? p.createdAt,
+                attachments: serverAttachments,
                 pending: false
               }
             : p
         );
       });
+      if (rightDrawerRef.current === 'files' && serverAttachments.length > 0) {
+        void loadChannelFilesRef.current(targetOrgId, targetConvId, false);
+      }
       if (pollPayload || (canManage && savedIsAnnouncement && savedRequiresAck)) {
         void loadPosts(targetConvId, true);
       }
@@ -1395,6 +1712,7 @@ export function CommunitiesWorkspace({
       setPollQuestion(savedPollQuestion);
       setPollOptions(savedPollOptions);
       setPollAllowMultiple(savedPollAllowMultiple);
+      setPendingAttachments(savedAttachments);
       setError('Unable to publish post. Check your connection and try again.');
     } finally {
       inFlightPostIdsRef.current.delete(tempPostId);
@@ -2326,14 +2644,35 @@ export function CommunitiesWorkspace({
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                 </Button>
+                <span ref={filesBtnWrapRef}>
+                  <Button
+                    variant={filesOpen ? 'primary' : 'default'}
+                    size="sm"
+                    aria-label="Channel files"
+                    title="Files"
+                    onClick={() => {
+                      const next = filesOpen ? 'none' : 'files';
+                      setRightDrawer(next);
+                      if (next === 'files' && selectedCommunity && selectedConversationId) {
+                        void loadChannelFiles(selectedCommunity.organizationId, selectedConversationId, false);
+                      }
+                    }}
+                  >
+                    <FolderOpen size={15} aria-hidden="true" />
+                    <span className="nx-stage-action-label">Files</span>
+                  </Button>
+                </span>
                 <Button
                   variant={membersOpen ? 'primary' : 'default'}
                   size="sm"
+                  aria-label="Community members"
+                  title="Members"
                   onClick={() => {
                     setMembersOpen(v => !v);
                   }}
                 >
-                  <Users size={15} aria-hidden="true" /> Members
+                  <Users size={15} aria-hidden="true" />
+                  <span className="nx-stage-action-label">Members</span>
                 </Button>
               </div>
             </header>
@@ -2359,7 +2698,20 @@ export function CommunitiesWorkspace({
                     )}
                   </div>
                 ) : canPost ? (
-                  <form className="nx-post-composer" onSubmit={handleCreatePost}>
+                  <form
+                    className={`nx-post-composer ${isComposerDragOver ? 'drag-over' : ''}`}
+                    onSubmit={handleCreatePost}
+                    onDragOver={handlePostComposerDragOver}
+                    onDragLeave={() => setIsComposerDragOver(false)}
+                    onDrop={handlePostComposerDrop}
+                  >
+                    <input
+                      ref={postFileInputRef}
+                      type="file"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={handlePostFileInputChange}
+                    />
                     <input
                       type="text"
                       className="nx-post-title-input"
@@ -2391,6 +2743,7 @@ export function CommunitiesWorkspace({
                       }
                       value={postBody}
                       onChange={e => setPostBody(e.target.value)}
+                      onPaste={handlePostComposerPaste}
                       onCompositionStart={() => { postCompositionActive.current = true; }}
                       onCompositionEnd={() => { postCompositionActive.current = false; }}
                       onBlur={() => { postCompositionActive.current = false; }}
@@ -2412,15 +2765,50 @@ export function CommunitiesWorkspace({
                           e.nativeEvent.keyCode !== 229 &&
                           (e.ctrlKey || e.metaKey) &&
                           e.key === 'Enter' &&
-                          postBody.trim() &&
-                          !posting
+                          (postBody.trim() || pendingAttachments.length > 0) &&
+                          !posting &&
+                          !uploadingFiles
                         ) {
                           e.preventDefault();
                           e.currentTarget.form?.requestSubmit();
                         }
                       }}
-                      required
+                      required={pendingAttachments.length === 0}
                     />
+
+                    {quotaWarning && (
+                      <p className="nx-draft-notice" role="status">{quotaWarning}</p>
+                    )}
+
+                    {(pendingAttachments.length > 0 || uploadingFiles) && (
+                      <div className="nx-pending-attachments" aria-label="Pending post attachments">
+                        {pendingAttachments.map(att => (
+                          <div className="nx-att-chip" key={att.id}>
+                            {att.thumbnailUrl ? (
+                              <img src={att.thumbnailUrl} alt={att.fileName} />
+                            ) : (
+                              <FileText size={15} aria-hidden="true" />
+                            )}
+                            <span className="nx-att-chip-name" title={att.fileName}>{att.fileName}</span>
+                            <span className="nx-muted">{formatBytes(att.sizeBytes)}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              iconOnly
+                              aria-label={`Remove ${att.fileName}`}
+                              onClick={() => setPendingAttachments(prev => prev.filter(item => item.id !== att.id))}
+                            >
+                              <X size={13} aria-hidden="true" />
+                            </Button>
+                          </div>
+                        ))}
+                        {uploadingFiles && (
+                          <span className="nx-muted" role="status" style={{ alignSelf: 'center' }}>
+                            Uploading…
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {includePoll && (
                       <div className="nx-poll-builder">
@@ -2522,6 +2910,15 @@ export function CommunitiesWorkspace({
                         )}
                         <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={posting || uploadingFiles || pendingAttachments.length >= 10}
+                          onClick={() => postFileInputRef.current?.click()}
+                        >
+                          <Paperclip size={14} aria-hidden="true" /> Attach
+                        </Button>
+                        <Button
+                          type="button"
                           variant={includePoll ? 'primary' : 'ghost'}
                           size="sm"
                           onClick={() => setIncludePoll(v => !v)}
@@ -2530,8 +2927,13 @@ export function CommunitiesWorkspace({
                         </Button>
                       </div>
 
-                      <Button type="submit" variant="primary" size="sm" disabled={posting || !postBody.trim()}>
-                        <Send size={14} aria-hidden="true" /> {posting ? 'Posting…' : 'Post'}
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        size="sm"
+                        disabled={posting || uploadingFiles || (!postBody.trim() && pendingAttachments.length === 0)}
+                      >
+                        <Send size={14} aria-hidden="true" /> {posting ? 'Posting…' : uploadingFiles ? 'Uploading…' : 'Post'}
                       </Button>
                     </div>
                   </form>
@@ -2655,11 +3057,53 @@ export function CommunitiesWorkspace({
 
                         {post.title && <h4 className="nx-post-title">{post.title}</h4>}
 
-                        <div
-                          className="nx-msg-body nx-post-content"
-                          onClick={handleInlineContentLinkClick}
-                          dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(post.body) }}
-                        />
+                        {post.body && (
+                          <div
+                            className="nx-msg-body nx-post-content"
+                            onClick={handleInlineContentLinkClick}
+                            dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(post.body) }}
+                          />
+                        )}
+
+                        {/* Post Attachments (M6.31) */}
+                        {post.attachments && post.attachments.length > 0 && (
+                          <div className="nx-msg-attachments">
+                            {post.attachments.map(att =>
+                              att.thumbnailUrl ? (
+                                <div key={att.id} className="nx-att-image-wrap">
+                                  <button
+                                    type="button"
+                                    className="nx-att-thumb-btn"
+                                    aria-label={`Preview ${att.fileName}`}
+                                    onClick={() => setLightboxImage(att)}
+                                  >
+                                    <img className="nx-att-thumb-img" src={att.thumbnailUrl} alt={att.fileName} />
+                                  </button>
+                                  <a
+                                    href={att.downloadUrl}
+                                    download={att.fileName}
+                                    className="nx-att-img-dl"
+                                    aria-label={`Download ${att.fileName}`}
+                                    title={`Download ${att.fileName} (${formatBytes(att.sizeBytes)})`}
+                                  >
+                                    <Download size={14} aria-hidden="true" />
+                                  </a>
+                                </div>
+                              ) : (
+                                <a key={att.id} href={att.downloadUrl} download={att.fileName} className="nx-att-file-card">
+                                  <span className="nx-att-file-meta">
+                                    <FileText size={16} aria-hidden="true" />
+                                    <span style={{ minWidth: 0 }}>
+                                      <div className="nx-att-file-title">{att.fileName}</div>
+                                      <div className="nx-muted">{formatBytes(att.sizeBytes)}</div>
+                                    </span>
+                                  </span>
+                                  <Download size={15} aria-hidden="true" />
+                                </a>
+                              )
+                            )}
+                          </div>
+                        )}
 
                         {/* Announcement Acknowledgment Bar */}
                         {post.requiresAcknowledgment && (
@@ -2845,6 +3289,159 @@ export function CommunitiesWorkspace({
                   moreLabel="Load older posts"
                 />
               </div>
+
+              {/* Channel Files Drawer (M6.31) */}
+              {filesOpen && selectedCommunity && selectedConversationId && (
+                <aside className="nx-drawer" aria-label="Channel files">
+                  <div className="nx-drawer-head">
+                    <h4 ref={channelFilesHeadingRef} tabIndex={-1}>
+                      {loadingChannelFiles && channelFiles.length === 0 ? 'Files' : `Files (${channelFiles.length})`}
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setRightDrawer('none');
+                        requestAnimationFrame(() => {
+                          filesBtnWrapRef.current?.querySelector('button')?.focus();
+                        });
+                      }}
+                    >
+                      Close
+                    </Button>
+                  </div>
+
+                  <div className="nx-drawer-body">
+                    {channelFilesQuota && (
+                      <div className="nx-quota-box">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                          <strong>Channel storage</strong>
+                          <span className="nx-muted">
+                            {formatBytes(channelFilesQuota.conversationUsedBytes)} / {formatBytes(channelFilesQuota.conversationQuotaBytes)}
+                          </span>
+                        </div>
+                        <div className="nx-quota-bar">
+                          <div
+                            className="nx-quota-fill"
+                            style={{
+                              width: `${Math.min(
+                                100,
+                                Math.round((channelFilesQuota.conversationUsedBytes / Math.max(1, channelFilesQuota.conversationQuotaBytes)) * 100)
+                              )}%`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {loadingChannelFiles && channelFiles.length === 0 ? (
+                      <p className="nx-muted" role="status" style={{ textAlign: 'center', marginTop: 18 }}>
+                        Loading files…
+                      </p>
+                    ) : channelFiles.length === 0 && !channelFilesError ? (
+                      <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
+                        No files shared in this channel yet.
+                      </p>
+                    ) : (
+                      <div>
+                        {channelFiles.map(f => (
+                          <div className="nx-row nx-channel-file-row" key={f.id}>
+                            {f.thumbnailUrl ? (
+                              <button
+                                type="button"
+                                className="nx-file-preview-trigger"
+                                onClick={() => setLightboxImage(f)}
+                                title={`Preview ${f.fileName}`}
+                              >
+                                <img
+                                  src={f.thumbnailUrl}
+                                  alt=""
+                                  style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+                                />
+                                <span style={{ minWidth: 0, flex: 1 }}>
+                                  <div className="nx-att-file-title">{f.fileName}</div>
+                                  <div className="nx-muted nx-channel-file-sub">
+                                    {formatBytes(f.sizeBytes)}
+                                    {f.uploaderDisplayName ? ` · ${f.uploaderDisplayName}` : ''}
+                                  </div>
+                                  {f.postTitle && (
+                                    <div className="nx-muted nx-channel-file-sub" title={f.postTitle}>
+                                      {f.postTitle}
+                                    </div>
+                                  )}
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="nx-att-file-meta" style={{ flex: 1 }}>
+                                <FileText size={18} aria-hidden="true" />
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div className="nx-att-file-title">{f.fileName}</div>
+                                  <div className="nx-muted nx-channel-file-sub">
+                                    {formatBytes(f.sizeBytes)}
+                                    {f.uploaderDisplayName ? ` · ${f.uploaderDisplayName}` : ''}
+                                  </div>
+                                  {f.postTitle && (
+                                    <div className="nx-muted nx-channel-file-sub" title={f.postTitle}>
+                                      {f.postTitle}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            <div className="nx-channel-file-actions">
+                              {f.sourceLink && onOpenContentLink && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  iconOnly
+                                  aria-label={`Go to post for ${f.fileName}`}
+                                  title="Go to post"
+                                  onClick={() => {
+                                    if (window.innerWidth <= 860) setRightDrawer('none');
+                                    onOpenContentLink(f.sourceLink!);
+                                  }}
+                                >
+                                  <ExternalLink size={13} aria-hidden="true" />
+                                </Button>
+                              )}
+                              <a
+                                href={f.downloadUrl}
+                                download={f.fileName}
+                                className="nx-btn sm"
+                                aria-label={`Download ${f.fileName}`}
+                                title={`Download ${f.fileName}`}
+                              >
+                                <Download size={13} aria-hidden="true" />
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {(channelFilesNext || channelFilesError || (loadingChannelFiles && channelFiles.length > 0)) && (
+                      <div className="nx-empty-side">
+                        {channelFilesError && <p className="nx-error" role="alert">Unable to load files.</p>}
+                        {loadingChannelFiles && channelFiles.length > 0 && <span role="status">Loading files…</span>}
+                        {!loadingChannelFiles && (
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              void loadChannelFiles(
+                                selectedCommunity.organizationId,
+                                selectedConversationId,
+                                channelFilesError !== 'refresh'
+                              )
+                            }
+                          >
+                            {channelFilesError ? 'Retry' : 'Load more files'}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </aside>
+              )}
 
               {/* Members & Governance Drawer */}
               {membersOpen && (
@@ -3302,6 +3899,40 @@ export function CommunitiesWorkspace({
         <p className="nx-muted" style={{ margin: 0 }}>
           Archiving this channel makes it read-only. Its ID, past posts, comments, polls, and files remain preserved, and an owner or admin can restore it anytime.
         </p>
+      </Modal>
+
+      {/* Image Lightbox Modal (M6.31) */}
+      <Modal
+        open={Boolean(lightboxImage)}
+        onOpenChange={open => { if (!open) setLightboxImage(null); }}
+        title={lightboxImage?.fileName ?? 'Image preview'}
+        size="xl"
+        footer={
+          lightboxImage ? (
+            <>
+              <span className="nx-muted" style={{ marginRight: 'auto', alignSelf: 'center' }}>
+                {lightboxImage.imageWidth && lightboxImage.imageHeight
+                  ? `${lightboxImage.imageWidth}×${lightboxImage.imageHeight} · `
+                  : ''}
+                {formatBytes(lightboxImage.sizeBytes)}
+              </span>
+              <a href={lightboxImage.downloadUrl} download={lightboxImage.fileName} className="nx-btn primary sm">
+                <Download size={14} aria-hidden="true" /> Download
+              </a>
+              <Button size="sm" onClick={() => setLightboxImage(null)}>Close</Button>
+            </>
+          ) : undefined
+        }
+      >
+        {lightboxImage && (
+          <div className="nx-lightbox-body">
+            <img
+              className="nx-lightbox-img"
+              src={lightboxImage.previewUrl ?? lightboxImage.thumbnailUrl ?? lightboxImage.downloadUrl}
+              alt={lightboxImage.fileName}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

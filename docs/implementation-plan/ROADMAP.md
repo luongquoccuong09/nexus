@@ -175,7 +175,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 - [x] **M6.28** Add accessible profile cards and timed availability states such as Busy, Away, and Do not disturb. Keep availability and notification preferences coordinated. → M1.11, M2.10, M4.4
 - [x] **M6.29** Add a private self chat for notes and files with one conversation per account. → M2.13, M3.3
 - [x] **M6.30** Add Community and Channel metadata editing and Channel archive/restore. Archived channels remain readable and enforce read-only behavior on the server. → M5.1, M5.2
-- [ ] **M6.31** Attach files to feed posts using the existing upload, scan, and download controls. Add a Channel Files view and links to the source posts. → M3.3, M3.6, M5.5, M6.25
+- [x] **M6.31** Attach files to feed posts using the existing upload, scan, and download controls. Add a Channel Files view and links to the source posts. → M3.3, M3.6, M5.5, M6.25
 - [ ] **M6.32** Add a Shared view with Files, Links, and Media filters for chats and channels. Support opening the source message or post. → M6.16, M6.25, M6.31
 - [ ] **M6.33** Add scoped People tags for targeted mentions and authorized tag management. → M4.2, M5.2
 - [ ] **M6.34** Add short voice notes with explicit microphone permission, preview before sending, and accessible playback. Review approved audio formats and limits under D08. → M3.2, M3.6, M6.27

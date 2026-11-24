@@ -11,6 +11,7 @@ using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
+using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.Files;
 
@@ -18,6 +19,7 @@ public sealed record AttachmentDto(
     Guid Id,
     Guid ConversationId,
     Guid? MessageId,
+    Guid? PostId,
     Guid UploaderUserId,
     string ClientUploadId,
     string FileName,
@@ -75,6 +77,10 @@ public static class FilesEndpoints
         app.MapPost(prefix + "/conversations/{conversationId:guid}/attachments", HandleUploadAttachmentAsync);
         app.MapGet(prefix + "/conversations/{conversationId:guid}/attachments/pending", HandleCheckPendingAttachmentsAsync);
         app.MapGet(prefix + "/conversations/{conversationId:guid}/files", HandleListConversationFilesAsync);
+        if (string.Equals(prefix, OrganizationScope.Api, StringComparison.Ordinal))
+        {
+            app.MapGet(prefix + "/channels/{conversationId:guid}/files", HandleListConversationFilesAsync);
+        }
 
         var files = app.MapGroup(prefix + "/files/{attachmentId:guid}");
         files.MapGet("/download", HandleDownloadAttachmentAsync);
@@ -92,6 +98,7 @@ public static class FilesEndpoints
             a.Id,
             a.ConversationId,
             a.MessageId,
+            a.PostId,
             a.UploaderUserId,
             a.ClientUploadId,
             a.FileName,
@@ -405,6 +412,92 @@ public static class FilesEndpoints
             return Results.Forbid();
         }
 
+        if (access.Conversation.Kind == ConversationKind.Channel)
+        {
+            var channelQuery =
+                from a in db.Attachments.AsNoTracking()
+                join p in db.ChannelPosts.AsNoTracking() on a.PostId equals p.Id
+                join u in db.OrganizationPeople.AsNoTracking() on a.UploaderUserId equals u.Id into uploaderJoin
+                from uploader in uploaderJoin.DefaultIfEmpty()
+                where a.ConversationId == conversationId
+                      && a.State == AttachmentState.Attached
+                      && a.PostId != null
+                      && p.ConversationId == conversationId
+                      && p.OrganizationId == actor.OrganizationId
+                      && p.DeletedAt == null
+                select new
+                {
+                    Attachment = a,
+                    PostId = p.Id,
+                    PostTitle = p.Title,
+                    UploaderDisplayName = uploader != null ? uploader.DisplayName : "Member"
+                };
+
+            if (before is { } chTimestamp)
+            {
+                var utc = chTimestamp.ToUniversalTime();
+                channelQuery = beforeId is { } chBeforeId
+                    ? channelQuery.Where(x => x.Attachment.CreatedAt < utc ||
+                        (x.Attachment.CreatedAt == utc && x.Attachment.Id.CompareTo(chBeforeId) < 0))
+                    : channelQuery.Where(x => x.Attachment.CreatedAt < utc);
+            }
+
+            var chRows = await channelQuery
+                .OrderByDescending(x => x.Attachment.CreatedAt)
+                .ThenByDescending(x => x.Attachment.Id)
+                .Take(pageSize + 1)
+                .ToListAsync(ct);
+
+            var chHasMore = chRows.Count > pageSize;
+            if (chHasMore)
+            {
+                chRows = chRows.Take(pageSize).ToList();
+            }
+
+            var chItems = chRows.Select(x =>
+            {
+                var dto = ToDto(x.Attachment);
+                return new
+                {
+                    id = dto.Id,
+                    conversationId = dto.ConversationId,
+                    messageId = dto.MessageId,
+                    postId = x.PostId,
+                    postTitle = x.PostTitle,
+                    uploaderUserId = dto.UploaderUserId,
+                    uploaderDisplayName = x.UploaderDisplayName,
+                    clientUploadId = dto.ClientUploadId,
+                    fileName = dto.FileName,
+                    contentType = dto.ContentType,
+                    sizeBytes = dto.SizeBytes,
+                    sha256Hex = dto.Sha256Hex,
+                    imageWidth = dto.ImageWidth,
+                    imageHeight = dto.ImageHeight,
+                    width = dto.ImageWidth,
+                    height = dto.ImageHeight,
+                    hasThumbnail = dto.ThumbnailUrl is not null,
+                    state = dto.State,
+                    scanStatus = dto.ScanStatus,
+                    downloadUrl = dto.DownloadUrl,
+                    thumbnailUrl = dto.ThumbnailUrl,
+                    previewUrl = dto.PreviewUrl,
+                    sourceLink = ContentLinkCodec.Encode("p", actor.OrganizationId, conversationId, x.PostId),
+                    createdAt = dto.CreatedAt
+                };
+            }).ToList();
+
+            var chQuota = await BuildQuotaSummaryAsync(db, actorId, conversationId, policyOptions.Value, ct);
+            return Results.Ok(new
+            {
+                items = chItems,
+                hasMore = chHasMore,
+                nextBefore = chItems.Count > 0 ? chItems[^1].createdAt : (DateTimeOffset?)null,
+                nextBeforeId = chItems.Count > 0 ? chItems[^1].id : (Guid?)null,
+                isArchived = access.Conversation.ArchivedAt is not null,
+                quota = chQuota
+            });
+        }
+
         var query = db.Attachments
             .AsNoTracking()
             .Where(a => a.ConversationId == conversationId && a.State == AttachmentState.Attached && a.MessageId != null)
@@ -642,6 +735,17 @@ public static class FilesEndpoints
                 .SingleOrDefaultAsync(ct);
 
             if (!msgSeq.HasValue || msgSeq.Value <= access.VisibleFromSeq)
+            {
+                return (null, Results.Forbid());
+            }
+        }
+
+        // Prevent downloading attachments of soft-deleted channel posts
+        if (attachment.PostId.HasValue)
+        {
+            var postActive = await db.ChannelPosts.AsNoTracking()
+                .AnyAsync(p => p.Id == attachment.PostId.Value && p.ConversationId == attachment.ConversationId && p.DeletedAt == null, ct);
+            if (!postActive)
             {
                 return (null, Results.Forbid());
             }

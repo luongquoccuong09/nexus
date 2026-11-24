@@ -761,6 +761,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
+                    b.Property<Guid?>("PostId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("post_id");
+
                     b.Property<string>("ScanDetail")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
@@ -804,6 +808,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasIndex("OrganizationId");
 
+                    b.HasIndex("PostId")
+                        .HasDatabaseName("ix_attachments_post_id")
+                        .HasFilter("post_id IS NOT NULL");
+
                     b.HasIndex("State", "CreatedAt")
                         .HasDatabaseName("ix_attachments_state_created");
 
@@ -811,10 +819,18 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_attachments_uploader_client_upload_id");
 
+                    b.HasIndex("ConversationId", "CreatedAt", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("ix_attachments_channel_files")
+                        .HasFilter("state = 'Attached' AND post_id IS NOT NULL");
+
                     b.HasIndex("ConversationId", "State", "CreatedAt")
                         .HasDatabaseName("ix_attachments_conversation_state_created");
 
-                    b.ToTable("attachments", (string)null);
+                    b.ToTable("attachments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_attachments_single_parent", "NOT (message_id IS NOT NULL AND post_id IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Identity.AdminPasswordResetLinkEntity", b =>
@@ -2147,6 +2163,11 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Messaging.ChannelPostEntity", null)
+                        .WithMany()
+                        .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
                         .WithMany()

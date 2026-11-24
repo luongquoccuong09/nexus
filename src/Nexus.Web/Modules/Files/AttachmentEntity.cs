@@ -21,6 +21,7 @@ public sealed class AttachmentEntity
     public Guid? OrganizationId { get; set; }
     public Guid ConversationId { get; set; }
     public Guid? MessageId { get; set; }
+    public Guid? PostId { get; set; }
     public Guid UploaderUserId { get; set; }
     public required string ClientUploadId { get; set; }
     public required string FileName { get; set; }
@@ -42,13 +43,19 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
 {
     public void Configure(EntityTypeBuilder<AttachmentEntity> builder)
     {
-        builder.ToTable("attachments");
+        builder.ToTable("attachments", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_attachments_single_parent",
+                "NOT (message_id IS NOT NULL AND post_id IS NOT NULL)");
+        });
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id).HasColumnName("id");
         builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id").IsRequired();
         builder.Property(x => x.MessageId).HasColumnName("message_id");
+        builder.Property(x => x.PostId).HasColumnName("post_id");
         builder.Property(x => x.UploaderUserId).HasColumnName("uploader_user_id").IsRequired();
         builder.Property(x => x.ClientUploadId).HasColumnName("client_upload_id").HasMaxLength(128).IsRequired();
         builder.Property(x => x.FileName).HasColumnName("file_name").HasMaxLength(255).IsRequired();
@@ -68,6 +75,7 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
         builder.HasOne<OrganizationEntity>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<ConversationEntity>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<MessageEntity>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.SetNull);
+        builder.HasOne<ChannelPostEntity>().WithMany().HasForeignKey(x => x.PostId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.UploaderUserId).OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(x => new { x.UploaderUserId, x.ClientUploadId })
@@ -79,6 +87,15 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
 
         builder.HasIndex(x => x.MessageId)
             .HasDatabaseName("ix_attachments_message_id");
+
+        builder.HasIndex(x => x.PostId)
+            .HasFilter("post_id IS NOT NULL")
+            .HasDatabaseName("ix_attachments_post_id");
+
+        builder.HasIndex(x => new { x.ConversationId, x.CreatedAt, x.Id })
+            .IsDescending(false, true, true)
+            .HasFilter("state = 'Attached' AND post_id IS NOT NULL")
+            .HasDatabaseName("ix_attachments_channel_files");
 
         builder.HasIndex(x => new { x.State, x.CreatedAt })
             .HasDatabaseName("ix_attachments_state_created");

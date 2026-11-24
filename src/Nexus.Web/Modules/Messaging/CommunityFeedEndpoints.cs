@@ -8,6 +8,7 @@ using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Infrastructure.Storage;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
+using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Notifications;
 
@@ -19,7 +20,7 @@ public static class CommunityFeedEndpoints
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     public sealed record CreatePollInput(string Question, string[] Options, bool AllowMultiple = false, DateTimeOffset? ClosesAt = null);
-    public sealed record CreatePostRequest(string? Title, string Body, bool IsAnnouncement = false, bool RequiresAcknowledgment = false, CreatePollInput? Poll = null);
+    public sealed record CreatePostRequest(string? Title, string? Body, bool IsAnnouncement = false, bool RequiresAcknowledgment = false, CreatePollInput? Poll = null, Guid[]? AttachmentIds = null);
     public sealed record CreateCommentRequest(string Body);
     public sealed record PinPostRequest(bool IsPinned);
     public sealed record VotePollRequest(string[] OptionIds);
@@ -199,11 +200,19 @@ public static class CommunityFeedEndpoints
             ? 0
             : await CountEligibleRecipientsAsync(db, access.Community, ct);
 
+        var attachments = postIds.Count == 0
+            ? []
+            : await db.Attachments.AsNoTracking()
+                .Where(a => a.PostId != null && postIds.Contains(a.PostId.Value) && a.State == AttachmentState.Attached)
+                .OrderBy(a => a.CreatedAt)
+                .ToListAsync(ct);
+
         var commentsByPost = comments.GroupBy(c => c.PostId).ToDictionary(g => g.Key, g => g.ToList());
         var reactionsByPost = reactions.GroupBy(r => r.PostId).ToDictionary(g => g.Key, g => g.ToList());
         var acksByPost = acks.GroupBy(a => a.PostId).ToDictionary(g => g.Key, g => g.ToList());
         var pollByPost = polls.ToDictionary(p => p.PostId);
         var votesByPoll = votes.GroupBy(v => v.PollId).ToDictionary(g => g.Key, g => g.ToList());
+        var attachmentsByPost = attachments.GroupBy(a => a.PostId!.Value).ToDictionary(g => g.Key, g => g.ToList());
 
         var items = posts.Select(p =>
         {
@@ -277,7 +286,8 @@ public static class CommunityFeedEndpoints
                 createdAt = p.CreatedAt,
                 comments = postComments,
                 reactions = postReactions,
-                poll = pollDto
+                poll = pollDto,
+                attachments = (attachmentsByPost.GetValueOrDefault(p.Id) ?? []).Select(FilesEndpoints.ToDto).ToList()
             };
         }).ToList();
 
@@ -330,10 +340,20 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
-        var body = (request.Body ?? string.Empty).Trim();
-        if (body.Length is < 1 or > 8000)
+        var attachmentIds = (request.AttachmentIds ?? [])
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+
+        if (attachmentIds.Length > 10)
         {
-            return Results.BadRequest(new { code = "invalid_body", message = "Post body must be 1 to 8000 characters." });
+            return Results.BadRequest(new { code = "too_many_attachments", message = "At most 10 attachments per post." });
+        }
+
+        var body = (request.Body ?? string.Empty).Trim();
+        if ((body.Length == 0 && attachmentIds.Length == 0) || body.Length > 8000)
+        {
+            return Results.BadRequest(new { code = "invalid_body", message = "Post body must be 1 to 8000 characters, or include at least one attachment." });
         }
 
         var title = string.IsNullOrWhiteSpace(request.Title) ? null : request.Title.Trim();
@@ -343,6 +363,7 @@ public static class CommunityFeedEndpoints
         }
 
         PollEntity? poll = null;
+        List<PollOptionSpec>? pollSpecs = null;
         var now = DateTimeOffset.UtcNow;
         var post = new ChannelPostEntity
         {
@@ -374,29 +395,114 @@ public static class CommunityFeedEndpoints
                 return Results.BadRequest(new { code = "invalid_poll", message = "Poll requires a question and at least 2 distinct options." });
             }
 
-            var specs = cleanOptions.Select((label, idx) => new PollOptionSpec($"opt_{idx + 1}", label)).ToList();
+            pollSpecs = cleanOptions.Select((label, idx) => new PollOptionSpec($"opt_{idx + 1}", label)).ToList();
             poll = new PollEntity
             {
                 Id = Guid.CreateVersion7(),
                 PostId = post.Id,
                 Question = question,
-                OptionsJson = JsonSerializer.Serialize(specs, WebJson),
+                OptionsJson = JsonSerializer.Serialize(pollSpecs, WebJson),
                 AllowMultiple = request.Poll.AllowMultiple,
                 ClosesAt = request.Poll.ClosesAt,
                 CreatedAt = now
             };
         }
 
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        List<AttachmentEntity> pendingAttachments = [];
+        if (attachmentIds.Length > 0)
+        {
+            pendingAttachments = await db.Attachments
+                .Where(a => attachmentIds.Contains(a.Id) &&
+                            a.ConversationId == conversationId &&
+                            a.OrganizationId == actor.OrganizationId &&
+                            a.UploaderUserId == actorId &&
+                            a.State == AttachmentState.Pending &&
+                            a.MessageId == null &&
+                            a.PostId == null &&
+                            (a.ScanStatus == "clean" || a.ScanStatus == "skipped_prototype"))
+                .ToListAsync(ct);
+
+            if (pendingAttachments.Count != attachmentIds.Length)
+            {
+                return Results.BadRequest(new
+                {
+                    code = "invalid_attachments",
+                    message = "One or more attachments are missing, quarantined, already attached, or do not belong to you in this channel."
+                });
+            }
+        }
+
         db.ChannelPosts.Add(post);
-        await MentionOutbox.EnqueueAsync(db, authz, actor, access.Resource, conversationId, access.Community,
-            MentionOutbox.PostKind, post.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
+        foreach (var att in pendingAttachments)
+        {
+            att.PostId = post.Id;
+            att.State = AttachmentState.Attached;
+            att.AttachedAt = now;
+        }
+
         if (poll is not null)
         {
             db.Polls.Add(poll);
         }
 
+        if (!string.IsNullOrEmpty(body))
+        {
+            await MentionOutbox.EnqueueAsync(db, authz, actor, access.Resource, conversationId, access.Community,
+                MentionOutbox.PostKind, post.Id, body, now, push.PublicKey is not null || digest.IsEnabled, ct);
+        }
+
         await db.SaveChangesAsync(ct);
-        await fanout.NotifyCommunityFeedChangedAsync(access.Community.Id, conversationId, ct);
+        await tx.CommitAsync(ct);
+
+        var attachmentDtos = pendingAttachments
+            .OrderBy(a => a.CreatedAt)
+            .Select(FilesEndpoints.ToDto)
+            .ToList();
+
+        var totalRecipients = post.RequiresAcknowledgment
+            ? await CountEligibleRecipientsAsync(db, access.Community, ct)
+            : 0;
+
+        object? pollDto = poll is null ? null : new
+        {
+            id = poll.Id,
+            question = poll.Question,
+            allowMultiple = poll.AllowMultiple,
+            closesAt = poll.ClosesAt,
+            totalVoters = 0,
+            options = pollSpecs!.Select(opt => new { id = opt.Id, label = opt.Label, votes = 0, votedByMe = false }).ToList()
+        };
+
+        var postDto = new
+        {
+            id = post.Id,
+            conversationId,
+            authorUserId = actorId,
+            authorDisplayName = actor.DisplayName,
+            authorIsUnverified = actor.TrustLevel == TrustLevel.Unverified,
+            authorAvatarUrl = string.IsNullOrEmpty(actor.AvatarObjectKey) ? null : $"/api/organizations/{actor.OrganizationId}/people/{actor.Id}/avatar",
+            title = post.Title,
+            body = post.Body,
+            isAnnouncement = post.IsAnnouncement,
+            requiresAcknowledgment = post.RequiresAcknowledgment,
+            acknowledgedCount = 0,
+            totalRecipients,
+            acknowledgedByMe = false,
+            isPinned = false,
+            createdAt = post.CreatedAt,
+            comments = Array.Empty<object>(),
+            reactions = Array.Empty<object>(),
+            poll = pollDto,
+            attachments = attachmentDtos
+        };
+
+        await fanout.NotifyCommunityFeedChangedAsync(
+            access.Community.Id,
+            conversationId,
+            new { type = "post_created", communityId = access.Community.Id, conversationId, post = postDto },
+            ct);
 
         return Results.Created($"/api/organizations/{actor.OrganizationId}/posts/{post.Id}", new
         {
@@ -407,6 +513,7 @@ public static class CommunityFeedEndpoints
             isAnnouncement = post.IsAnnouncement,
             requiresAcknowledgment = post.RequiresAcknowledgment,
             pollId = poll?.Id,
+            attachments = attachmentDtos,
             createdAt = post.CreatedAt
         });
     }

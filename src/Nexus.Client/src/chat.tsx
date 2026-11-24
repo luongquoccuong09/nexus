@@ -81,6 +81,7 @@ export interface AttachmentItem {
   id: string;
   conversationId: string;
   messageId?: string | null;
+  postId?: string | null;
   uploaderUserId: string;
   clientUploadId: string;
   fileName: string;
@@ -171,6 +172,7 @@ export interface CommunityFeedDelta {
     | 'comment'
     | 'pin'
     | 'ownership'
+    | 'post_created'
     | 'community_updated'
     | 'channel_updated'
     | 'channel_archived'
@@ -178,6 +180,7 @@ export interface CommunityFeedDelta {
   postId?: string;
   communityId?: string;
   channelId?: string;
+  conversationId?: string;
   name?: string;
   description?: string | null;
   updatedAt?: string;
@@ -189,6 +192,23 @@ export interface CommunityFeedDelta {
   userId?: string;
   reacted?: boolean;
   isPinned?: boolean;
+  post?: {
+    id: string;
+    conversationId: string;
+    authorUserId: string;
+    authorDisplayName: string;
+    authorAvatarUrl?: string | null;
+    title?: string | null;
+    body: string;
+    isAnnouncement: boolean;
+    requiresAcknowledgment: boolean;
+    acknowledgedCount: number;
+    totalRecipients: number;
+    acknowledgedByMe: boolean;
+    isPinned: boolean;
+    createdAt: string;
+    attachments?: AttachmentItem[];
+  };
   comment?: {
     id: string;
     postId: string;
