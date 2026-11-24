@@ -82,6 +82,24 @@ The full pipeline passed 183 integration tests, 49 client tests, the Release bui
 
 The two-account Edge QA passed at `1440×900`, `390×844`, and `320×700` in both themes. Pins rendered locally in 1.7–2.8 ms and for the peer in 32.1–79.4 ms in the isolated run. The browser checked keyboard activation, private saving before the PUT reached the server, pinned and saved dialogs, deep-link focus, synchronized unpinning, and no overflow, duplicate transition, timeline reload, unexpected console error, or network error. A concurrent full-suite run contended for the development machine and measured one pin above 200 ms. The isolated run met the latency target in all six layouts.
 
+## M6.5 Mark unread
+
+**Verified on November 24, 2026.** Marking a root message unread stores its sequence and an independent marker version on the member row. The shared message sequence and the member's `last_read_seq` stay monotonic. The Unread filter and badges count visible roots from the marker or beyond the read cursor. A read acknowledgement can clear only the marker version it observed. Rejoining a Group resets the marker with the history boundary.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-ef-10\dotnet-ef.exe'
+& $efCommand migrations add ManualChatUnread --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter 'FullyQualifiedName~RichChatManualUnreadTests|FullyQualifiedName~MessagingM2Tests' --verbosity minimal
+pwsh -File ./scripts/Run-Tests.ps1
+node (Join-Path $env:TEMP 'nexus-m65-qa\manual-unread.mjs')
+git diff --check
+git diff --cached --check
+```
+
+The seven focused PostgreSQL 17 cases passed, including older cursor retries, stale marker acknowledgements, thread isolation, current membership, Group rejoin, and two Organization scopes. The full pipeline passed 184 integration tests, 49 client tests, the Release builds with zero warnings or errors, and the repository audits. The standard run skipped the opt-in Docker Monitor smoke test.
+
+The isolated Edge walkthrough used two accounts and a second session for the marking account. In all six viewport and theme combinations it verified keyboard activation, privacy, Unread filtering, and clearing on reopening. The badge rendered locally in 2.1–3.8 ms and on the other session in 29.4–56.5 ms. A held request on the narrow dark layout confirmed that the local badge appeared before commit.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

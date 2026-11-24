@@ -26,7 +26,11 @@ public static class MessagingEndpoints
 
     public sealed record SendMessageRequest(string ClientMsgId, string? Body, Guid[]? AttachmentIds = null,
         bool PreserveReadState = false, Guid? ParentMessageId = null);
-    public sealed record MarkReadRequest(long LastReadSeq);
+    public sealed record MarkReadRequest(long LastReadSeq, long? ManualUnreadVersion = null);
+    public sealed record MarkUnreadRequest(long? FromSeq = null);
+
+    private sealed record ReadState(Guid ConversationId, long LastReadSeq, long UnreadCount,
+        long? ManualUnreadFromSeq, long ManualUnreadVersion);
 
     public sealed record ReactionSummaryDto(string Emoji, int Count, bool ReactedByMe);
 
@@ -68,6 +72,8 @@ public static class MessagingEndpoints
         convs.MapGet("/messages", HandleGetMessagesAsync);
         convs.MapGet("/changes", HandleGetChangesAsync);
         convs.MapPut("/read", HandleMarkReadAsync);
+        convs.MapPut("/unread", HandleMarkUnreadAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
 
         app.MapGet(prefix + "/sync/reconcile", HandleReconcileAsync);
         return app;
@@ -698,6 +704,8 @@ public static class MessagingEndpoints
                     nextSeq = c.NextSeq,
                     latestMainSeq = c.Kind == ConversationKind.Channel ? c.NextSeq : c.LatestMainSeq,
                     lastReadSeq = m.LastReadSeq,
+                    manualUnreadFromSeq = m.ManualUnreadFromSeq,
+                    manualUnreadVersion = m.ManualUnreadVersion,
                     minAvailableChangeSeq = c.MinAvailableChangeSeq,
                     updatedAt = c.UpdatedAt
                 })
@@ -718,52 +726,91 @@ public static class MessagingEndpoints
         CancellationToken ct)
     {
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
-        var actor = await db.FindOrganizationActorAsync(actorId, ct);
-        if (actor is null) return Results.Unauthorized();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var (conv, member, error) = await ResolveReadStateAccessAsync(db, authz, actorId, conversationId, ct);
+        if (conv is null || member is null) return error!;
 
-        var conv = await db.Conversations.AsNoTracking()
-            .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == db.ConversationOrganizationId, ct);
-        var member = await db.ConversationMembers.AsNoTracking()
-            .SingleOrDefaultAsync(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null, ct);
-
-        var kind = conv?.Kind.ToResourceKind() ?? ResourceKind.GroupChat;
-        var targetIsSelf = conv?.Kind == ConversationKind.Self && conv.CreatedByUserId == actorId;
-        if (conv is null || member is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, new ResourceContext(kind, actor.OrganizationId, MembershipRole: member.Role, TargetIsSelf: targetIsSelf)))
-        {
-            return Results.Forbid();
-        }
-
-        var requested = Math.Max(0L, request.LastReadSeq);
-
-        // Atomic monotonic GREATEST(last_read_seq, LEAST(@seq, @maxSeq)) (M2.7).
         var latestMainSeq = conv.Kind == ConversationKind.Channel ? conv.NextSeq : conv.LatestMainSeq;
+        var requested = Math.Clamp(request.LastReadSeq, 0L, latestMainSeq);
+        var clear = member.ManualUnreadFromSeq is { } marker && requested >= marker &&
+            request.ManualUnreadVersion == member.ManualUnreadVersion;
+
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE conversation_members
-            SET last_read_seq = GREATEST(last_read_seq, LEAST({requested}, {latestMainSeq}))
+            SET last_read_seq = GREATEST(last_read_seq, {requested}),
+                manual_unread_from_seq = CASE WHEN {clear} THEN NULL ELSE manual_unread_from_seq END,
+                manual_unread_version = manual_unread_version + CASE WHEN {clear} THEN 1 ELSE 0 END
             WHERE conversation_id = {conversationId} AND user_id = {actorId} AND left_at IS NULL
             """, ct);
-
-        var updatedSeq = await db.ConversationMembers
-            .AsNoTracking()
-            .Where(m => m.ConversationId == conversationId && m.UserId == actorId && m.LeftAt == null)
-            .Select(m => (long?)m.LastReadSeq)
-            .SingleOrDefaultAsync(ct);
-
-        if (updatedSeq is null) return Results.Forbid();
-        var readBoundary = Math.Max(updatedSeq.Value, member.VisibleFromSeq);
-        var unreadCount = conv.Kind == ConversationKind.Channel
-            ? Math.Max(0L, conv.NextSeq - updatedSeq.Value)
-            : await db.Messages.LongCountAsync(m => m.ConversationId == conversationId &&
-                m.ParentMessageId == null && m.Seq > readBoundary, ct);
-
-        await fanout.NotifyReadStateUpdatedAsync(actorId, conversationId, updatedSeq.Value, unreadCount, ct);
-
-        return Results.Ok(new
+        member.LastReadSeq = Math.Max(member.LastReadSeq, requested);
+        if (clear)
         {
-            conversationId,
-            lastReadSeq = updatedSeq,
-            unreadCount
-        });
+            member.ManualUnreadFromSeq = null;
+            member.ManualUnreadVersion++;
+        }
+        var state = await BuildReadStateAsync(db, conv, member, ct);
+        await transaction.CommitAsync(ct);
+        await NotifyReadStateAsync(fanout, actorId, state, ct);
+        return Results.Ok(state);
+    }
+
+    private static async Task<IResult> HandleMarkUnreadAsync(
+        HttpContext ctx, Guid conversationId, MarkUnreadRequest request, [FromServices] NexusDbContext db,
+        IAuthorizationService authz, MessagingFanoutService fanout, CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var (conv, member, error) = await ResolveReadStateAccessAsync(db, authz, actorId, conversationId, ct);
+        if (conv is null || member is null) return error!;
+        if (conv.Kind == ConversationKind.Channel) return Results.NotFound();
+
+        var fromSeq = request.FromSeq ?? conv.LatestMainSeq;
+        if (fromSeq <= member.VisibleFromSeq || !await db.Messages.AnyAsync(message =>
+                message.ConversationId == conversationId && message.ParentMessageId == null && message.Seq == fromSeq, ct))
+        {
+            return Results.NotFound(new { code = "message_not_found", message = "Message not found." });
+        }
+        member.ManualUnreadFromSeq = fromSeq;
+        member.ManualUnreadVersion++;
+        await db.ConversationMembers.Where(item => item.ConversationId == conversationId && item.UserId == actorId && item.LeftAt == null)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.ManualUnreadFromSeq, fromSeq)
+                .SetProperty(item => item.ManualUnreadVersion, member.ManualUnreadVersion), ct);
+        var state = await BuildReadStateAsync(db, conv, member, ct);
+        await transaction.CommitAsync(ct);
+        await NotifyReadStateAsync(fanout, actorId, state, ct);
+        return Results.Ok(state);
+    }
+
+    private static async Task<ReadState> BuildReadStateAsync(
+        NexusDbContext db, ConversationEntity conv, ConversationMemberEntity member, CancellationToken ct)
+    {
+        var after = Math.Max(member.VisibleFromSeq, member.ManualUnreadFromSeq is { } marker
+            ? Math.Min(marker - 1, member.LastReadSeq) : member.LastReadSeq);
+        var unreadCount = conv.Kind == ConversationKind.Channel
+            ? Math.Max(0L, conv.NextSeq - member.LastReadSeq)
+            : await db.Messages.LongCountAsync(message => message.ConversationId == conv.Id &&
+                message.ParentMessageId == null && message.Seq > after, ct);
+        return new ReadState(conv.Id, member.LastReadSeq, unreadCount, member.ManualUnreadFromSeq, member.ManualUnreadVersion);
+    }
+
+    private static Task NotifyReadStateAsync(MessagingFanoutService fanout, Guid userId, ReadState state, CancellationToken ct) =>
+        fanout.NotifyReadStateUpdatedAsync(userId, state.ConversationId, state.LastReadSeq, state.UnreadCount,
+            state.ManualUnreadFromSeq, state.ManualUnreadVersion, ct);
+
+    private static async Task<(ConversationEntity? Conversation, ConversationMemberEntity? Member, IResult? Error)> ResolveReadStateAccessAsync(
+        NexusDbContext db, IAuthorizationService authz, Guid userId, Guid conversationId, CancellationToken ct)
+    {
+        var conv = await LockConversationAsync(db, conversationId, ct);
+        var actor = await db.ActiveScopePeople.AsNoTracking().SingleOrDefaultAsync(item => item.Id == userId, ct);
+        if (actor is null) return (null, null, Results.Unauthorized());
+        if (conv is null) return (null, null, Results.Forbid());
+        var member = await db.ConversationMembers.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.ConversationId == conversationId && item.UserId == userId && item.LeftAt == null, ct);
+        var resource = new ResourceContext(conv.Kind.ToResourceKind(), actor.OrganizationId, MembershipRole: member?.Role,
+            TargetIsSelf: conv.Kind == ConversationKind.Self && conv.CreatedByUserId == userId);
+        return member is not null && authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, resource)
+            ? (conv, member, null) : (null, null, Results.Forbid());
     }
 
     // Group membership changes and chat mutations serialize on the same row.

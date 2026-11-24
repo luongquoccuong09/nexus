@@ -597,6 +597,14 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("left_at");
 
+                    b.Property<long?>("ManualUnreadFromSeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("manual_unread_from_seq");
+
+                    b.Property<long>("ManualUnreadVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("manual_unread_version");
+
                     b.Property<bool>("Muted")
                         .HasColumnType("boolean")
                         .HasColumnName("muted");

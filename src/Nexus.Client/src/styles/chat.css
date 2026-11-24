@@ -461,7 +461,7 @@
   }
 
   .nx-msg-bubble:has(~ .nx-msg-hover-bar .nx-msg-bookmark-action) {
-    max-width: min(620px, calc(100% - 350px));
+    max-width: min(620px, calc(100% - 378px));
   }
 }
 

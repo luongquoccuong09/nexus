@@ -15,8 +15,9 @@ export function useChatReading(
   content: unknown,
   outgoingCount: number,
   lastReadSeq: number,
-  markRead: (id: string, seq: number) => Promise<number>,
-  reconnectCount: number
+  markRead: (id: string, seq: number, manualUnreadVersion?: number) => Promise<number>,
+  reconnectCount: number,
+  manualUnread?: { fromSeq: number; version: number }
 ) {
   const feedRef = useRef<HTMLDivElement | null>(null);
   const positions = useRef(new Map<string, ScrollPosition>());
@@ -35,6 +36,7 @@ export function useChatReading(
     const readThrough = Math.max(lastReadSeq, acknowledged.current.get(conversationId) ?? 0);
     let highestVisible = readThrough;
     let highestRendered = readThrough;
+    let visibleSeq = 0;
     let anchor: ScrollPosition['anchor'];
     for (const element of children) {
       const rect = element.getBoundingClientRect();
@@ -42,7 +44,10 @@ export function useChatReading(
       if (!anchor && rect.bottom > bounds.top) anchor = { seq: String(seq), offset: rect.top - bounds.top };
       highestRendered = Math.max(highestRendered, seq);
       const overlap = Math.min(bounds.bottom, rect.bottom) - Math.max(bounds.top, rect.top);
-      if (overlap >= Math.min(16, rect.height) && overlap > 0) highestVisible = Math.max(highestVisible, seq);
+      if (overlap >= Math.min(16, rect.height) && overlap > 0) {
+        highestVisible = Math.max(highestVisible, seq);
+        visibleSeq = Math.max(visibleSeq, seq);
+      }
     }
     positions.current.set(conversationId, {
       followEnd: feed.scrollHeight - feed.clientHeight - feed.scrollTop <= bottomThreshold,
@@ -50,19 +55,20 @@ export function useChatReading(
       anchor
     });
     setShowNewMessages(highestRendered > highestVisible);
-    if (highestVisible <= readThrough || acknowledging.current.has(conversationId)) return;
+    const markerVersion = manualUnread && visibleSeq >= manualUnread.fromSeq ? manualUnread.version : undefined;
+    if ((highestVisible <= readThrough && markerVersion === undefined) || acknowledging.current.has(conversationId)) return;
 
     timer.current = window.setTimeout(() => {
       if (document.visibilityState !== 'visible' || feedRef.current !== feed || feed.clientHeight === 0) return;
       acknowledging.current.set(conversationId, highestVisible);
-      void markRead(conversationId, highestVisible)
+      void markRead(conversationId, highestVisible, markerVersion)
         .then(confirmed => {
           acknowledged.current.set(conversationId, Math.max(confirmed, acknowledged.current.get(conversationId) ?? 0));
         })
         .catch(() => { /* Scroll, visibility, or reconnect checks will retry visible messages. */ })
         .finally(() => acknowledging.current.delete(conversationId));
     }, readDelay);
-  }, [conversationId, lastReadSeq, markRead, visible]);
+  }, [conversationId, lastReadSeq, manualUnread?.fromSeq, manualUnread?.version, markRead, visible]);
 
   const scheduleMeasure = useCallback(() => {
     window.cancelAnimationFrame(requestFrame.current);

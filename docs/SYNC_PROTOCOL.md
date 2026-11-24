@@ -82,6 +82,12 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 - Saving is private and keeps a separate per-message version. `SavedMessageChanged` goes only to the caller's sessions in the requested scope, so saves do not move the shared conversation cursor. History snapshots include the caller's saved state. Reconnect rechecks saved state for cached messages in batches of 50. Reopening the Saved view or a conversation rechecks current access.
 - Recall removes the pin and all saved references. Its existing live and replay markers remove the message from the client lists.
 
+### Manual unread (`M6.5`)
+
+- A manual marker lives on the caller's conversation membership. The unread count includes visible main messages beyond `last_read_seq` or at and after `manual_unread_from_seq`. Thread replies keep their independent unread state.
+- Marking unread advances the marker version and keeps `last_read_seq` monotonic. The user's own sessions receive the state through `ReadStateUpdated`. An older read request can advance `last_read_seq` with `GREATEST`; it can clear a marker only if it acknowledges the current marker version and reaches the marked sequence.
+- The SPA returns to the conversation list when it marks the active chat unread. Reopening a chat observes the marker version and acknowledges it when a qualifying row is displayed. A marker received in an already-open chat stays pending until the reader revisits it.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |

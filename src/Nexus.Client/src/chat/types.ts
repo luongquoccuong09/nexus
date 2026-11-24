@@ -13,6 +13,8 @@ export interface ConversationListItem {
   latestMainSeq?: number;
   changeSeq: number;
   lastReadSeq: number;
+  manualUnreadFromSeq?: number | null;
+  manualUnreadVersion?: number;
   unreadCount: number;
   memberCount: number;
   updatedAt?: string;
@@ -33,6 +35,14 @@ export interface ConversationListItem {
     isBlockedByMe?: boolean;
     avatarUrl?: string | null;
   } | null;
+}
+
+export interface ChatReadState {
+  conversationId: string;
+  lastReadSeq: number;
+  unreadCount: number;
+  manualUnreadFromSeq: number | null;
+  manualUnreadVersion: number;
 }
 
 export interface ReactionSummary {

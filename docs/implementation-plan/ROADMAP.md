@@ -140,7 +140,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 - [x] **M6.2** Threads (UX-02) with parent_message_id, reply counts, following and unread state. ⚑ D05
 - [x] **M6.3** Edit/recall (UX-05) with version, If-Match, the D12 time limit and a recalled-message marker. ⚑ D12
 - [x] **M6.4** Pin and save messages (UX-03/04) with PUT/DELETE.
-- [ ] **M6.5** Mark unread using manual_unread_from_seq.
+- [x] **M6.5** Mark unread using manual_unread_from_seq.
 - [ ] **M6.6** Search messages with membership enforced inside the query. Filter by sender, channel, date and attachment.
 - [ ] **M6.7** Ctrl+K quick switcher and keyboard navigation (UX-10).
 - [ ] **M6.8** Optional DM read receipts. ⚑ D09

@@ -54,6 +54,8 @@ public sealed class ConversationMemberEntity
     public Guid UserId { get; set; }
     public ResourceRole Role { get; set; } = ResourceRole.Member;
     public long LastReadSeq { get; set; }
+    public long? ManualUnreadFromSeq { get; set; }
+    public long ManualUnreadVersion { get; set; }
     public long VisibleFromSeq { get; set; }
     public bool Muted { get; set; }
     public DateTimeOffset JoinedAt { get; set; }
@@ -137,6 +139,8 @@ public sealed class ConversationMemberEntityConfiguration : IEntityTypeConfigura
         builder.Property(x => x.UserId).HasColumnName("user_id").IsRequired();
         builder.Property(x => x.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(x => x.LastReadSeq).HasColumnName("last_read_seq").IsRequired();
+        builder.Property(x => x.ManualUnreadFromSeq).HasColumnName("manual_unread_from_seq");
+        builder.Property(x => x.ManualUnreadVersion).HasColumnName("manual_unread_version");
         builder.Property(x => x.VisibleFromSeq).HasColumnName("visible_from_seq").IsRequired();
         builder.Property(x => x.Muted).HasColumnName("muted").IsRequired();
         builder.Property(x => x.JoinedAt).HasColumnName("joined_at").IsRequired();

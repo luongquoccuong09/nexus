@@ -1,7 +1,7 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
 import { CSSProperties, ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, Mic, MoreVertical, Paperclip, Pin, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, Mail, MessageSquare, Mic, MoreVertical, Paperclip, Pin, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
 import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
@@ -59,6 +59,7 @@ import {
 import {
   ChatDelta,
   ChatMessageItem,
+  ChatReadState,
   ChatWorkspaceProps,
   CommunityFeedDelta,
   ConversationCursor,
@@ -143,14 +144,22 @@ export type {
   StorageQuotaSummary
 };
 
-function applyReadState(conversation: ConversationListItem, lastReadSeq: number, unreadCount?: number): ConversationListItem {
-  if (lastReadSeq < conversation.lastReadSeq) return conversation;
-  if (lastReadSeq === conversation.lastReadSeq && unreadCount === undefined) return conversation;
+function applyReadState(conversation: ConversationListItem, lastReadSeq: number, unreadCount?: number,
+  manual?: Pick<ChatReadState, 'manualUnreadFromSeq' | 'manualUnreadVersion'>): ConversationListItem {
+  const existingVersion = conversation.manualUnreadVersion ?? 0;
+  const staleMarker = !!manual && manual.manualUnreadVersion < existingVersion;
+  if (lastReadSeq < conversation.lastReadSeq && (!manual || manual.manualUnreadVersion <= existingVersion)) return conversation;
+  if (!manual && lastReadSeq === conversation.lastReadSeq && unreadCount === undefined) return conversation;
+  const manualFrom = manual && !staleMarker ? manual.manualUnreadFromSeq : conversation.manualUnreadFromSeq;
+  const read = Math.max(lastReadSeq, conversation.lastReadSeq);
 
   return {
     ...conversation,
-    lastReadSeq,
-    unreadCount: unreadCount ?? ((conversation.latestMainSeq ?? conversation.nextSeq) <= lastReadSeq ? 0 : conversation.unreadCount)
+    lastReadSeq: read,
+    manualUnreadFromSeq: manualFrom,
+    manualUnreadVersion: manual && !staleMarker ? manual.manualUnreadVersion : existingVersion,
+    unreadCount: staleMarker ? conversation.unreadCount : unreadCount ??
+      (!manualFrom && (conversation.latestMainSeq ?? conversation.nextSeq) <= read ? 0 : conversation.unreadCount)
   };
 }
 
@@ -354,6 +363,10 @@ export function ChatWorkspace({
   const [bookmarkRevision, setBookmarkRevision] = useState(0);
   const [pendingBookmarks, setPendingBookmarks] = useState(new Map<string, PendingBookmark>());
   const bookmarkRequests = useRef(new Map<string, PendingBookmark>());
+  const unreadRequests = useRef(new Map<string, number>());
+  const [pendingUnread, setPendingUnread] = useState(new Map<string, number>());
+  const skipAutoSelect = useRef(false);
+  const [observedUnreadVersion, setObservedUnreadVersion] = useState<number | null>(null);
   const bookmarkStates = useRef(new Map<string, { delta: MessagePinDelta | MessageSaveDelta; changeSeq: number }>());
   const savedSyncNeeded = useRef(new Set<string>());
   const [mutationError, setMutationError] = useState<{ conversationId: string; message: string } | null>(null);
@@ -564,20 +577,26 @@ export function ChatWorkspace({
       conversationPages.current = { count: older ? conversationPages.current.count + pages : pages, next };
       setMoreConversations(next !== null);
       setConversations(previous => {
-        const readByConversation = new Map(previous.map(item => [item.id, item.lastReadSeq]));
+        const readByConversation = new Map(previous.map(item => [item.id, item]));
         const merged = new Map(older ? previous.map(item => [item.id, item]) : []);
         for (const item of items) {
           const preview = item.lastMessagePreview;
           const mutation = preview?.messageId ? confirmedMutations.current.get(preview.messageId)?.delta : undefined;
           const projected = preview && mutation ? { ...item, lastMessagePreview: applyPreviewMutation(preview, mutation) } : item;
-          merged.set(item.id, applyReadState(projected, readByConversation.get(item.id) ?? 0));
+          const prior = readByConversation.get(item.id);
+          const newerMark = prior && (prior.manualUnreadVersion ?? 0) > (projected.manualUnreadVersion ?? 0);
+          merged.set(item.id, newerMark
+            ? applyReadState(projected, prior.lastReadSeq, prior.unreadCount, {
+              manualUnreadFromSeq: prior.manualUnreadFromSeq ?? null, manualUnreadVersion: prior.manualUnreadVersion ?? 0
+            })
+            : applyReadState(projected, prior?.lastReadSeq ?? 0));
         }
         return [...merged.values()].sort((a, b) => {
           const diff = Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? '');
           return diff || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || b.id.localeCompare(a.id);
         });
       });
-      if (!activeConvRef.current && items.length > 0 && window.innerWidth > 860) {
+      if (!activeConvRef.current && !skipAutoSelect.current && items.length > 0 && window.innerWidth > 860) {
         onSelectConversation(items[0].id);
       }
       if (!older) {
@@ -600,24 +619,32 @@ export function ChatWorkspace({
     }
   }, [offlineScope, onSelectConversation]);
 
-  useEffect(() => {
-    onUnreadTotalChange(conversations.reduce((sum, item) => sum + item.unreadCount, 0));
-  }, [conversations, onUnreadTotalChange]);
+  const displayedConversations = useMemo(() => conversations.map(item => {
+    const from = pendingUnread.get(item.id);
+    if (from === undefined) return item;
+    const visibleUnread = messagesCacheRef.current.get(item.id)?.items.filter(message => message.seq >= from).length ?? 0;
+    return { ...item, unreadCount: Math.max(item.unreadCount, visibleUnread, 1) };
+  }), [conversations, pendingUnread]);
 
-  const markRead = useCallback(async (convId: string, seq: number) => {
+  useEffect(() => {
+    onUnreadTotalChange(displayedConversations.reduce((sum, item) => sum + item.unreadCount, 0));
+  }, [displayedConversations, onUnreadTotalChange]);
+
+  const markRead = useCallback(async (convId: string, seq: number, manualUnreadVersion?: number) => {
     const response = await fetch(`/api/conversations/${convId}/read`, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lastReadSeq: seq })
+      body: JSON.stringify({ lastReadSeq: seq, manualUnreadVersion })
     });
     if ([401, 403, 404].includes(response.status)) discardConversation(convId);
     if (!response.ok) throw new Error('Unable to update the read cursor.');
-    const { lastReadSeq, unreadCount } = await response.json();
+    const state: ChatReadState = await response.json();
+    const { lastReadSeq, unreadCount } = state;
     const cached = messagesCacheRef.current.get(convId);
     if (cached && lastReadSeq > cached.lastRead) messagesCacheRef.current.set(convId, { ...cached, lastRead: lastReadSeq });
-    setConversations(items => items.map(item => item.id === convId ? applyReadState(item, lastReadSeq, unreadCount) : item));
-    return lastReadSeq as number;
+    setConversations(items => items.map(item => item.id === convId ? applyReadState(item, lastReadSeq, unreadCount, state) : item));
+    return lastReadSeq;
   }, [discardConversation]);
 
   const fetchMessagePage = useCallback(async (convId: string, query = ''): Promise<ChatMessagePage | null> => {
@@ -1307,14 +1334,15 @@ export function ChatWorkspace({
       }
     });
 
-    connection.on('ReadStateUpdated', (evt: { conversationId: string; lastReadSeq: number; unreadCount?: number }) => {
+    connection.on('ReadStateUpdated', (evt: ChatReadState) => {
       const cached = messagesCacheRef.current.get(evt.conversationId);
       if (cached && evt.lastReadSeq > cached.lastRead) {
         messagesCacheRef.current.set(evt.conversationId, { ...cached, lastRead: evt.lastReadSeq });
       }
       setConversations(previous => previous.map(item =>
-        item.id === evt.conversationId ? applyReadState(item, evt.lastReadSeq, evt.unreadCount) : item
+        item.id === evt.conversationId ? applyReadState(item, evt.lastReadSeq, evt.unreadCount, evt) : item
       ));
+      if (evt.manualUnreadFromSeq && unreadOnlyRef.current) scheduleConversationRefresh();
     });
 
     connection.on('ThreadStateUpdated', (evt: ThreadState) => {
@@ -1641,6 +1669,32 @@ export function ChatWorkspace({
     })();
   };
 
+  async function markUnread(message: ChatMessageItem) {
+    const { conversationId, seq } = message;
+    if (message.pending || message.parentMessageId || unreadRequests.current.has(conversationId)) return;
+    unreadRequests.current.set(conversationId, seq);
+    setPendingUnread(new Map(unreadRequests.current));
+    skipAutoSelect.current = true;
+    setError('');
+    onSelectConversation(null);
+    requestAnimationFrame(() => document.getElementById(`nx-conversation-${conversationId}`)?.focus());
+    try {
+      const response = await protectedRequest(personalApiPath(`/api/conversations/${conversationId}/unread`), 'PUT', { fromSeq: seq });
+      if ([401, 403, 404].includes(response.status)) discardConversation(conversationId);
+      if (!response.ok) throw new Error('Unable to mark the conversation as unread.');
+      const state: ChatReadState = await response.json();
+      setConversations(items => items.map(item => item.id === conversationId
+        ? applyReadState(item, state.lastReadSeq, state.unreadCount, state) : item));
+      if (unreadOnlyRef.current) scheduleConversationRefresh();
+    } catch {
+      setError('Unable to mark the conversation as unread.');
+      if (!activeConvRef.current && !discarded.current.has(conversationId)) onSelectConversation(conversationId);
+    } finally {
+      unreadRequests.current.delete(conversationId);
+      setPendingUnread(new Map(unreadRequests.current));
+    }
+  }
+
   function focusAddReactionButton(messageId: string) {
     requestAnimationFrame(() => {
       addReactionWrapRefs.current.get(messageId)?.querySelector('button')?.focus();
@@ -1914,6 +1968,9 @@ export function ChatWorkspace({
   }, [moreMenuOpen]);
 
   const activeConv = conversations.find(c => c.id === selectedConversationId) ?? null;
+  useEffect(() => {
+    setObservedUnreadVersion(visible && activeConv ? activeConv.manualUnreadVersion ?? 0 : null);
+  }, [activeConv?.id, visible]);
   const activeId = activeConv?.id;
   const isSelfConv = activeConv?.kind === 'self';
   const blockedPeer = activeConv?.peer?.isBlockedByMe ?? false;
@@ -1957,8 +2014,11 @@ export function ChatWorkspace({
     }
     return ids;
   }, [pendingMutations, recalledMessageIds]);
+  const manualRead = activeConv?.manualUnreadFromSeq && typeof observedUnreadVersion === 'number' &&
+    observedUnreadVersion === activeConv.manualUnreadVersion
+    ? { fromSeq: activeConv.manualUnreadFromSeq, version: observedUnreadVersion } : undefined;
   const reading = useChatReading(activeConv?.id ?? null, visible && !openThreadTarget, activeMessages, visibleOutgoing.length,
-    activeConv?.lastReadSeq ?? 0, markRead, reconnectCount);
+    activeConv?.lastReadSeq ?? 0, markRead, reconnectCount, manualRead);
   const pendingThreadCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const id of pendingThreadReplies.values()) counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -2035,7 +2095,7 @@ export function ChatWorkspace({
 
   const filteredConvs = useMemo(() => {
     const q = convSearch.trim().toLowerCase();
-    return conversations.filter(c => {
+    return displayedConversations.filter(c => {
       if (unreadOnly && c.unreadCount <= 0) return false;
       if (chatFilter === 'dm' && c.kind !== 'dm') return false;
       if (chatFilter === 'group' && c.kind !== 'group') return false;
@@ -2045,7 +2105,7 @@ export function ChatWorkspace({
         || (c.peer?.username ?? '').toLowerCase().includes(q)
         || (c.lastMessagePreview?.bodyPreview ?? '').toLowerCase().includes(q);
     });
-  }, [chatFilter, convSearch, conversations, unreadOnly]);
+  }, [chatFilter, convSearch, displayedConversations, unreadOnly]);
 
   const sortBySidebarOrder = useCallback((list: ConversationListItem[]) => {
     return [...list].sort((a, b) => {
@@ -2145,6 +2205,7 @@ export function ChatWorkspace({
       >
         <button
           type="button"
+          id={`nx-conversation-${c.id}`}
           className={`nx-conv-item ${isActive ? 'active' : ''}`}
           onClick={() => onSelectConversation(c.id)}
         >
@@ -2767,6 +2828,10 @@ export function ChatWorkspace({
                                 pending={Boolean(pendingMutation)} onOpen={openMessageMutation} />
                               <MessageBookmarkActions message={saved} canPin={canPin} pending={pendingBookmarks.get(saved.id)}
                                 onToggle={toggleBookmark} />
+                              <Button variant="ghost" size="sm" iconOnly aria-label="Mark unread" title="Mark unread"
+                                onClick={() => void markUnread(saved)}>
+                                <Mail size={13} aria-hidden="true" />
+                              </Button>
                             </div>
                           )}
                         </div>

@@ -93,9 +93,11 @@ public sealed class MessagingFanoutService(
         Guid conversationId,
         long lastReadSeq,
         long unreadCount,
+        long? manualUnreadFromSeq,
+        long manualUnreadVersion,
         CancellationToken cancellationToken = default)
     {
-        var payload = new { conversationId, lastReadSeq, unreadCount };
+        var payload = new { conversationId, lastReadSeq, unreadCount, manualUnreadFromSeq, manualUnreadVersion };
         await hubContext.Clients
             .Group(MessagingHub.UserGroupName(db.OrganizationScopeId, userId))
             .SendAsync("ReadStateUpdated", payload, cancellationToken);

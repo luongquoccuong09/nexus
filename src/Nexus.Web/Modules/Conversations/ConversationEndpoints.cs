@@ -105,8 +105,9 @@ public static class ConversationEndpoints
 
         if (unreadOnly)
         {
-            query = query.Where(item => item.Conv.LatestMainSeq > item.Member.LastReadSeq &&
-                item.Conv.LatestMainSeq > item.Member.VisibleFromSeq);
+            query = query.Where(item => item.Conv.LatestMainSeq > item.Member.VisibleFromSeq &&
+                (item.Conv.LatestMainSeq > item.Member.LastReadSeq ||
+                    item.Conv.LatestMainSeq >= item.Member.ManualUnreadFromSeq));
         }
 
         if (beforeAt is { } at && beforeId is { } id)
@@ -177,7 +178,8 @@ public static class ConversationEndpoints
             : await (from member in db.ConversationMembers.AsNoTracking()
                      where member.UserId == actorId && member.LeftAt == null && convIds.Contains(member.ConversationId)
                      join message in db.Messages.AsNoTracking() on member.ConversationId equals message.ConversationId
-                     where message.ParentMessageId == null && message.Seq > member.LastReadSeq && message.Seq > member.VisibleFromSeq
+                     where message.ParentMessageId == null && message.Seq > member.VisibleFromSeq &&
+                           (message.Seq > member.LastReadSeq || message.Seq >= member.ManualUnreadFromSeq)
                      group message by message.ConversationId into messages
                      select new { ConversationId = messages.Key, Count = messages.LongCount() })
                 .ToDictionaryAsync(x => x.ConversationId, x => x.Count, ct);
@@ -239,6 +241,8 @@ public static class ConversationEndpoints
                 latestMainSeq = x.Conv.LatestMainSeq,
                 changeSeq = x.Conv.ChangeSeq,
                 lastReadSeq = x.Member.LastReadSeq,
+                manualUnreadFromSeq = x.Member.ManualUnreadFromSeq,
+                manualUnreadVersion = x.Member.ManualUnreadVersion,
                 unreadCount = unreadByConversation.GetValueOrDefault(x.Conv.Id),
                 memberCount = members.Count,
                 updatedAt = x.Conv.UpdatedAt,
@@ -762,6 +766,8 @@ public static class ConversationEndpoints
             existingMember.Role = ResourceRole.Member;
             existingMember.VisibleFromSeq = conv.NextSeq;
             existingMember.LastReadSeq = conv.NextSeq;
+            existingMember.ManualUnreadFromSeq = null;
+            existingMember.ManualUnreadVersion++;
             existingMember.JoinedAt = now;
         }
 
