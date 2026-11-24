@@ -10,7 +10,8 @@ export function isMessageMutation(delta: ChatDelta): delta is MessageMutationDel
 export function applyMessageMutation(message: ChatMessageItem, delta: MessageMutationDelta): ChatMessageItem {
   if (message.id !== delta.messageId || delta.version <= (message.version ?? 1) || message.deletedAt) return message;
   const updated = { ...message, body: delta.body, version: delta.version, editedAt: delta.editedAt, deletedAt: delta.deletedAt };
-  return delta.type === 'message_recalled' || delta.deletedAt ? { ...updated, body: '', attachments: [], reactions: [] } : updated;
+  return delta.type === 'message_recalled' || delta.deletedAt
+    ? { ...updated, body: '', attachments: [], reactions: [], isPinned: false, isSaved: false } : updated;
 }
 
 export function formatMessagePreview(body: string) {
@@ -96,6 +97,12 @@ export function applyChatDelta(
       lastReplyAt: delta.lastReplyAt,
       lastReplySeq: delta.lastReplySeq
     };
+  } else if (delta.type === 'message_pin') {
+    if (target.deletedAt || changeSeq <= (target.pinSnapshotSeq ?? target.reactionSnapshotSeq ?? 0)) return messages;
+    updated = { ...target, isPinned: delta.pinned, pinSnapshotSeq: changeSeq };
+  } else if (delta.type === 'message_save') {
+    if (target.deletedAt || delta.version <= (target.savedVersion ?? 0)) return messages;
+    updated = { ...target, isSaved: delta.saved, savedVersion: delta.version };
   } else {
     updated = applyMessageMutation(target, delta);
   }
@@ -127,6 +134,11 @@ export function deltaFromConversationEvent(
 
   const record = payload as Record<string, unknown>;
   const messageId = typeof record.messageId === 'string' ? record.messageId.trim() : '';
+  if (eventType === 'message.pinned' || eventType === 'message.unpinned') {
+    if (!messageId) return null;
+    return { type: 'message_pin', messageId, pinned: eventType === 'message.pinned',
+      parentMessageId: typeof record.parentMessageId === 'string' ? record.parentMessageId : null };
+  }
   if (eventType === 'message.thread_reply.created') {
     if (!messageId || typeof record.seq !== 'number' || typeof record.replyCount !== 'number'
       || typeof record.lastReplyAt !== 'string' || typeof record.lastReplySeq !== 'number'

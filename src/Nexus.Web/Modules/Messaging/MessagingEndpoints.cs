@@ -52,7 +52,10 @@ public static class MessagingEndpoints
         long LastReadReplySeq = 0,
         long ThreadStateVersion = 0,
         bool HasUnread = false,
-        long Version = 1);
+        long Version = 1,
+        bool IsPinned = false,
+        bool IsSaved = false,
+        long SavedVersion = 0);
 
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
@@ -526,10 +529,20 @@ public static class MessagingEndpoints
                 .Where(s => s.UserId == actorId && rootIds.Contains(s.ParentMessageId))
                 .ToDictionaryAsync(s => s.ParentMessageId, ct);
 
+        var pinnedIds = activeMsgIds.Length == 0
+            ? new HashSet<Guid>()
+            : (await db.MessagePins.AsNoTracking().Where(pin => activeMsgIds.Contains(pin.MessageId))
+                .Select(pin => pin.MessageId).ToListAsync(ct)).ToHashSet();
+        var savedState = activeMsgIds.Length == 0
+            ? new Dictionary<Guid, SavedMessageEntity>()
+            : await db.SavedMessages.AsNoTracking().Where(saved => saved.UserId == actorId && activeMsgIds.Contains(saved.MessageId))
+                .ToDictionaryAsync(saved => saved.MessageId, ct);
+
         return selectedMessages.Select(m =>
         {
             var hasSender = senderMap.TryGetValue(m.SenderId, out var sender);
             var state = threadState.GetValueOrDefault(m.Id);
+            var saved = savedState.GetValueOrDefault(m.Id);
             return new MessageDto(
                 m.Id,
                 m.ConversationId,
@@ -556,7 +569,10 @@ public static class MessagingEndpoints
                 state?.LastReadReplySeq ?? 0,
                 state?.Version ?? 0,
                 state?.IsFollowing == true && m.LastReplySeq > state.LastReadReplySeq,
-                m.Version);
+                m.Version,
+                pinnedIds.Contains(m.Id),
+                saved?.IsSaved ?? false,
+                saved?.Version ?? 0);
         }).ToList();
     }
 

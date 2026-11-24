@@ -124,6 +124,8 @@ public static class MessageMutationEndpoints
         if (recall)
         {
             await db.MessageReactions.Where(reaction => reaction.MessageId == messageId).ExecuteDeleteAsync(ct);
+            await db.MessagePins.Where(pin => pin.MessageId == messageId).ExecuteDeleteAsync(ct);
+            await db.SavedMessages.Where(saved => saved.MessageId == messageId).ExecuteDeleteAsync(ct);
         }
         else
         {

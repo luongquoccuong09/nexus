@@ -10,7 +10,7 @@ import {
   readInitialContentLink,
   resolveContentLink
 } from './contentLinks';
-import { ChatWorkspace, CommunityFeedDelta } from './chat';
+import type { CommunityFeedDelta } from './chat/types';
 import {
   AvailabilityChangedEvent,
   AvailabilityDto,
@@ -38,6 +38,7 @@ const ActivityWorkspace = lazy(() =>
   import('./activity').then(m => ({ default: m.ActivityWorkspace }))
 );
 const CommunitiesWorkspace = lazy(() => import('./communities'));
+const ChatWorkspace = lazy(() => import('./chat').then(module => ({ default: module.ChatWorkspace })));
 const MonitorWorkspace = lazy(() => import('./monitor/MonitorWorkspace'));
 const BlockedUsersSettings = lazy(() =>
   import('./blockedUsers').then(m => ({ default: m.BlockedUsersSettings }))
@@ -1251,34 +1252,36 @@ function App() {
             </Suspense>
           )}
           <div className={`nx-tab-keepalive ${workspaceTab === 'chat' ? '' : 'hidden'}`}>
-            <ChatWorkspace
-              key={user.id}
-              currentUserId={user.id}
-              initialVersion={apiVersion}
-              selectedConversationId={activeConvId}
-              jumpTarget={chatJumpTarget}
-              visible={workspaceTab === 'chat'}
-              candidateRevision={candidateRevision}
-              refreshOrgSubscriptionsRef={refreshOrgSubscriptionsRef}
-              onReloadConversationsRef={reloadConversationsRef}
-              onOrganizationAccessRevoked={handleOrganizationAccessRevoked}
-              onBlockListChanged={refreshSafetyViews}
-              onManageBlockedUsers={() => {
-                setFocusBlockedUsers(true);
-                setWorkspaceTab('security');
-              }}
-              onSelectConversation={setActiveConvId}
-              onNewChat={() => setNewChatOpen(true)}
-              onOpenContentLink={token => void openContentLink(token)}
-              onConnectionStateChange={setConnState}
-              onUnreadTotalChange={setUnreadTotal}
-              onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
-              onVersionStale={handleVersionStale}
-              availabilityMap={availabilityMap}
-              nowMs={nowMs}
-              onAvailabilityChanged={handleAvailabilityChanged}
-              onOpenProfileCard={setProfileCardTarget}
-            />
+            <Suspense fallback={<div className="nx-empty-side" role="status">Loading Chat…</div>}>
+              <ChatWorkspace
+                key={user.id}
+                currentUserId={user.id}
+                initialVersion={apiVersion}
+                selectedConversationId={activeConvId}
+                jumpTarget={chatJumpTarget}
+                visible={workspaceTab === 'chat'}
+                candidateRevision={candidateRevision}
+                refreshOrgSubscriptionsRef={refreshOrgSubscriptionsRef}
+                onReloadConversationsRef={reloadConversationsRef}
+                onOrganizationAccessRevoked={handleOrganizationAccessRevoked}
+                onBlockListChanged={refreshSafetyViews}
+                onManageBlockedUsers={() => {
+                  setFocusBlockedUsers(true);
+                  setWorkspaceTab('security');
+                }}
+                onSelectConversation={setActiveConvId}
+                onNewChat={() => setNewChatOpen(true)}
+                onOpenContentLink={token => void openContentLink(token)}
+                onConnectionStateChange={setConnState}
+                onUnreadTotalChange={setUnreadTotal}
+                onCommunityFeedChanged={(conversationId, delta) => communityFeedListenerRef.current?.(conversationId, delta)}
+                onVersionStale={handleVersionStale}
+                availabilityMap={availabilityMap}
+                nowMs={nowMs}
+                onAvailabilityChanged={handleAvailabilityChanged}
+                onOpenProfileCard={setProfileCardTarget}
+              />
+            </Suspense>
           </div>
           {newChatOpen && (
             <NewChatDialog

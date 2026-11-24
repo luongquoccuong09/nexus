@@ -77,6 +77,8 @@ public sealed class NexusDbContext
     public DbSet<MessageEntity> Messages => Set<MessageEntity>();
     public DbSet<ThreadSubscriptionEntity> ThreadSubscriptions => Set<ThreadSubscriptionEntity>();
     public DbSet<MessageReactionEntity> MessageReactions => Set<MessageReactionEntity>();
+    public DbSet<MessagePinEntity> MessagePins => Set<MessagePinEntity>();
+    public DbSet<SavedMessageEntity> SavedMessages => Set<SavedMessageEntity>();
     public DbSet<ConversationEventEntity> ConversationEvents => Set<ConversationEventEntity>();
     public DbSet<ChannelPostEntity> ChannelPosts => Set<ChannelPostEntity>();
     public DbSet<PostCommentEntity> PostComments => Set<PostCommentEntity>();

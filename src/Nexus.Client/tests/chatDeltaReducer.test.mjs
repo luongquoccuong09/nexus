@@ -9,6 +9,20 @@ import {
   deltaFromConversationEvent
 } from '../src/chat/chatDeltaReducer.ts';
 
+test('M6.4: shared pins and private saves reject stale updates independently', () => {
+  const root = makeMessage({ reactionSnapshotSeq: 5, savedVersion: 1, isSaved: true });
+  const pin = deltaFromConversationEvent('message.pinned', { messageId: root.id });
+  const pinned = applyChatDelta([root], pin, 'me', 6);
+  assert.equal(pinned[0].isPinned, true);
+  const unpin = { ...pin, pinned: false };
+  assert.equal(applyChatDelta(pinned, unpin, 'me', 5), pinned);
+  const unsave = { type: 'message_save', conversationId: root.conversationId, messageId: root.id, saved: false, version: 2 };
+  const unbookmarked = applyChatDelta(pinned, unsave, 'me', 0);
+  assert.equal(unbookmarked[0].isSaved, false);
+  assert.equal(unbookmarked[0].isPinned, true);
+  assert.equal(applyChatDelta(unbookmarked, { ...unsave, saved: true, version: 1 }, 'me', 0), unbookmarked);
+});
+
 test('M6.3: a redacted history event clears old content and rejects stale edits', () => {
   const message = makeMessage({ version: 1, attachments: [{ id: 'file' }], reactions: [{ emoji: '👍', count: 1 }] });
   const recall = deltaFromConversationEvent('message.edited', {

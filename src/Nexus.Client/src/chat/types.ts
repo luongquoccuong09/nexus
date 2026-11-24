@@ -82,7 +82,23 @@ export interface MessageMutationDelta {
   deletedAt: string | null;
 }
 
-export type ChatDelta = ChatReactionDelta | ThreadReplyDelta | MessageMutationDelta;
+export interface MessagePinDelta {
+  type: 'message_pin';
+  messageId: string;
+  parentMessageId?: string | null;
+  pinned: boolean;
+}
+
+export interface MessageSaveDelta {
+  type: 'message_save';
+  conversationId: string;
+  messageId: string;
+  parentMessageId?: string | null;
+  saved: boolean;
+  version: number;
+}
+
+export type ChatDelta = ChatReactionDelta | ThreadReplyDelta | MessageMutationDelta | MessagePinDelta | MessageSaveDelta;
 
 export interface ChatMessageItem {
   id: string;
@@ -96,6 +112,10 @@ export interface ChatMessageItem {
   editedAt?: string | null;
   deletedAt?: string | null;
   version?: number;
+  isPinned?: boolean;
+  pinSnapshotSeq?: number;
+  isSaved?: boolean;
+  savedVersion?: number;
   pending?: boolean;
   attachments?: AttachmentItem[];
   reactions?: ReactionSummary[];

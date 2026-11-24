@@ -56,6 +56,11 @@ public sealed class NexusAuthorizationService : IAuthorizationService
             ResourceAction.FileUpload =>
                 CanWriteConversation(actor, resource),
 
+            ResourceAction.MessagePin =>
+                resource.Kind is ResourceKind.Dm or ResourceKind.GroupChat or ResourceKind.SelfChat &&
+                CanWriteConversation(actor, resource) &&
+                (resource.Kind != ResourceKind.GroupChat || IsResourceManager(resource.MembershipRole)),
+
             ResourceAction.GroupAddMember or
             ResourceAction.GroupManageAdmins =>
                 resource.Kind == ResourceKind.GroupChat &&

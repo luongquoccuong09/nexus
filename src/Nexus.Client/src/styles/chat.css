@@ -459,6 +459,24 @@
   .nx-msg-bubble:has(~ .nx-msg-hover-bar .nx-msg-mutation-action) {
     max-width: min(620px, calc(100% - 296px));
   }
+
+  .nx-msg-bubble:has(~ .nx-msg-hover-bar .nx-msg-bookmark-action) {
+    max-width: min(620px, calc(100% - 350px));
+  }
+}
+
+.nx-bookmarked-messages {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.nx-bookmarked-messages li {
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
 }
 
 .nx-message-edit-form textarea {

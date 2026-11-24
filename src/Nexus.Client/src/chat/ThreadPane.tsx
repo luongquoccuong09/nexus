@@ -10,6 +10,7 @@ import { chatFetch, personalApiPath, protectedRequest } from '../scope';
 import { Button, Field, ToastBar } from '../ui';
 import { applyChatDelta, applyMessageMutation, isMessageMutation, RECALLED_MESSAGE_LABEL } from './chatDeltaReducer';
 import { MessageMutationActions, OpenMessageMutation } from './MessageMutationActions';
+import { MessageBookmarkActions, PendingBookmark, ToggleBookmark } from './MessageBookmarkActions';
 import { ChatDelta, ChatMessageItem, MessageMutationDelta, ThreadState } from './types';
 
 export interface ThreadTarget {
@@ -64,6 +65,9 @@ interface ThreadPaneProps {
   pendingMutations: ReadonlyMap<string, MessageMutationDelta>;
   onDismissMutationError: () => void;
   onOpenMutation: OpenMessageMutation;
+  canPin: boolean;
+  pendingBookmarks: ReadonlyMap<string, PendingBookmark>;
+  onToggleBookmark: ToggleBookmark;
 }
 
 const replyTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -93,18 +97,15 @@ function applyThreadDelta(
     const items = page.nextAfterSeq ? page.items : mergeReplies(page.items, [delta.message]);
     return { ...page, parent, items };
   }
-  if (delta.type === 'reaction' || isMessageMutation(delta)) {
-    const [parent] = applyChatDelta([page.parent], delta, currentUserId, changeSeq);
-    const items = applyChatDelta(page.items, delta, currentUserId, changeSeq);
-    if (parent !== page.parent || items !== page.items) return { ...page, parent, items };
-  }
-  return page;
+  const [parent] = applyChatDelta([page.parent], delta, currentUserId, changeSeq);
+  const items = applyChatDelta(page.items, delta, currentUserId, changeSeq);
+  return parent !== page.parent || items !== page.items ? { ...page, parent, items } : page;
 }
 
 export function ThreadPane({
   target, currentUserId, visible, blocked, reconnectCount, deltaRef, liveState, onState,
   onPendingReply, onConfirmReply, onClose, onCopyLink, onInlineLink, onPreviewImage,
-  mutationError, pendingMutations, onDismissMutationError, onOpenMutation
+  mutationError, pendingMutations, onDismissMutationError, onOpenMutation, canPin, pendingBookmarks, onToggleBookmark
 }: ThreadPaneProps) {
   const { conversationId, parentMessageId, replyId, replySeq } = target;
   const endpoint = '/api/conversations/' + conversationId + '/messages/' + parentMessageId + '/thread';
@@ -156,7 +157,7 @@ export function ThreadPane({
           nextAfterSeq: cursor?.kind === 'beforeSeq' ? previous?.nextAfterSeq : loaded.hasNewer ? loaded.nextAfterSeq : null
         };
         for (const event of request.events) {
-          if (event.changeSeq > loaded.changeSeq || isMessageMutation(event.delta)) {
+          if (event.changeSeq > loaded.changeSeq || event.delta.type === 'message_save' || isMessageMutation(event.delta)) {
             result = applyThreadDelta(result, event.delta, event.changeSeq, currentUserId);
           }
         }
@@ -299,8 +300,14 @@ export function ThreadPane({
   }
 
   function actions(saved: ChatMessageItem) {
-    return <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blocked}
-      pending={pendingMutations.has(saved.id)} onOpen={onOpenMutation} />;
+    return (
+      <>
+        <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blocked}
+          pending={pendingMutations.has(saved.id)} onOpen={onOpenMutation} />
+        <MessageBookmarkActions message={saved} canPin={canPin} pending={pendingBookmarks.get(saved.id)}
+          onToggle={onToggleBookmark} />
+      </>
+    );
   }
 
   function messageBody(item: ChatMessageItem) {

@@ -64,6 +64,24 @@ The full pipeline passed 182 integration tests, 48 client tests, all three repos
 
 The isolated fixture at `127.0.0.1:5191` passed the two-account Edge walkthrough in both themes at `1440×900`, `390×844` and `320×700`. Root edits and recalls rendered in 1.7–5.4 ms locally and 36.9–55.2 ms for the peer. Reply mutations updated the open Thread, an intercepted request confirmed optimistic editing before commit, and a concurrent-device conflict returned `412` and restored the committed text. The six layouts passed keyboard, marker, overflow, duplicate, and console and network checks. The peer applied sequential deltas without reloading history.
 
+## M6.4 Pin and save messages
+
+**Verified on November 24, 2026.** Shared pins are available to an unblocked DM participant, a Group Owner or Admin, or the owner of a Self Chat. Saving is private and available to a current reader. Both lists enforce the visibility floor for roots and replies. Each entry opens the original message through an authorized content link. Recall removes both kinds of reference.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-ef-10\dotnet-ef.exe'
+& $efCommand migrations add ChatMessageBookmarks --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~RichChatBookmarkTests --verbosity minimal
+pwsh -File ./scripts/Run-Tests.ps1
+node (Join-Path $env:TEMP 'nexus-m64-qa\bookmarks.mjs')
+git diff --check
+git diff --cached --check
+```
+
+The full pipeline passed 183 integration tests, 49 client tests, the Release builds with zero warnings or errors, and the repository audits. The standard run skipped the opt-in Docker Monitor smoke test. PostgreSQL 17 coverage included idempotency, shared and private live updates, group roles, two Organization scopes, rejoin visibility, recall cleanup, and a tied 51-message Saved cursor. The production client loads Chat as its own chunk and keeps it mounted across destination changes.
+
+The two-account Edge QA passed at `1440×900`, `390×844`, and `320×700` in both themes. Pins rendered locally in 1.7–2.8 ms and for the peer in 32.1–79.4 ms in the isolated run. The browser checked keyboard activation, private saving before the PUT reached the server, pinned and saved dialogs, deep-link focus, synchronized unpinning, and no overflow, duplicate transition, timeline reload, unexpected console error, or network error. A concurrent full-suite run contended for the development machine and measured one pin above 200 ms. The isolated run met the latency target in all six layouts.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

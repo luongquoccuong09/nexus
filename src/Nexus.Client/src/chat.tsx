@@ -1,7 +1,7 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
 import { CSSProperties, ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, Mic, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, Mic, MoreVertical, Paperclip, Pin, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
 import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
@@ -40,6 +40,7 @@ import {
 import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
 import { ChatMembersDrawer } from './chat/ChatDrawers';
 import { MessageMutationActions } from './chat/MessageMutationActions';
+import { BookmarkKind, MessageBookmarkActions, PendingBookmark, ToggleBookmark } from './chat/MessageBookmarkActions';
 import type { OpenMessageMutation } from './chat/MessageMutationActions';
 import type { MessageMutationResult, MessageMutationTarget } from './chat/MessageMutationDialog';
 import type { ThreadDeltaReceiver, ThreadTarget } from './chat/ThreadPane';
@@ -65,6 +66,8 @@ import {
   DirectoryUserLite,
   GroupMemberItem,
   MessageMutationDelta,
+  MessagePinDelta,
+  MessageSaveDelta,
   ReactionSummary,
   ThreadState
 } from './chat/types';
@@ -75,6 +78,7 @@ const LazyEmojiPicker = lazy(() => import('./EmojiPicker'));
 const LazyThreadPane = lazy(() => import('./chat/ThreadPane').then(module => ({ default: module.ThreadPane })));
 const LazyMessageMutationDialog = lazy(() => import('./chat/MessageMutationDialog'));
 const LazyChatModals = lazy(() => import('./chat/ChatModals').then(module => ({ default: module.ChatModals })));
+const LazyBookmarksDialog = lazy(() => import('./chat/MessageBookmarksDialog'));
 
 const QUICK_REACTION_LABELS: Record<(typeof QUICK_CHAT_REACTIONS)[number], string> = {
   '👍': 'thumbs up',
@@ -346,6 +350,12 @@ export function ChatWorkspace({
   const inFlightMessageIdsRef = useRef(new Map<string, MessageMutationDelta>());
   const confirmedMutations = useRef(new Map<string, { conversationId: string; delta: MessageMutationDelta }>());
   const [recalledMessageIds, setRecalledMessageIds] = useState(new Set<string>());
+  const [bookmarkPanel, setBookmarkPanel] = useState<{ conversationId?: string } | null>(null);
+  const [bookmarkRevision, setBookmarkRevision] = useState(0);
+  const [pendingBookmarks, setPendingBookmarks] = useState(new Map<string, PendingBookmark>());
+  const bookmarkRequests = useRef(new Map<string, PendingBookmark>());
+  const bookmarkStates = useRef(new Map<string, { delta: MessagePinDelta | MessageSaveDelta; changeSeq: number }>());
+  const savedSyncNeeded = useRef(new Set<string>());
   const [mutationError, setMutationError] = useState<{ conversationId: string; message: string } | null>(null);
   const mutationTrigger = useRef<HTMLButtonElement | null>(null);
 
@@ -396,6 +406,34 @@ export function ChatWorkspace({
     setReactionPicker(current => current?.messageId === messageId ? null : current);
   }, []);
 
+  const confirmBookmark = useCallback((conversationId: string, delta: MessagePinDelta | MessageSaveDelta, changeSeq = 0) => {
+    const key = `${delta.type}:${delta.messageId}`;
+    const previous = bookmarkStates.current.get(key);
+    if (discarded.current.has(conversationId) || (previous && (delta.type === 'message_pin'
+      ? changeSeq <= previous.changeSeq
+      : previous.delta.type === 'message_save' && delta.version <= previous.delta.version))) return;
+    bookmarkStates.current.set(key, { delta, changeSeq });
+    const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, changeSeq);
+    const cached = messagesCacheRef.current.get(conversationId);
+    if (cached) messagesCacheRef.current.set(conversationId, { ...cached, items: apply(cached.items) });
+    if (activeConvRef.current === conversationId) setMessages(apply);
+    threadDeltaRef.current?.(conversationId, delta, changeSeq);
+    setBookmarkRevision(current => current + 1);
+  }, []);
+
+  const refreshSavedState = useCallback(async (conversationId: string) => {
+    const cached = messagesCacheRef.current.get(conversationId);
+    if (!cached || !savedSyncNeeded.current.has(conversationId)) return;
+    for (let start = 0; start < cached.items.length; start += 50) {
+      const query = new URLSearchParams(cached.items.slice(start, start + 50).map(message => ['ids', message.id]));
+      const response = await fetch(`/api/conversations/${conversationId}/saved-state?${query}`);
+      if (!response.ok) return;
+      const data: { items: Omit<MessageSaveDelta, 'type'>[] } = await response.json();
+      for (const item of data.items) confirmBookmark(conversationId, { ...item, type: 'message_save' });
+    }
+    savedSyncNeeded.current.delete(conversationId);
+  }, [confirmBookmark]);
+
   const applyConfirmedMutation = useCallback((conversationId: string, delta: MessageMutationDelta, changeSeq = 0) => {
     if (discarded.current.has(conversationId)) return;
     const previous = confirmedMutations.current.get(delta.messageId)?.delta;
@@ -424,6 +462,8 @@ export function ChatWorkspace({
     uploadRequests.current.get(id)?.abort();
     messagesCacheRef.current.delete(id);
     cursorCacheRef.current.delete(id);
+    setBookmarkPanel(current => current?.conversationId === id ? null : current);
+    setBookmarkRevision(current => current + 1);
     for (const [messageId, entry] of confirmedMutations.current) {
       if (entry.conversationId === id) confirmedMutations.current.delete(messageId);
     }
@@ -593,7 +633,12 @@ export function ChatWorkspace({
         ...data,
         items: (data.items ?? []).map(message => {
           const mutation = confirmedMutations.current.get(message.id)?.delta;
-          return { ...(mutation ? applyMessageMutation(message, mutation) : message), reactionSnapshotSeq: data.changeSeq };
+          let items: ChatMessageItem[] = [{ ...(mutation ? applyMessageMutation(message, mutation) : message), reactionSnapshotSeq: data.changeSeq }];
+          for (const type of ['message_pin', 'message_save']) {
+            const bookmark = bookmarkStates.current.get(`${type}:${message.id}`);
+            if (bookmark) items = applyChatDelta(items, bookmark.delta, currentUserIdRef.current, bookmark.changeSeq);
+          }
+          return items[0];
         })
       };
     }
@@ -826,6 +871,7 @@ export function ChatWorkspace({
         if (delta) {
           deltas.set(event.changeSeq, delta);
           if (isMessageMutation(delta)) applyConfirmedMutation(convId, delta, event.changeSeq);
+          else if (delta.type === 'message_pin') confirmBookmark(convId, delta, event.changeSeq);
           else dispatchThreadDelta(convId, delta, event.changeSeq);
         }
       }
@@ -869,7 +915,7 @@ export function ChatWorkspace({
       cursor = nextCursor;
       if (!data.hasMore) return;
     }
-  }, [applyConfirmedMutation, discardConversation, dispatchThreadDelta, loadMessagesFull, offlineScope]);
+  }, [applyConfirmedMutation, confirmBookmark, discardConversation, dispatchThreadDelta, loadMessagesFull, offlineScope]);
 
   const requestConversationDelta = useCallback((convId: string, full = false) => {
     const existing = deltaRequests.current.get(convId);
@@ -1003,12 +1049,15 @@ export function ChatWorkspace({
     await checkApiVersion();
     await flushOfflineQueue();
     await loadConversations();
+    savedSyncNeeded.current = new Set(messagesCacheRef.current.keys());
     if (activeConvRef.current) {
       await requestConversationDelta(activeConvRef.current);
+      if (activeConvRef.current) await refreshSavedState(activeConvRef.current).catch(() => {});
       if (rightDrawerRef.current === 'members') await loadGroupMembers(activeConvRef.current);
     }
     setReconnectCount(count => count + 1);
-  }, [checkApiVersion, flushOfflineQueue, loadConversations, loadGroupMembers, requestConversationDelta]);
+    setBookmarkRevision(current => current + 1);
+  }, [checkApiVersion, flushOfflineQueue, loadConversations, loadGroupMembers, refreshSavedState, requestConversationDelta]);
 
   loadConversationsRef.current = loadConversations;
   syncDeltaRef.current = requestConversationDelta;
@@ -1081,11 +1130,12 @@ export function ChatWorkspace({
       setLastReadSnapshot(0);
     }
     if (selectedConversationId && pendingJumpRef.current?.conversationId !== selectedConversationId) {
-      void requestConversationDelta(selectedConversationId, !cached).catch(() => {
+      void requestConversationDelta(selectedConversationId, !cached)
+        .then(() => refreshSavedState(selectedConversationId).catch(() => {})).catch(() => {
         if (activeConvRef.current === selectedConversationId) setError('Unable to load messages.');
       });
     }
-  }, [selectedConversationId, requestConversationDelta]);
+  }, [selectedConversationId, refreshSavedState, requestConversationDelta]);
 
   useEffect(() => {
     if (!jumpTarget || jumpTarget.nonce === handledJumpNonceRef.current) return;
@@ -1219,11 +1269,12 @@ export function ChatWorkspace({
         const delta = evt.delta;
         const messageMutation = isMessageMutation(delta);
         if (messageMutation) applyConfirmedMutation(evt.conversationId, delta, evt.changeSeq);
+        if (delta.type === 'message_pin') confirmBookmark(evt.conversationId, delta, evt.changeSeq);
         const knownSeq = cursorCacheRef.current.get(evt.conversationId);
         if (knownSeq !== undefined && evt.changeSeq <= knownSeq) return;
 
         if (knownSeq !== undefined && evt.changeSeq === knownSeq + 1) {
-          if (!messageMutation) {
+          if (!messageMutation && delta.type !== 'message_pin') {
             dispatchThreadDelta(evt.conversationId, delta, evt.changeSeq);
             const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, evt.changeSeq);
             const cached = messagesCacheRef.current.get(evt.conversationId);
@@ -1268,6 +1319,10 @@ export function ChatWorkspace({
 
     connection.on('ThreadStateUpdated', (evt: ThreadState) => {
       if (evt.parentMessageId && !discarded.current.has(evt.conversationId)) updateThreadState(evt);
+    });
+
+    connection.on('SavedMessageChanged', (event: Omit<MessageSaveDelta, 'type'>) => {
+      confirmBookmark(event.conversationId, { ...event, type: 'message_save' });
     });
 
     connection.on('CommunityFeedChanged', (evt: { conversationId: string; delta?: CommunityFeedDelta | null }) => {
@@ -1357,7 +1412,7 @@ export function ChatWorkspace({
       refresh.queued = false;
       void connection.stop();
     };
-  }, [applyConfirmedMutation, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
+  }, [applyConfirmedMutation, confirmBookmark, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
 
   async function sendCurrentMessage() {
     const conversationId = selectedConversationId;
@@ -1556,6 +1611,35 @@ export function ChatWorkspace({
       if (result.refresh) void requestConversationDelta(conversationId).catch(() => {});
     }
   }
+
+  const toggleBookmark: ToggleBookmark = (message, kind: BookmarkKind) => {
+    if (message.deletedAt || message.pending || bookmarkRequests.current.has(message.id)) return;
+    const value = kind === 'pin' ? !message.isPinned : !message.isSaved;
+    bookmarkRequests.current.set(message.id, { kind, value });
+    setPendingBookmarks(new Map(bookmarkRequests.current));
+    setMutationError(null);
+    void (async () => {
+      try {
+        const path = personalApiPath(`/api/conversations/${message.conversationId}/messages/${message.id}/${kind}`);
+        const response = await protectedRequest(path, value ? 'PUT' : 'DELETE');
+        if (!response.ok) throw new Error('Unable to update the message.');
+        if (kind === 'pin') {
+          const result = await response.json() as { delta: MessagePinDelta; changeSeq: number };
+          confirmBookmark(message.conversationId, result.delta, result.changeSeq);
+        } else {
+          const result = await response.json() as Omit<MessageSaveDelta, 'type'>;
+          confirmBookmark(message.conversationId, { ...result, type: 'message_save' });
+        }
+      } catch {
+        if (activeConvRef.current === message.conversationId) {
+          setMutationError({ conversationId: message.conversationId, message: 'Unable to update the message.' });
+        }
+      } finally {
+        bookmarkRequests.current.delete(message.id);
+        setPendingBookmarks(new Map(bookmarkRequests.current));
+      }
+    })();
+  };
 
   function focusAddReactionButton(messageId: string) {
     requestAnimationFrame(() => {
@@ -1880,6 +1964,19 @@ export function ChatWorkspace({
     for (const id of pendingThreadReplies.values()) counts.set(id, (counts.get(id) ?? 0) + 1);
     return counts;
   }, [pendingThreadReplies]);
+  const canPin = !!activeConv && !blockedPeer &&
+    (activeConv.kind !== 'group' || activeConv.role === 'Owner' || activeConv.role === 'Admin');
+  const hiddenBookmarks = new Set(hiddenSharedMessageIds);
+  if (bookmarkPanel) {
+    const kind = bookmarkPanel.conversationId ? 'pin' : 'save';
+    for (const { delta } of bookmarkStates.current.values()) {
+      if ((kind === 'pin' && delta.type === 'message_pin' && !delta.pinned) ||
+          (kind === 'save' && delta.type === 'message_save' && !delta.saved)) hiddenBookmarks.add(delta.messageId);
+    }
+    for (const [id, pending] of pendingBookmarks) {
+      if (pending.kind === kind && !pending.value) hiddenBookmarks.add(id);
+    }
+  }
 
   useEffect(() => {
     if (!reactionPicker) return;
@@ -2107,6 +2204,10 @@ export function ChatWorkspace({
             </Button>
             <Button size="sm" disabled={openingSelfChat} onClick={() => void handleOpenSelfChat()}>
               <Bookmark size={14} aria-hidden="true" /> Notes to self
+            </Button>
+            <Button variant="ghost" size="sm" iconOnly aria-label="Saved messages" title="Saved messages"
+              onClick={() => setBookmarkPanel({})}>
+              <Bookmark size={14} aria-hidden="true" />
             </Button>
             <Button
               variant="ghost"
@@ -2382,6 +2483,10 @@ export function ChatWorkspace({
                     <span className="nx-stage-action-label">Shared</span>
                   </Button>
                 </span>
+                <Button size="sm" iconOnly aria-label="Pinned messages" title="Pinned messages"
+                  onClick={() => setBookmarkPanel({ conversationId: activeConv.id })}>
+                  <Pin size={15} aria-hidden="true" />
+                </Button>
                 {activeConv.kind === 'dm' && activeConv.peer ? (
                   <div className="nx-menu-wrap" ref={moreMenuRef}>
                     <button
@@ -2660,6 +2765,8 @@ export function ChatWorkspace({
                               </Button>
                               <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blockedPeer}
                                 pending={Boolean(pendingMutation)} onOpen={openMessageMutation} />
+                              <MessageBookmarkActions message={saved} canPin={canPin} pending={pendingBookmarks.get(saved.id)}
+                                onToggle={toggleBookmark} />
                             </div>
                           )}
                         </div>
@@ -2911,6 +3018,9 @@ export function ChatWorkspace({
             pendingMutations={pendingMutations}
             onDismissMutationError={() => setMutationError(null)}
             onOpenMutation={openMessageMutation}
+            canPin={canPin}
+            pendingBookmarks={pendingBookmarks}
+            onToggleBookmark={toggleBookmark}
           />
         </Suspense>
       )}
@@ -3025,6 +3135,13 @@ export function ChatWorkspace({
         </Suspense>
       )}
 
+      {bookmarkPanel && (
+        <Suspense fallback={null}>
+          <LazyBookmarksDialog conversationId={bookmarkPanel.conversationId} revision={bookmarkRevision}
+            hiddenIds={hiddenBookmarks} hiddenConversations={discarded.current} onClose={() => setBookmarkPanel(null)}
+            onOpenMessage={token => onOpenContentLink?.(token)} />
+        </Suspense>
+      )}
       {mutationTarget && (
         <Suspense fallback={null}>
           <LazyMessageMutationDialog

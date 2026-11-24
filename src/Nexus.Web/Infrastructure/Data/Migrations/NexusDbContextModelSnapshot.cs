@@ -1305,6 +1305,28 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessagePinEntity", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("PinnedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("pinned_at");
+
+                    b.Property<Guid>("PinnedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("pinned_by_user_id");
+
+                    b.HasKey("MessageId");
+
+                    b.HasIndex("PinnedByUserId")
+                        .HasDatabaseName("ix_message_pins_pinned_by_user_id");
+
+                    b.ToTable("message_pins", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
                 {
                     b.Property<Guid>("MessageId")
@@ -1467,6 +1489,40 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("post_reactions", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.SavedMessageEntity", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<bool>("IsSaved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_saved");
+
+                    b.Property<DateTimeOffset>("SavedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("saved_at");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("UserId", "MessageId");
+
+                    b.HasIndex("MessageId")
+                        .HasDatabaseName("ix_saved_messages_message_id");
+
+                    b.HasIndex("UserId", "SavedAt", "MessageId")
+                        .HasDatabaseName("ix_saved_messages_user_cursor")
+                        .HasFilter("is_saved");
+
+                    b.ToTable("saved_messages", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.ThreadSubscriptionEntity", b =>
@@ -2650,6 +2706,21 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessagePinEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("PinnedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.MessageReactionEntity", b =>
                 {
                     b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
@@ -2709,6 +2780,21 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Messaging.ChannelPostEntity", null)
                         .WithMany()
                         .HasForeignKey("PostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Messaging.SavedMessageEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Messaging.MessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

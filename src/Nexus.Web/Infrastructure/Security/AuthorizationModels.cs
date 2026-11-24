@@ -87,7 +87,8 @@ public enum ResourceAction
     AdminViewAuditLog,
     ManageOwnBlockList,
     MonitorRead,
-    MonitorExecute
+    MonitorExecute,
+    MessagePin
 }
 
 public sealed record ActorContext(

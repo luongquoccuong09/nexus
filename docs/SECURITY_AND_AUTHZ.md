@@ -32,6 +32,7 @@ Personal Chat directory results include accepted contacts. Opening a Personal DM
 | `GroupCreate` | **Allow** | **Allow** | N/A | N/A |
 | `ConversationRead` / `MessageSearch` / `FileDownload` / `DeltaSync` | **Allow** if current member (within authorized history range) | **Allow** if current member | **Deny** (`SEC-03`, `SEC-15`) | **Deny** further delivery (`SEC-18`) |
 | `MessageSend` / `FileUpload` | **Allow** if current member (and DM not blocked) | **Allow** if current member (and DM not blocked) | **Deny** (`SEC-05`) | **Deny** (`SEC-18`) |
+| `MessagePin` | **Allow** for an unblocked DM participant or a Group `Owner` or `Admin` | **Allow** under the same membership rules | **Deny** | **Deny** |
 | `GroupAddMember` / `GroupRemoveMember` / `GroupManageAdmins` | **Allow** if Group `Owner` or `Admin` | **Allow** if Group `Owner` or `Admin` | **Deny** | **Deny** |
 | `GroupTransferOwnership` | **Allow** if Group `Owner` | **Allow** if Group `Owner` | **Deny** | **Deny** |
 | `GroupLeave` | **Allow** if member (Owner must transfer first if other members exist) | **Allow** if member (same Owner rule) | **Deny** | **Deny** |

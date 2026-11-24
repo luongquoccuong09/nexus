@@ -76,6 +76,12 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 - The same delta is used for live delivery and replay. An edit replaces the visible body. A recall applies the marker and clears body, attachments, and reactions from the displayed message. The server removes prior content from that message's replay events as part of a recall. An authorized reply mutation uses the root sequence as its visibility floor.
 - The client updates optimistically with at most one mutation for the message in flight. A stale version returns `412` so the client reconciles against the current version. The server never accepts an optimistic change beyond the author window.
 
+### Pins and saved messages (`M6.4`)
+
+- A shared pin transition increments `change_seq` and writes `message.pinned` or `message.unpinned`. The `message_pin` delta applies in place and uses the target's root as the visibility floor for a reply. An idempotent request in the existing state adds no event.
+- Saving is private and keeps a separate per-message version. `SavedMessageChanged` goes only to the caller's sessions in the requested scope, so saves do not move the shared conversation cursor. History snapshots include the caller's saved state. Reconnect rechecks saved state for cached messages in batches of 50. Reopening the Saved view or a conversation rechecks current access.
+- Recall removes the pin and all saved references. Its existing live and replay markers remove the message from the client lists.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |
