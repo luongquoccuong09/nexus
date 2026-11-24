@@ -15,26 +15,6 @@ using Nexus.Web.Modules.Messaging;
 
 namespace Nexus.Web.Modules.Files;
 
-public sealed record AttachmentDto(
-    Guid Id,
-    Guid ConversationId,
-    Guid? MessageId,
-    Guid? PostId,
-    Guid UploaderUserId,
-    string ClientUploadId,
-    string FileName,
-    string ContentType,
-    long SizeBytes,
-    string Sha256Hex,
-    int? ImageWidth,
-    int? ImageHeight,
-    string State,
-    string ScanStatus,
-    string DownloadUrl,
-    string? ThumbnailUrl,
-    string? PreviewUrl,
-    DateTimeOffset CreatedAt);
-
 public sealed record CreateSignedUrlRequest(int? TtlSeconds);
 
 public static class FilesModuleExtensions
@@ -91,29 +71,7 @@ public static class FilesEndpoints
         return app;
     }
 
-    public static AttachmentDto ToDto(AttachmentEntity a)
-    {
-        var hasThumb = !string.IsNullOrEmpty(a.ThumbnailObjectKey);
-        return new AttachmentDto(
-            a.Id,
-            a.ConversationId,
-            a.MessageId,
-            a.PostId,
-            a.UploaderUserId,
-            a.ClientUploadId,
-            a.FileName,
-            a.ContentType,
-            a.SizeBytes,
-            a.Sha256Hex,
-            a.ImageWidth,
-            a.ImageHeight,
-            a.State.ToString().ToLowerInvariant(),
-            a.ScanStatus,
-            $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/download",
-            hasThumb ? $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/thumbnail" : null,
-            hasThumb ? $"{OrganizationScope.ApiPath(a.OrganizationId)}/files/{a.Id}/preview" : null,
-            a.CreatedAt);
-    }
+    public static AttachmentDto ToDto(AttachmentEntity a) => AttachmentProjection.ToAttachmentDto(a);
 
     private static async Task<IResult> HandleUploadAttachmentAsync(
         HttpContext ctx,
@@ -677,7 +635,7 @@ public static class FilesEndpoints
         // The streaming endpoint rechecks membership when the file is opened.
         return Results.Ok(new
         {
-            url = $"{OrganizationScope.ApiPath(attachment.OrganizationId)}/files/{attachment.Id}/download",
+            url = AttachmentProjection.BuildDownloadUrl(attachment.OrganizationId, attachment.Id),
             expiresInSeconds = requestedSeconds,
             mode = "stream"
         });

@@ -1,17 +1,12 @@
 import { orgApiPath, orgFetch, protectedRequest } from './scope';
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, MouseEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArrowLeft,
   BarChart2,
-  Bell,
-  Check,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Compass,
-  Download,
-  ExternalLink,
   Eye,
   FileText,
   FolderOpen,
@@ -20,70 +15,51 @@ import {
   Link2,
   Lock,
   Megaphone,
-  MessageSquare,
   Paperclip,
   Pencil,
-  Pin,
   Plus,
   RefreshCw,
   RotateCcw,
   Search,
   Send,
   Settings,
-  ShieldCheck,
   Star,
   Trash2,
-  UserPlus,
   Users,
   X
 } from 'lucide-react';
-import { AttachmentItem, CommunityFeedDelta, StorageQuotaSummary } from './chat';
+import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
+import { ImageLightboxModal } from './attachments/ImageLightboxModal';
 import { CommunityJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
 import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
 import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from './sidebarControls';
 import { OrganizationItem } from './organizationControls';
-import { renderSafeMarkdown } from './markdown';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
-import { AvailabilityDto, LiveAvailabilityEntry, resolveUserAvailability } from './availability';
-import { ProfileCardTarget } from './ProfileCardModal';
 import { ConversationNotificationButton } from './notificationPreferences';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
 import { loadOrganizationDepartments, personKey, searchPeopleScope } from './peopleDirectory';
-import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
+import { Badge, Button, EmptyState, ToastBar } from './ui';
+import { ChannelFilesDrawer } from './communities/ChannelFilesDrawer';
+import { CommunityMembersDrawer } from './communities/CommunityMembersDrawer';
+import { CommunityModals } from './communities/CommunityModals';
+import { CommunityPostCard } from './communities/CommunityPostCard';
+import {
+  ChannelFileItem,
+  ChannelPostDto,
+  CommunitiesWorkspaceProps,
+  CommunityChannelDto,
+  CommunityItemDto,
+  CommunityMemberDto,
+  DepartmentLite,
+  DirectoryUserLite,
+  PostCommentDto,
+  PostPollDto,
+  ReactionChange,
+  applyReaction
+} from './communities/types';
 
-export interface CommunityChannelDto {
-  id: string;
-  name: string;
-  description?: string | null;
-  postingPolicy: string;
-  isArchived?: boolean;
-  archivedAt?: string | null;
-  createdAt: string;
-}
-
-export interface CommunityItemDto {
-  id: string;
-  organizationId: string;
-  organizationName: string;
-  name: string;
-  description?: string | null;
-  visibility: string;
-  isOfficial: boolean;
-  mappedDepartmentId?: string | null;
-  memberCount: number;
-  isMember: boolean;
-  myRole?: string | null;
-  mainFeedConversationId?: string | null;
-  mainFeedPostingPolicy: string;
-  channels: CommunityChannelDto[];
-  latestPostPreview?: {
-    bodyPreview: string;
-    authorDisplayName: string;
-    createdAt: string;
-  } | null;
-  createdAt: string;
-}
+export type { CommunityChannelDto, CommunityItemDto, DepartmentLite, DirectoryUserLite };
 
 const communityKey = (community: CommunityItemDto) => community.id;
 const communityMemberKey = (member: CommunityMemberDto) => member.userId;
@@ -108,149 +84,6 @@ async function readCommunityPages(organizations: OrganizationItem[], discover: b
   }));
   const next = Object.fromEntries(pages.filter(page => page.next).map(page => [page.org.id, page.next as string]));
   return { items: pages.flatMap(page => page.items), next: Object.keys(next).length ? next : null };
-}
-
-interface PostCommentDto {
-  id: string;
-  postId: string;
-  authorUserId: string;
-  authorDisplayName: string;
-  body: string;
-  createdAt: string;
-  pending?: boolean;
-}
-
-interface PostReactionDto {
-  emoji: string;
-  count: number;
-  reactedByMe: boolean;
-}
-
-interface ReactionChange {
-  postId: string;
-  emoji: string;
-  reactedByMe: boolean;
-}
-
-interface PollOptionDto {
-  id: string;
-  label: string;
-  votes: number;
-  votedByMe: boolean;
-}
-
-interface PostPollDto {
-  id: string;
-  question: string;
-  allowMultiple: boolean;
-  closesAt?: string | null;
-  totalVoters: number;
-  options: PollOptionDto[];
-}
-
-interface ChannelPostDto {
-  id: string;
-  conversationId: string;
-  authorUserId: string;
-  authorDisplayName: string;
-  authorAvatarUrl?: string | null;
-  title?: string | null;
-  body: string;
-  isAnnouncement: boolean;
-  requiresAcknowledgment: boolean;
-  acknowledgedCount: number;
-  totalRecipients: number;
-  acknowledgedByMe: boolean;
-  isPinned: boolean;
-  createdAt: string;
-  comments: PostCommentDto[];
-  reactions: PostReactionDto[];
-  attachments?: AttachmentItem[];
-  poll?: PostPollDto | null;
-  pending?: boolean;
-}
-
-interface ChannelFileItem extends AttachmentItem {
-  postId?: string | null;
-  postTitle?: string | null;
-  uploaderDisplayName?: string | null;
-  sourceLink?: string | null;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-interface CommunityMemberDto {
-  userId: string;
-  username: string;
-  displayName: string;
-  avatarUrl?: string | null;
-  isUnverified: boolean;
-  isActive?: boolean;
-  isOnline?: boolean;
-  availability?: AvailabilityDto | null;
-  role: string;
-  joinedAt: string;
-}
-
-export interface DirectoryUserLite {
-  id: string;
-  username: string;
-  displayName: string;
-  departmentName?: string | null;
-  avatarUrl?: string | null;
-}
-
-export interface DepartmentLite {
-  id: string;
-  code: string;
-  name: string;
-}
-
-interface CommunitiesWorkspaceProps {
-  currentUserId: string;
-  currentDisplayName: string;
-  organizations: OrganizationItem[];
-  requestedChannel: { id: string } | null;
-  jumpTarget?: CommunityJumpTarget | null;
-  feedListenerRef: RefObject<((conversationId?: string, delta?: CommunityFeedDelta | null) => void) | null>;
-  onOpenContentLink?: (token: string) => void;
-  onOpenCreateWorkspace: () => void;
-  onOpenJoinWorkspace: () => void;
-  onOpenWorkspaceSettings: (org: OrganizationItem) => void;
-  availabilityMap: Record<string, LiveAvailabilityEntry>;
-  nowMs: number;
-  onOpenProfileCard: (target: ProfileCardTarget) => void;
-}
-
-const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
-
-function applyReaction(post: ChannelPostDto, change: ReactionChange): ChannelPostDto {
-  const existing = post.reactions.find(reaction => reaction.emoji === change.emoji);
-  if (Boolean(existing?.reactedByMe) === change.reactedByMe) return post;
-
-  const reactions = post.reactions.filter(reaction => reaction.emoji !== change.emoji);
-  const count = Math.max(0, (existing?.count ?? 0) + (change.reactedByMe ? 1 : -1));
-  if (count > 0) {
-    reactions.push({ emoji: change.emoji, count, reactedByMe: change.reactedByMe });
-  }
-  return { ...post, reactions };
-}
-
-function formatPostTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString([], {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch {
-    return iso;
-  }
 }
 
 export function CommunitiesWorkspace({
@@ -2959,326 +2792,37 @@ export function CommunitiesWorkspace({
                     {canPost ? 'No posts yet. Start the first conversation above.' : 'No posts in this channel yet.'}
                   </div>
                 ) : (
-                  posts.map(post => {
-                    const commentsOpen = Boolean(expandedComments[post.id]) || post.comments.length > 0;
-                    const reactionMap = new Map(post.reactions.map(r => [r.emoji, r]));
-
-                    return (
-                      <article
-                        key={post.id}
-                        data-post-id={post.id}
-                        tabIndex={-1}
-                        className={`nx-post-card ${post.isAnnouncement ? 'announcement' : ''} ${post.isPinned ? 'pinned' : ''} ${post.pending ? 'pending' : ''} ${highlightedPostId === post.id ? 'nx-highlight-target' : ''}`}
-                      >
-                        <header className="nx-post-head">
-                          <div className="nx-post-author">
-                            <button
-                              type="button"
-                              className="nx-profile-trigger nx-avatar-trigger"
-                              aria-label={`View profile for ${post.authorDisplayName}`}
-                              onClick={() =>
-                                onOpenProfileCard({
-                                  userId: post.authorUserId,
-                                  organizationId: selectedCommunity.organizationId,
-                                  fallbackDisplayName: post.authorDisplayName,
-                                  fallbackAvatarUrl: post.authorAvatarUrl
-                                })
-                              }
-                            >
-                              <Avatar
-                                displayName={post.authorDisplayName}
-                                avatarUrl={post.authorAvatarUrl}
-                                size="sm"
-                                presence={availabilityMap[post.authorUserId]
-                                  ? resolveUserAvailability(post.authorUserId, {}, availabilityMap, nowMs).dotTone
-                                  : undefined}
-                              />
-                            </button>
-                            <div>
-                              <div className="nx-post-author-row">
-                                <button
-                                  type="button"
-                                  className="nx-profile-trigger nx-name-trigger"
-                                  onClick={() =>
-                                    onOpenProfileCard({
-                                      userId: post.authorUserId,
-                                      organizationId: selectedCommunity.organizationId,
-                                      fallbackDisplayName: post.authorDisplayName,
-                                      fallbackAvatarUrl: post.authorAvatarUrl
-                                    })
-                                  }
-                                >
-                                  <strong>{post.authorDisplayName}</strong>
-                                </button>
-                                {post.pending
-                                  ? <span className="nx-pending-label">Publishing…</span>
-                                  : <span className="nx-msg-time">{formatPostTime(post.createdAt)}</span>}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="nx-post-badges">
-                            {post.isPinned && (
-                              <Badge variant="role">
-                                <Pin size={11} aria-hidden="true" /> Pinned
-                              </Badge>
-                            )}
-                            {post.isAnnouncement && (
-                              <Badge variant="role">
-                                <Megaphone size={11} aria-hidden="true" /> Announcement
-                              </Badge>
-                            )}
-                            {!post.pending && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                iconOnly
-                                aria-label="Copy link to post"
-                                title="Copy link"
-                                onClick={() => void handleCopyPostLink(post)}
-                              >
-                                <Link2 size={14} aria-hidden="true" />
-                              </Button>
-                            )}
-                            {canManage && !activeIsArchived && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                iconOnly
-                                aria-label={post.isPinned ? 'Unpin post' : 'Pin post'}
-                                title={post.isPinned ? 'Unpin post' : 'Pin post'}
-                                onClick={() => void handleTogglePin(post)}
-                              >
-                                <Pin size={14} aria-hidden="true" />
-                              </Button>
-                            )}
-                          </div>
-                        </header>
-
-                        {post.title && <h4 className="nx-post-title">{post.title}</h4>}
-
-                        {post.body && (
-                          <div
-                            className="nx-msg-body nx-post-content"
-                            onClick={handleInlineContentLinkClick}
-                            dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(post.body) }}
-                          />
-                        )}
-
-                        {/* Post Attachments (M6.31) */}
-                        {post.attachments && post.attachments.length > 0 && (
-                          <div className="nx-msg-attachments">
-                            {post.attachments.map(att =>
-                              att.thumbnailUrl ? (
-                                <div key={att.id} className="nx-att-image-wrap">
-                                  <button
-                                    type="button"
-                                    className="nx-att-thumb-btn"
-                                    aria-label={`Preview ${att.fileName}`}
-                                    onClick={() => setLightboxImage(att)}
-                                  >
-                                    <img className="nx-att-thumb-img" src={att.thumbnailUrl} alt={att.fileName} />
-                                  </button>
-                                  <a
-                                    href={att.downloadUrl}
-                                    download={att.fileName}
-                                    className="nx-att-img-dl"
-                                    aria-label={`Download ${att.fileName}`}
-                                    title={`Download ${att.fileName} (${formatBytes(att.sizeBytes)})`}
-                                  >
-                                    <Download size={14} aria-hidden="true" />
-                                  </a>
-                                </div>
-                              ) : (
-                                <a key={att.id} href={att.downloadUrl} download={att.fileName} className="nx-att-file-card">
-                                  <span className="nx-att-file-meta">
-                                    <FileText size={16} aria-hidden="true" />
-                                    <span style={{ minWidth: 0 }}>
-                                      <div className="nx-att-file-title">{att.fileName}</div>
-                                      <div className="nx-muted">{formatBytes(att.sizeBytes)}</div>
-                                    </span>
-                                  </span>
-                                  <Download size={15} aria-hidden="true" />
-                                </a>
-                              )
-                            )}
-                          </div>
-                        )}
-
-                        {/* Announcement Acknowledgment Bar */}
-                        {post.requiresAcknowledgment && (
-                          <div className="nx-ack-bar">
-                            <div className="nx-ack-status">
-                              {post.acknowledgedByMe ? (
-                                <Badge variant="success">
-                                  <CheckCircle2 size={12} aria-hidden="true" /> Acknowledged
-                                </Badge>
-                              ) : !activeIsArchived ? (
-                                <Button variant="primary" size="sm" onClick={() => void handleAcknowledge(post.id)}>
-                                  <CheckCircle2 size={14} aria-hidden="true" /> Acknowledge
-                                </Button>
-                              ) : null}
-                              <span className="nx-muted">
-                                {post.acknowledgedCount} / {post.totalRecipients} acknowledged
-                              </span>
-                            </div>
-
-                            {canManage && (
-                              <div className="nx-inline-actions">
-                                <a
-                                  className="nx-btn nx-btn-sm"
-                                  href={orgApiPath(selectedCommunity.organizationId, `/api/posts/${post.id}/acknowledgments?format=csv`)}
-                                  download
-                                >
-                                  <Download size={13} aria-hidden="true" /> Export CSV
-                                </a>
-                                {!activeIsArchived && (
-                                  <Button variant="default" size="sm" onClick={() => void handleRemind(post.id)}>
-                                    <Bell size={13} aria-hidden="true" /> Remind
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Embedded Poll */}
-                        {post.poll && (
-                          <div className="nx-poll-card">
-                            <div className="nx-poll-head">
-                              <strong>{post.poll.question}</strong>
-                              <span className="nx-muted">
-                                {post.poll.allowMultiple ? 'Multiple choices' : 'Single choice'} · {post.poll.totalVoters}{' '}
-                                {post.poll.totalVoters === 1 ? 'voter' : 'voters'}
-                              </span>
-                            </div>
-                            <div className="nx-poll-options">
-                              {post.poll.options.map(opt => {
-                                const pct =
-                                  post.poll && post.poll.totalVoters > 0
-                                    ? Math.round((opt.votes / post.poll.totalVoters) * 100)
-                                    : 0;
-                                return (
-                                  <button
-                                    type="button"
-                                    key={opt.id}
-                                    className={`nx-poll-opt-btn ${opt.votedByMe ? 'voted' : ''}`}
-                                    disabled={activeIsArchived}
-                                    onClick={() => void handleVotePoll(post.poll!, opt.id)}
-                                  >
-                                    <span className="nx-poll-opt-fill" style={{ width: `${pct}%` }} />
-                                    <span className="nx-poll-opt-label">
-                                      {opt.votedByMe && <Check size={13} aria-hidden="true" />}
-                                      <span>{opt.label}</span>
-                                    </span>
-                                    <span className="nx-poll-opt-stat">
-                                      {opt.votes} ({pct}%)
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Reactions & Comment Toggle */}
-                        <div className="nx-post-actions">
-                          <div className="nx-reactions-row">
-                            {QUICK_REACTIONS.map(emoji => {
-                              const pending = pendingReactions[`${post.id}:${emoji}`];
-                              const r = pending
-                                ? applyReaction(post, pending).reactions.find(reaction => reaction.emoji === emoji)
-                                : reactionMap.get(emoji);
-                              return (
-                                <button
-                                  type="button"
-                                  key={emoji}
-                                  className={`nx-react-pill ${r?.reactedByMe ? 'active' : ''}`}
-                                  disabled={activeIsArchived}
-                                  onClick={() => void handleToggleReaction(post, emoji)}
-                                  aria-label={`React with ${emoji}`}
-                                  aria-pressed={Boolean(r?.reactedByMe)}
-                                  aria-disabled={activeIsArchived || Boolean(pending)}
-                                >
-                                  <span>{emoji}</span>
-                                  {r && r.count > 0 && <span>{r.count}</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setExpandedComments(prev => ({ ...prev, [post.id]: !commentsOpen }))
-                            }
-                          >
-                            <MessageSquare size={14} aria-hidden="true" />{' '}
-                            {post.comments.length === 0
-                              ? 'Comment'
-                              : `${post.comments.length} ${post.comments.length === 1 ? 'comment' : 'comments'}`}
-                          </Button>
-                        </div>
-
-                        {/* Comments Section */}
-                        {commentsOpen && (
-                          <div className="nx-comments-box">
-                            {post.comments.map(c => (
-                              <div className={`nx-comment-item ${c.pending ? 'pending' : ''}`} key={c.id}>
-                                <div className="nx-comment-head">
-                                  <button
-                                    type="button"
-                                    className="nx-profile-trigger nx-name-trigger"
-                                    onClick={() =>
-                                      onOpenProfileCard({
-                                        userId: c.authorUserId,
-                                        organizationId: selectedCommunity.organizationId,
-                                        fallbackDisplayName: c.authorDisplayName
-                                      })
-                                    }
-                                  >
-                                    <strong>{c.authorDisplayName}</strong>
-                                  </button>
-                                  {c.pending
-                                    ? <span className="nx-pending-label">Sending…</span>
-                                    : <span className="nx-msg-time">{formatPostTime(c.createdAt)}</span>}
-                                </div>
-                                <div
-                                  className="nx-msg-body"
-                                  onClick={handleInlineContentLinkClick}
-                                  dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(c.body) }}
-                                />
-                              </div>
-                            ))}
-
-                            {!activeIsArchived && (
-                              <form className="nx-comment-form" onSubmit={e => void handleAddComment(e, post.id)}>
-                                <input
-                                  type="text"
-                                  aria-label="Write a comment"
-                                  placeholder="Write a comment…"
-                                  maxLength={4000}
-                                  value={commentDrafts[post.id] ?? ''}
-                                  onChange={e =>
-                                    setCommentDrafts(prev => ({ ...prev, [post.id]: e.target.value }))
-                                  }
-                                />
-                                <Button
-                                  type="submit"
-                                  variant="default"
-                                  size="sm"
-                                  disabled={!(commentDrafts[post.id] ?? '').trim()}
-                                >
-                                  Reply
-                                </Button>
-                              </form>
-                            )}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })
+                  posts.map(post => (
+                    <CommunityPostCard
+                      key={post.id}
+                      post={post}
+                      organizationId={selectedCommunity.organizationId}
+                      canManage={canManage}
+                      activeIsArchived={activeIsArchived}
+                      highlighted={highlightedPostId === post.id}
+                      commentsOpen={Boolean(expandedComments[post.id]) || post.comments.length > 0}
+                      commentDraft={commentDrafts[post.id] ?? ''}
+                      pendingReactions={pendingReactions}
+                      availabilityMap={availabilityMap}
+                      nowMs={nowMs}
+                      onInlineLinkClick={handleInlineContentLinkClick}
+                      onOpenProfileCard={onOpenProfileCard}
+                      onCopyPostLink={p => void handleCopyPostLink(p)}
+                      onTogglePin={p => void handleTogglePin(p)}
+                      onPreviewImage={setLightboxImage}
+                      onAcknowledge={id => void handleAcknowledge(id)}
+                      onRemind={id => void handleRemind(id)}
+                      onVotePoll={(poll, optId) => void handleVotePoll(poll, optId)}
+                      onToggleReaction={(p, emoji) => void handleToggleReaction(p, emoji)}
+                      onToggleComments={(postId, nextOpen) =>
+                        setExpandedComments(prev => ({ ...prev, [postId]: nextOpen }))
+                      }
+                      onCommentDraftChange={(postId, value) =>
+                        setCommentDrafts(prev => ({ ...prev, [postId]: value }))
+                      }
+                      onAddComment={(e, postId) => void handleAddComment(e, postId)}
+                    />
+                  ))
                 )}
                 <ListPaging
                   loading={loadingPosts || loadingMorePosts}
@@ -3290,346 +2834,72 @@ export function CommunitiesWorkspace({
                 />
               </div>
 
-              {/* Channel Files Drawer (M6.31) */}
               {filesOpen && selectedCommunity && selectedConversationId && (
-                <aside className="nx-drawer" aria-label="Channel files">
-                  <div className="nx-drawer-head">
-                    <h4 ref={channelFilesHeadingRef} tabIndex={-1}>
-                      {loadingChannelFiles && channelFiles.length === 0 ? 'Files' : `Files (${channelFiles.length})`}
-                    </h4>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setRightDrawer('none');
-                        requestAnimationFrame(() => {
-                          filesBtnWrapRef.current?.querySelector('button')?.focus();
-                        });
-                      }}
-                    >
-                      Close
-                    </Button>
-                  </div>
-
-                  <div className="nx-drawer-body">
-                    {channelFilesQuota && (
-                      <div className="nx-quota-box">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                          <strong>Channel storage</strong>
-                          <span className="nx-muted">
-                            {formatBytes(channelFilesQuota.conversationUsedBytes)} / {formatBytes(channelFilesQuota.conversationQuotaBytes)}
-                          </span>
-                        </div>
-                        <div className="nx-quota-bar">
-                          <div
-                            className="nx-quota-fill"
-                            style={{
-                              width: `${Math.min(
-                                100,
-                                Math.round((channelFilesQuota.conversationUsedBytes / Math.max(1, channelFilesQuota.conversationQuotaBytes)) * 100)
-                              )}%`
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {loadingChannelFiles && channelFiles.length === 0 ? (
-                      <p className="nx-muted" role="status" style={{ textAlign: 'center', marginTop: 18 }}>
-                        Loading files…
-                      </p>
-                    ) : channelFiles.length === 0 && !channelFilesError ? (
-                      <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
-                        No files shared in this channel yet.
-                      </p>
-                    ) : (
-                      <div>
-                        {channelFiles.map(f => (
-                          <div className="nx-row nx-channel-file-row" key={f.id}>
-                            {f.thumbnailUrl ? (
-                              <button
-                                type="button"
-                                className="nx-file-preview-trigger"
-                                onClick={() => setLightboxImage(f)}
-                                title={`Preview ${f.fileName}`}
-                              >
-                                <img
-                                  src={f.thumbnailUrl}
-                                  alt=""
-                                  style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
-                                />
-                                <span style={{ minWidth: 0, flex: 1 }}>
-                                  <div className="nx-att-file-title">{f.fileName}</div>
-                                  <div className="nx-muted nx-channel-file-sub">
-                                    {formatBytes(f.sizeBytes)}
-                                    {f.uploaderDisplayName ? ` · ${f.uploaderDisplayName}` : ''}
-                                  </div>
-                                  {f.postTitle && (
-                                    <div className="nx-muted nx-channel-file-sub" title={f.postTitle}>
-                                      {f.postTitle}
-                                    </div>
-                                  )}
-                                </span>
-                              </button>
-                            ) : (
-                              <div className="nx-att-file-meta" style={{ flex: 1 }}>
-                                <FileText size={18} aria-hidden="true" />
-                                <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div className="nx-att-file-title">{f.fileName}</div>
-                                  <div className="nx-muted nx-channel-file-sub">
-                                    {formatBytes(f.sizeBytes)}
-                                    {f.uploaderDisplayName ? ` · ${f.uploaderDisplayName}` : ''}
-                                  </div>
-                                  {f.postTitle && (
-                                    <div className="nx-muted nx-channel-file-sub" title={f.postTitle}>
-                                      {f.postTitle}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            <div className="nx-channel-file-actions">
-                              {f.sourceLink && onOpenContentLink && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  iconOnly
-                                  aria-label={`Go to post for ${f.fileName}`}
-                                  title="Go to post"
-                                  onClick={() => {
-                                    if (window.innerWidth <= 860) setRightDrawer('none');
-                                    onOpenContentLink(f.sourceLink!);
-                                  }}
-                                >
-                                  <ExternalLink size={13} aria-hidden="true" />
-                                </Button>
-                              )}
-                              <a
-                                href={f.downloadUrl}
-                                download={f.fileName}
-                                className="nx-btn sm"
-                                aria-label={`Download ${f.fileName}`}
-                                title={`Download ${f.fileName}`}
-                              >
-                                <Download size={13} aria-hidden="true" />
-                              </a>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {(channelFilesNext || channelFilesError || (loadingChannelFiles && channelFiles.length > 0)) && (
-                      <div className="nx-empty-side">
-                        {channelFilesError && <p className="nx-error" role="alert">Unable to load files.</p>}
-                        {loadingChannelFiles && channelFiles.length > 0 && <span role="status">Loading files…</span>}
-                        {!loadingChannelFiles && (
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              void loadChannelFiles(
-                                selectedCommunity.organizationId,
-                                selectedConversationId,
-                                channelFilesError !== 'refresh'
-                              )
-                            }
-                          >
-                            {channelFilesError ? 'Retry' : 'Load more files'}
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </aside>
+                <ChannelFilesDrawer
+                  headingRef={channelFilesHeadingRef}
+                  files={channelFiles}
+                  loading={loadingChannelFiles}
+                  error={channelFilesError}
+                  hasMore={channelFilesNext !== null}
+                  quota={channelFilesQuota}
+                  onClose={() => {
+                    setRightDrawer('none');
+                    requestAnimationFrame(() => {
+                      filesBtnWrapRef.current?.querySelector('button')?.focus();
+                    });
+                  }}
+                  onPreviewImage={setLightboxImage}
+                  onGoToPost={onOpenContentLink ? sourceLink => {
+                    if (window.innerWidth <= 860) setRightDrawer('none');
+                    onOpenContentLink(sourceLink);
+                  } : undefined}
+                  onLoadMore={older => void loadChannelFiles(selectedCommunity.organizationId, selectedConversationId, older)}
+                />
               )}
 
-              {/* Members & Governance Drawer */}
               {membersOpen && (
-                <aside className="nx-drawer" aria-label="Community members">
-                  <div className="nx-drawer-head">
-                    <h4 ref={communityMembersHeading} tabIndex={-1}>{loadingMembers ? 'Members' : `Members (${members.length})`}</h4>
-                    <Button variant="ghost" size="sm" onClick={() => setMembersOpen(false)}>
-                      Close
-                    </Button>
-                  </div>
-
-                  <div className="nx-drawer-body">
-                    {/* Official designation for CommsAdmin */}
-                    {activeOrg?.role === 'CommsAdmin' && (
-                      <div className="nx-drawer-section">
-                        <Button variant="default" size="sm" fullWidth onClick={() => void handleToggleOfficial()}>
-                          <ShieldCheck size={14} aria-hidden="true" />{' '}
-                          {selectedCommunity.isOfficial ? 'Remove Official status' : 'Designate as Official'}
-                        </Button>
-                      </div>
-                    )}
-
-                    {/* Department sync (CM-02) */}
-                    {canManage && departments.length > 0 && (
-                      <div className="nx-drawer-section">
-                        <Field label="Department membership sync" htmlFor="comm-dept-map" compact>
-                          <select
-                            id="comm-dept-map"
-                            className="nx-select"
-                            value={mappedDeptId}
-                            onChange={e => setMappedDeptId(e.target.value)}
-                          >
-                            <option value="">None (manual membership)</option>
-                            {departments.map(d => (
-                              <option key={d.id} value={d.id}>{d.name}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Button
-                          variant="default"
-                          size="sm"
-                          fullWidth
-                          onClick={() => void handleSyncDepartment()}
-                        >
-                          Save &amp; sync department
-                        </Button>
-                      </div>
-                    )}
-
-                    {/* Add member */}
-                    {canManage && (
-                      <form className="nx-drawer-section" onSubmit={handleAddMember}>
-                        <Field label="Find people to add" htmlFor="comm-add-search" compact>
-                          <input id="comm-add-search" type="search" value={memberSearchQuery} onChange={event => {
-                            setMemberSearchQuery(event.target.value);
-                            setAddMemberUserId('');
-                          }} />
-                        </Field>
-                        <Field label="Add member" htmlFor="comm-add-member" compact>
-                          <select
-                            id="comm-add-member"
-                            className="nx-select"
-                            value={addMemberUserId}
-                            onChange={e => setAddMemberUserId(e.target.value)}
-                          >
-                            <option value="">{addCandidates.loading ? 'Loading people…'
-                              : availableToAdd.length ? 'Select a person' : 'No matching people'}</option>
-                            {availableToAdd.map(u => (
-                              <option key={u.id} value={u.id}>
-                                {u.displayName} (@{u.username})
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Button
-                          type="submit"
-                          variant="primary"
-                          size="sm"
-                          fullWidth
-                          disabled={!addMemberUserId}
-                        >
-                          <UserPlus size={14} aria-hidden="true" /> Add member
-                        </Button>
-                        <ListPaging loading={addCandidates.loading} error={addCandidates.error} hasMore={addCandidates.next !== null}
-                          onMore={addCandidates.loadMore} onRetry={addCandidates.retry} moreLabel="Load more people to add" />
-                      </form>
-                    )}
-
-                    {/* Members list */}
-                    <div className="nx-drawer-section">
-                      {loadingMembers && members.length === 0 ? (
-                        <p className="nx-muted" role="status" style={{ textAlign: 'center', margin: '12px 0' }}>
-                          Loading members…
-                        </p>
-                      ) : members.map(m => {
-                        const mStatus = resolveUserAvailability(m.userId, m, availabilityMap, nowMs);
-                        const openMemberProfile = () =>
-                          onOpenProfileCard({
-                            userId: m.userId,
-                            organizationId: selectedCommunity.organizationId,
-                            fallbackDisplayName: m.displayName,
-                            fallbackUsername: m.username,
-                            fallbackAvatarUrl: m.avatarUrl
-                          });
-                        return (
-                          <div className="nx-member-row nx-managed-member" key={m.userId}>
-                            <button
-                              type="button"
-                              className="nx-profile-trigger nx-avatar-trigger"
-                              aria-label={`View profile for ${m.displayName}`}
-                              onClick={openMemberProfile}
-                            >
-                              <Avatar displayName={m.displayName} avatarUrl={m.avatarUrl} size="sm" presence={mStatus.dotTone} />
-                            </button>
-                            <div style={{ minWidth: 0, flex: 1 }}>
-                              <button
-                                type="button"
-                                className="nx-profile-trigger nx-name-trigger"
-                                onClick={openMemberProfile}
-                              >
-                                <strong>{m.displayName}</strong>
-                              </button>
-                              <div className="nx-muted nx-inline-status-meta">
-                                <span className={`nx-dot ${mStatus.dotTone}`} aria-hidden="true" />
-                                <span>{mStatus.label}</span>
-                                <span>· @{m.username}</span>
-                                <Badge variant="role">{m.role}</Badge>
-                              </div>
-                            </div>
-                            {canManage && m.userId !== currentUserId && m.role !== 'Owner' && (
-                              <div className="nx-member-actions">
-                                {selectedCommunity.myRole === 'Owner' && m.isActive !== false &&
-                                  (!selectedCommunity.isOfficial || !m.isUnverified) && (
-                                  <Button variant="ghost" size="sm"
-                                    aria-label={`Transfer ownership to ${m.displayName} (@${m.username})`}
-                                    onClick={() => setOwnershipTransfer({
-                                      path: orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/transfer-ownership`),
-                                      resourceLabel: 'Community',
-                                      resourceName: selectedCommunity.name,
-                                      userId: m.userId,
-                                      displayName: m.displayName,
-                                      username: m.username
-                                    })}
-                                  >Transfer ownership</Button>
-                                )}
-                                {selectedCommunity.myRole === 'Owner' && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => void handleToggleAdmin(m)}
-                                  >
-                                    {m.role === 'Admin' ? 'Demote' : 'Admin'}
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="danger"
-                                  size="sm"
-                                  onClick={() => void handleRemoveMember(m.userId)}
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <ListPaging loading={loadingMembers} error={memberList.error} hasMore={memberList.next !== null}
-                        onMore={memberList.loadMore} onRetry={memberList.retry} moreLabel="Load more members" />
-                    </div>
-
-                    {selectedCommunity.myRole !== 'Owner' && (
-                      <div className="nx-drawer-section">
-                        <Button variant="danger" size="sm" fullWidth onClick={() => void handleLeaveCommunity()}>
-                          Leave community
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </aside>
+                <CommunityMembersDrawer
+                  headingRef={communityMembersHeading}
+                  currentUserId={currentUserId}
+                  selectedCommunity={selectedCommunity}
+                  activeOrg={activeOrg}
+                  canManage={canManage}
+                  departments={departments}
+                  mappedDeptId={mappedDeptId}
+                  setMappedDeptId={setMappedDeptId}
+                  onSyncDepartment={() => void handleSyncDepartment()}
+                  onToggleOfficial={() => void handleToggleOfficial()}
+                  memberSearchQuery={memberSearchQuery}
+                  setMemberSearchQuery={setMemberSearchQuery}
+                  addMemberUserId={addMemberUserId}
+                  setAddMemberUserId={setAddMemberUserId}
+                  addCandidates={addCandidates}
+                  onAddMember={handleAddMember}
+                  members={members}
+                  loadingMembers={loadingMembers}
+                  memberListError={memberList.error}
+                  memberListHasMore={memberList.next !== null}
+                  onLoadMoreMembers={memberList.loadMore}
+                  onRetryMembers={memberList.retry}
+                  availabilityMap={availabilityMap}
+                  nowMs={nowMs}
+                  onOpenProfileCard={onOpenProfileCard}
+                  onSetOwnershipTransfer={setOwnershipTransfer}
+                  onToggleAdmin={m => void handleToggleAdmin(m)}
+                  onRemoveMember={uid => void handleRemoveMember(uid)}
+                  onLeaveCommunity={() => void handleLeaveCommunity()}
+                  onClose={() => setMembersOpen(false)}
+                />
               )}
             </div>
           </>
         )}
       </section>
 
-      {/* Create Community Modal */}
       {ownershipTransfer && selectedCommunity && (
-        <TransferOwnershipDialog target={ownershipTransfer} onClose={() => setOwnershipTransfer(null)}
+        <TransferOwnershipDialog
+          target={ownershipTransfer}
+          onClose={() => setOwnershipTransfer(null)}
           onRefresh={() => {
             void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
             void loadMembers(selectedCommunity.id);
@@ -3640,90 +2910,9 @@ export function CommunitiesWorkspace({
             void loadMembers(selectedCommunity.id);
             setNotice(`${ownershipTransfer.displayName} is now Owner of ${ownershipTransfer.resourceName}.`);
             requestAnimationFrame(() => communityMembersHeading.current?.focus());
-          }} />
+          }}
+        />
       )}
-
-      <Modal
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        title="Create community"
-        description="Starts with a main community feed. You can add optional channels anytime."
-      >
-        <form onSubmit={handleCreateCommunity}>
-          {organizations.length > 1 && (
-            <Field label="Workspace" htmlFor="new-comm-workspace">
-              <select
-                id="new-comm-workspace"
-                className="nx-select"
-                value={createOrgId || organizations[0]?.id || ''}
-                onChange={e => setCreateOrgId(e.target.value)}
-              >
-                {organizations.map(org => (
-                  <option key={org.id} value={org.id}>{org.name}</option>
-                ))}
-              </select>
-            </Field>
-          )}
-          <Field label="Community name" htmlFor="new-comm-name">
-            <input
-              id="new-comm-name"
-              type="text"
-              required
-              maxLength={120}
-              placeholder="e.g. Engineering, Company Announcements"
-              value={newCommName}
-              onChange={e => setNewCommName(e.target.value)}
-            />
-          </Field>
-          <Field label="Description (optional)" htmlFor="new-comm-desc">
-            <textarea
-              id="new-comm-desc"
-              rows={2}
-              maxLength={500}
-              placeholder="What is this community for?"
-              value={newCommDesc}
-              onChange={e => setNewCommDesc(e.target.value)}
-            />
-          </Field>
-          <fieldset className="nx-vis-fieldset">
-            <legend>Community access</legend>
-            <label className={`nx-vis-option ${newCommVisibility === 'Public' ? 'selected' : ''}`}>
-              <input
-                type="radio"
-                name="community-visibility"
-                value="Public"
-                checked={newCommVisibility === 'Public'}
-                onChange={() => setNewCommVisibility('Public')}
-              />
-              <div>
-                <strong>Shared Community</strong>
-                <p>Any active member of this workspace can browse and join. Official communities require a confirmed employee profile.</p>
-              </div>
-            </label>
-            <label className={`nx-vis-option ${newCommVisibility === 'Private' ? 'selected' : ''}`}>
-              <input
-                type="radio"
-                name="community-visibility"
-                value="Private"
-                checked={newCommVisibility === 'Private'}
-                onChange={() => setNewCommVisibility('Private')}
-              />
-              <div>
-                <strong>Private Community</strong>
-                <p>Hidden from Browse communities. Only people added by a community owner or admin can see and join.</p>
-              </div>
-            </label>
-          </fieldset>
-          <div className="nx-modal-footer">
-            <Button type="button" variant="default" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={!newCommName.trim()}>
-              Create community
-            </Button>
-          </div>
-        </form>
-      </Modal>
 
       <SidebarSectionModal
         open={sectionModal !== null}
@@ -3741,199 +2930,54 @@ export function CommunitiesWorkspace({
           }
         }}
       />
-      {/* Add Channel Modal */}
-      <Modal
-        open={Boolean(addChannelForId)}
-        onOpenChange={open => {
-          if (!open) setAddChannelForId(null);
-        }}
-        title="Add channel"
-        description="Channels inherit this community's members and roles automatically."
-      >
-        <form onSubmit={handleCreateChannel}>
-          <Field label="Channel name" htmlFor="new-ch-name">
-            <input
-              id="new-ch-name"
-              type="text"
-              required
-              maxLength={120}
-              placeholder="e.g. announcements, releases, qa"
-              value={newChannelName}
-              onChange={e => setNewChannelName(e.target.value)}
-            />
-          </Field>
-          <Field label="Description (optional)" htmlFor="new-ch-desc">
-            <textarea
-              id="new-ch-desc"
-              rows={2}
-              maxLength={500}
-              placeholder="What is this channel for?"
-              value={newChannelDesc}
-              onChange={e => setNewChannelDesc(e.target.value)}
-            />
-          </Field>
-          <Field label="Posting policy" htmlFor="new-ch-policy">
-            <select
-              id="new-ch-policy"
-              className="nx-select"
-              value={newChannelPolicy}
-              onChange={e => setNewChannelPolicy(e.target.value as 'Members' | 'AdminsOnly')}
-            >
-              <option value="Members">Members — Everyone in the community can post</option>
-              <option value="AdminsOnly">Admins only — Only owners and admins can publish posts</option>
-            </select>
-          </Field>
-          <div className="nx-modal-footer">
-            <Button type="button" variant="default" onClick={() => setAddChannelForId(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={!newChannelName.trim()}>
-              Create channel
-            </Button>
-          </div>
-        </form>
-      </Modal>
 
-      {/* Edit Community Modal (M6.30) */}
-      <Modal
-        open={editCommOpen && Boolean(selectedCommunity)}
-        onOpenChange={open => {
-          if (!open && !savingMeta) setEditCommOpen(false);
-        }}
-        title="Edit community"
-        description="Update the community name and description."
-      >
-        <form onSubmit={handleSaveCommunityMeta}>
-          <Field label="Community name" htmlFor="edit-comm-name">
-            <input
-              id="edit-comm-name"
-              type="text"
-              required
-              minLength={1}
-              maxLength={120}
-              value={editCommName}
-              onChange={e => setEditCommName(e.target.value)}
-            />
-          </Field>
-          <Field label="Description (optional)" htmlFor="edit-comm-desc">
-            <textarea
-              id="edit-comm-desc"
-              rows={3}
-              maxLength={500}
-              placeholder="Describe what this community is for…"
-              value={editCommDesc}
-              onChange={e => setEditCommDesc(e.target.value)}
-            />
-          </Field>
-          <div className="nx-modal-footer">
-            <Button type="button" variant="default" disabled={savingMeta} onClick={() => setEditCommOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={savingMeta || !editCommName.trim()}>
-              {savingMeta ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+      <CommunityModals
+        organizations={organizations}
+        selectedCommunity={selectedCommunity}
+        selectedSubChannel={selectedSubChannel}
+        createOpen={createOpen}
+        setCreateOpen={setCreateOpen}
+        createOrgId={createOrgId}
+        setCreateOrgId={setCreateOrgId}
+        newCommName={newCommName}
+        setNewCommName={setNewCommName}
+        newCommDesc={newCommDesc}
+        setNewCommDesc={setNewCommDesc}
+        newCommVisibility={newCommVisibility}
+        setNewCommVisibility={setNewCommVisibility}
+        onCreateCommunity={handleCreateCommunity}
+        addChannelForId={addChannelForId}
+        setAddChannelForId={setAddChannelForId}
+        newChannelName={newChannelName}
+        setNewChannelName={setNewChannelName}
+        newChannelDesc={newChannelDesc}
+        setNewChannelDesc={setNewChannelDesc}
+        newChannelPolicy={newChannelPolicy}
+        setNewChannelPolicy={setNewChannelPolicy}
+        onCreateChannel={handleCreateChannel}
+        editCommOpen={editCommOpen}
+        setEditCommOpen={setEditCommOpen}
+        editCommName={editCommName}
+        setEditCommName={setEditCommName}
+        editCommDesc={editCommDesc}
+        setEditCommDesc={setEditCommDesc}
+        onSaveCommunityMeta={handleSaveCommunityMeta}
+        editChannelOpen={editChannelOpen}
+        setEditChannelOpen={setEditChannelOpen}
+        editChannelName={editChannelName}
+        setEditChannelName={setEditChannelName}
+        editChannelDesc={editChannelDesc}
+        setEditChannelDesc={setEditChannelDesc}
+        onSaveChannelMeta={handleSaveChannelMeta}
+        archiveConfirmOpen={archiveConfirmOpen}
+        setArchiveConfirmOpen={setArchiveConfirmOpen}
+        onArchiveChannel={() => void handleArchiveChannel()}
+        savingMeta={savingMeta}
+      />
 
-      {/* Edit Channel Modal (M6.30) */}
-      <Modal
-        open={editChannelOpen && Boolean(selectedSubChannel)}
-        onOpenChange={open => {
-          if (!open && !savingMeta) setEditChannelOpen(false);
-        }}
-        title="Edit channel"
-        description="Update the channel name and description without changing its link or history."
-      >
-        <form onSubmit={handleSaveChannelMeta}>
-          <Field label="Channel name" htmlFor="edit-ch-name">
-            <input
-              id="edit-ch-name"
-              type="text"
-              required
-              minLength={1}
-              maxLength={120}
-              value={editChannelName}
-              onChange={e => setEditChannelName(e.target.value)}
-            />
-          </Field>
-          <Field label="Description (optional)" htmlFor="edit-ch-desc">
-            <textarea
-              id="edit-ch-desc"
-              rows={3}
-              maxLength={500}
-              placeholder="Describe what this channel is for…"
-              value={editChannelDesc}
-              onChange={e => setEditChannelDesc(e.target.value)}
-            />
-          </Field>
-          <div className="nx-modal-footer">
-            <Button type="button" variant="default" disabled={savingMeta} onClick={() => setEditChannelOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={savingMeta || !editChannelName.trim()}>
-              {savingMeta ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Archive Channel Confirmation Modal (M6.30) */}
-      <Modal
-        open={archiveConfirmOpen && Boolean(selectedSubChannel)}
-        onOpenChange={open => {
-          if (!open && !savingMeta) setArchiveConfirmOpen(false);
-        }}
-        title={selectedSubChannel ? `Archive #${selectedSubChannel.name}?` : 'Archive channel'}
-        footer={
-          <>
-            <Button disabled={savingMeta} onClick={() => setArchiveConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="danger" disabled={savingMeta} onClick={() => void handleArchiveChannel()}>
-              <Archive size={14} aria-hidden="true" /> {savingMeta ? 'Archiving…' : 'Archive channel'}
-            </Button>
-          </>
-        }
-      >
-        <p className="nx-muted" style={{ margin: 0 }}>
-          Archiving this channel makes it read-only. Its ID, past posts, comments, polls, and files remain preserved, and an owner or admin can restore it anytime.
-        </p>
-      </Modal>
-
-      {/* Image Lightbox Modal (M6.31) */}
-      <Modal
-        open={Boolean(lightboxImage)}
-        onOpenChange={open => { if (!open) setLightboxImage(null); }}
-        title={lightboxImage?.fileName ?? 'Image preview'}
-        size="xl"
-        footer={
-          lightboxImage ? (
-            <>
-              <span className="nx-muted" style={{ marginRight: 'auto', alignSelf: 'center' }}>
-                {lightboxImage.imageWidth && lightboxImage.imageHeight
-                  ? `${lightboxImage.imageWidth}×${lightboxImage.imageHeight} · `
-                  : ''}
-                {formatBytes(lightboxImage.sizeBytes)}
-              </span>
-              <a href={lightboxImage.downloadUrl} download={lightboxImage.fileName} className="nx-btn primary sm">
-                <Download size={14} aria-hidden="true" /> Download
-              </a>
-              <Button size="sm" onClick={() => setLightboxImage(null)}>Close</Button>
-            </>
-          ) : undefined
-        }
-      >
-        {lightboxImage && (
-          <div className="nx-lightbox-body">
-            <img
-              className="nx-lightbox-img"
-              src={lightboxImage.previewUrl ?? lightboxImage.thumbnailUrl ?? lightboxImage.downloadUrl}
-              alt={lightboxImage.fileName}
-            />
-          </div>
-        )}
-      </Modal>
+      <ImageLightboxModal image={lightboxImage} onClose={() => setLightboxImage(null)} />
     </div>
   );
 }
+
+export default CommunitiesWorkspace;

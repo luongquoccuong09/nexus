@@ -1,0 +1,404 @@
+/* ==========================================================================
+   NEXUS WORKSPACE LAYOUTS (Token-Only — Zero Raw Hex Literals Allowed)
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-h); }
+
+/* ==========================================================================
+   AUTH SHELL (LOGIN / REGISTER)
+   ========================================================================== */
+.nx-auth-page {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(380px, 480px);
+  background: var(--bg-app);
+}
+
+.nx-auth-hero {
+  background: linear-gradient(145deg, var(--brand-950) 0%, var(--brand-800) 55%, var(--brand-600) 100%);
+  color: var(--text-on-brand);
+  padding: 48px 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-6);
+}
+
+.nx-auth-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.nx-auth-brand-name {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.nx-auth-hero h1 {
+  margin: 0 0 var(--space-3);
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.nx-auth-hero p {
+  margin: 0;
+  color: var(--text-on-hero);
+  max-width: 460px;
+  font-size: 15px;
+}
+
+.nx-auth-features {
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+  max-width: 440px;
+}
+
+.nx-auth-features li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-on-hero);
+}
+
+.nx-auth-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-soft);
+}
+
+.nx-auth-card {
+  width: 100%;
+  max-width: 390px;
+}
+
+.nx-auth-secondary { margin-top: var(--space-2); }
+
+.nx-auth-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-subtle);
+  border-radius: 10px;
+  margin-bottom: 22px;
+}
+
+.nx-auth-switcher button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nx-auth-switcher button.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.nx-field > label.nx-terms-label,
+.nx-terms-label {
+  display: flex;
+  gap: var(--space-2);
+  font-weight: 400;
+  align-items: center;
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.nx-field > label.nx-terms-label input,
+.nx-terms-label input { margin: 0; }
+
+/* ==========================================================================
+   FULL-VIEWPORT WORKSPACE SHELL (APP RAIL + TOPBAR + BODY)
+   ========================================================================== */
+.nx-app {
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--rail-w) 1fr;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.nx-rail {
+  background: var(--brand-950);
+  color: var(--text-on-rail);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-3) 6px;
+  gap: 6px;
+  z-index: 20;
+  user-select: none;
+}
+
+.nx-rail-logo {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  align-items: center;
+  flex: 1;
+}
+
+.nx-rail-btn {
+  position: relative;
+  width: 68px;
+  min-height: 52px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-on-rail);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+  padding: 6px 4px;
+  font-family: inherit;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nx-rail-btn:focus-visible {
+  outline: 2px solid var(--brand-400);
+  outline-offset: 2px;
+}
+
+.nx-rail-btn.compact { min-height: 38px; width: 44px; }
+
+.nx-rail-btn span {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+.nx-rail-btn:hover {
+  background: var(--rail-hover);
+  color: var(--text-on-brand);
+}
+
+.nx-rail-btn.active {
+  background: var(--rail-active);
+  color: var(--text-on-brand);
+}
+
+.nx-rail-btn.active::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand-400);
+}
+
+.nx-rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-alert);
+  color: var(--text-on-brand);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--rail-divider);
+}
+
+.nx-rail-avatar-btn {
+  position: relative;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.nx-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.nx-topbar {
+  height: var(--topbar-h);
+  min-height: var(--topbar-h);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.nx-topbar-left, .nx-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nx-context-picker {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 12rem;
+}
+
+.nx-context-picker > .nx-select {
+  width: 100%;
+}
+
+.nx-workspace-home {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.nx-workspace-home-card {
+  width: min(100%, 34rem);
+  padding: clamp(var(--space-4), 5vw, var(--space-8));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+
+.nx-workspace-home-card h1 {
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.nx-workspace-home-card p {
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
+}
+
+.nx-workspace-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.nx-workspace-home-menu {
+  margin-top: var(--space-4);
+  color: var(--text-secondary);
+}
+
+.nx-workspace-home-menu summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.nx-new-chat-results {
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: 0;
+  max-height: min(42dvh, 22rem);
+  overflow-y: auto;
+}
+
+.nx-new-chat-results .nx-btn {
+  justify-content: flex-start;
+  min-height: 44px;
+  height: auto;
+  padding-block: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.nx-topbar-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.nx-conn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.nx-main-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.nx-tab-keepalive {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.nx-tab-keepalive.hidden { display: none; }
+

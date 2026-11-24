@@ -1,11 +1,14 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
-import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Download, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { AttachmentGallery } from './attachments/AttachmentGallery';
+import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
+import { ImageLightboxModal } from './attachments/ImageLightboxModal';
 import { renderSafeMarkdown } from './markdown';
 import { ChatJumpTarget, copyContentLink, extractContentLinkToken } from './contentLinks';
 import { moveIdByOffset, reorderIdList, SidebarSectionDto, useSidebarOrganization } from './sidebarPrefs';
-import { SidebarItemActions, SidebarSectionHeader, SidebarSectionModal } from './sidebarControls';
+import { SidebarItemActions, SidebarSectionHeader } from './sidebarControls';
 import { ConversationNotificationButton } from './notificationPreferences';
 import { useChatDrafts } from './chatDrafts';
 import { useChatReading } from './chatReading';
@@ -13,14 +16,11 @@ import { shouldSendOnEnter } from './composerKeys';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
 import {
   AvailabilityChangedEvent,
-  AvailabilityDto,
-  LiveAvailabilityEntry,
   normalizeAvailability,
   resolveUserAvailability
 } from './availability';
-import { ProfileCardTarget } from './ProfileCardModal';
-import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
-import { ListPaging, readCursorPage, useCursorList } from './cursorList';
+import { OwnershipTransfer } from './transferOwnership';
+import { readCursorPage, useCursorList } from './cursorList';
 import { personKey, searchChatCandidates } from './peopleDirectory';
 import {
   ChatDraft,
@@ -37,35 +37,28 @@ import {
   setConversationCursor,
   stageMessage
 } from './offlineQueue';
-import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui';
+import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
+import { ChatFilesDrawer, ChatMembersDrawer } from './chat/ChatDrawers';
+import { ChatModals } from './chat/ChatModals';
+import {
+  ChatMessageItem,
+  ChatWorkspaceProps,
+  CommunityFeedDelta,
+  ConversationCursor,
+  ConversationListItem,
+  DirectoryUserLite,
+  FilesCursor,
+  GroupMemberItem
+} from './chat/types';
 
-export interface ConversationListItem {
-  id: string;
-  kind: string;
-  title: string;
-  role: string;
-  nextSeq: number;
-  changeSeq: number;
-  lastReadSeq: number;
-  unreadCount: number;
-  memberCount: number;
-  updatedAt?: string;
-  lastMessagePreview?: {
-    bodyPreview: string;
-    senderDisplayName: string;
-    createdAt: string;
-    seq: number;
-  } | null;
-  peer?: {
-    id: string;
-    username: string;
-    displayName: string;
-    isOnline: boolean;
-    availability?: AvailabilityDto | null;
-    isBlockedByMe?: boolean;
-    avatarUrl?: string | null;
-  } | null;
-}
+export type {
+  AttachmentItem,
+  ChatMessageItem,
+  CommunityFeedDelta,
+  ConversationListItem,
+  DirectoryUserLite,
+  StorageQuotaSummary
+};
 
 function applyReadState(conversation: ConversationListItem, lastReadSeq: number): ConversationListItem {
   if (lastReadSeq <= conversation.lastReadSeq) return conversation;
@@ -77,77 +70,7 @@ function applyReadState(conversation: ConversationListItem, lastReadSeq: number)
   };
 }
 
-export interface AttachmentItem {
-  id: string;
-  conversationId: string;
-  messageId?: string | null;
-  postId?: string | null;
-  uploaderUserId: string;
-  clientUploadId: string;
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-  sha256Hex: string;
-  imageWidth?: number | null;
-  imageHeight?: number | null;
-  state: string;
-  scanStatus: string;
-  downloadUrl: string;
-  thumbnailUrl?: string | null;
-  previewUrl?: string | null;
-  createdAt: string;
-}
-
-export interface StorageQuotaSummary {
-  conversationUsedBytes: number;
-  conversationQuotaBytes: number;
-}
-
-export interface ChatMessageItem {
-  id: string;
-  conversationId: string;
-  seq: number;
-  senderId: string;
-  senderDisplayName: string;
-  clientMsgId: string;
-  body: string;
-  createdAt: string;
-  editedAt?: string | null;
-  deletedAt?: string | null;
-  pending?: boolean;
-  attachments?: AttachmentItem[];
-}
-
-export interface DirectoryUserLite {
-  id: string;
-  username: string;
-  displayName: string;
-  departmentName?: string | null;
-  avatarUrl?: string | null;
-  isContact?: boolean;
-  workspaceNames?: string[];
-}
-
-interface GroupMemberItem {
-  userId: string;
-  username: string;
-  displayName: string;
-  role: string;
-  isActive?: boolean;
-  isOnline?: boolean;
-  availability?: AvailabilityDto | null;
-}
 const groupMemberKey = (member: GroupMemberItem) => member.userId;
-
-interface ConversationCursor {
-  updatedAt: string;
-  id: string;
-}
-
-interface FilesCursor {
-  createdAt: string;
-  id: string;
-}
 
 async function readPages<Item, Cursor>(
   initial: Cursor | null,
@@ -166,95 +89,10 @@ async function readPages<Item, Cursor>(
   return { items, next, pages };
 }
 
-export interface CommunityFeedDelta {
-  type:
-    | 'reaction'
-    | 'comment'
-    | 'pin'
-    | 'ownership'
-    | 'post_created'
-    | 'community_updated'
-    | 'channel_updated'
-    | 'channel_archived'
-    | 'channel_restored';
-  postId?: string;
-  communityId?: string;
-  channelId?: string;
-  conversationId?: string;
-  name?: string;
-  description?: string | null;
-  updatedAt?: string;
-  archivedAt?: string | null;
-  archivedByUserId?: string | null;
-  restoredAt?: string | null;
-  restoredByUserId?: string | null;
-  emoji?: string;
-  userId?: string;
-  reacted?: boolean;
-  isPinned?: boolean;
-  post?: {
-    id: string;
-    conversationId: string;
-    authorUserId: string;
-    authorDisplayName: string;
-    authorAvatarUrl?: string | null;
-    title?: string | null;
-    body: string;
-    isAnnouncement: boolean;
-    requiresAcknowledgment: boolean;
-    acknowledgedCount: number;
-    totalRecipients: number;
-    acknowledgedByMe: boolean;
-    isPinned: boolean;
-    createdAt: string;
-    attachments?: AttachmentItem[];
-  };
-  comment?: {
-    id: string;
-    postId: string;
-    authorUserId: string;
-    authorDisplayName: string;
-    authorIsUnverified: boolean;
-    body: string;
-    createdAt: string;
-  };
-}
-
-interface ChatWorkspaceProps {
-  currentUserId: string;
-  initialVersion: string | null;
-  selectedConversationId: string | null;
-  jumpTarget?: ChatJumpTarget | null;
-  visible: boolean;
-  candidateRevision: number;
-  refreshOrgSubscriptionsRef?: MutableRefObject<(() => Promise<void>) | null>;
-  onReloadConversationsRef?: MutableRefObject<(() => Promise<void>) | null>;
-  onOrganizationAccessRevoked?: (organizationId: string) => void;
-  onBlockListChanged: () => void;
-  onManageBlockedUsers: () => void;
-  onSelectConversation: (id: string | null) => void;
-  onNewChat: () => void;
-  onOpenContentLink?: (token: string) => void;
-  onConnectionStateChange: (state: 'connected' | 'reconnecting' | 'offline') => void;
-  onUnreadTotalChange: (total: number) => void;
-  onCommunityFeedChanged: (conversationId?: string, delta?: CommunityFeedDelta | null) => void;
-  onVersionStale: () => void;
-  availabilityMap: Record<string, LiveAvailabilityEntry>;
-  nowMs: number;
-  onAvailabilityChanged: (evt: AvailabilityChangedEvent) => void;
-  onOpenProfileCard: (target: ProfileCardTarget) => void;
-}
-
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDateLabel(iso: string): string {
@@ -2308,42 +2146,7 @@ export function ChatWorkspace({
                           />
                         )}
                         {m.attachments && m.attachments.length > 0 && (
-                          <div className="nx-msg-attachments">
-                            {m.attachments.map(att => (
-                              att.thumbnailUrl ? (
-                                <div key={att.id} className="nx-att-image-wrap">
-                                  <button
-                                    type="button"
-                                    className="nx-att-thumb-btn"
-                                    aria-label={`Preview ${att.fileName}`}
-                                    onClick={() => setLightboxImage(att)}
-                                  >
-                                    <img className="nx-att-thumb-img" src={att.thumbnailUrl} alt={att.fileName} />
-                                  </button>
-                                  <a
-                                    href={att.downloadUrl}
-                                    download={att.fileName}
-                                    className="nx-att-img-dl"
-                                    aria-label={`Download ${att.fileName}`}
-                                    title={`Download ${att.fileName} (${formatBytes(att.sizeBytes)})`}
-                                  >
-                                    <Download size={14} aria-hidden="true" />
-                                  </a>
-                                </div>
-                              ) : (
-                                <a key={att.id} href={att.downloadUrl} download={att.fileName} className="nx-att-file-card">
-                                  <span className="nx-att-file-meta">
-                                    <FileText size={16} aria-hidden="true" />
-                                    <span style={{ minWidth: 0 }}>
-                                      <div className="nx-att-file-title">{att.fileName}</div>
-                                      <div className="nx-muted">{formatBytes(att.sizeBytes)}</div>
-                                    </span>
-                                  </span>
-                                  <Download size={15} aria-hidden="true" />
-                                </a>
-                              )
-                            ))}
-                          </div>
+                          <AttachmentGallery attachments={m.attachments} onPreviewImage={setLightboxImage} />
                         )}
                       </div>
                     </div>
@@ -2510,333 +2313,93 @@ export function ChatWorkspace({
         )}
       </section>
 
-      {/* Group Members Drawer */}
       {activeConv && activeConv.kind !== 'dm' && activeConv.kind !== 'self' && rightDrawer === 'members' && (
-        <aside className="nx-drawer" aria-label="Group members">
-          <div className="nx-drawer-head">
-            <strong ref={groupMembersHeading} tabIndex={-1}>{loadingMembers ? 'Members' : `Members (${groupMembers.length})`}</strong>
-            <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
-          </div>
-          <div className="nx-drawer-body">
-            {(activeConv.role === 'Owner' || activeConv.role === 'Admin') && (
-              <div>
-              <Field label="Find people to add" htmlFor="group-member-search" compact>
-                <input id="group-member-search" type="search" value={groupMemberSearch} onChange={event => {
-                  setGroupMemberSearch(event.target.value);
-                  setAddMemberId('');
-                }} />
-              </Field>
-              <Field label="Add person" htmlFor="add-group-member" compact>
-                <div className="nx-inline-actions">
-                  <select
-                    id="add-group-member"
-                    value={addMemberId}
-                    onChange={e => setAddMemberId(e.target.value)}
-                  >
-                    <option value="">{addMemberCandidates.loading ? 'Loading people…'
-                      : addMemberCandidates.items.length ? 'Select a person' : 'No matching people'}</option>
-                    {addMemberCandidates.items
-                      .map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.displayName} (@{u.username})
-                        </option>
-                      ))}
-                  </select>
-                  <Button variant="primary" size="sm" disabled={!addMemberId} onClick={() => void handleAddMember()}>
-                    Add
-                  </Button>
-                </div>
-              </Field>
-              <ListPaging loading={addMemberCandidates.loading} error={addMemberCandidates.error}
-                hasMore={addMemberCandidates.next !== null} onMore={addMemberCandidates.loadMore}
-                onRetry={addMemberCandidates.retry} moreLabel="Load more people to add" />
-              </div>
-            )}
-
-            <div>
-              {groupMembers.map(gm => {
-                const gmStatus = resolveUserAvailability(gm.userId, gm, availabilityMap, nowMs);
-                return (
-                  <div className="nx-row nx-managed-member" key={gm.userId}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="nx-user-name-wrap">
-                        <button
-                          type="button"
-                          className="nx-profile-trigger nx-name-trigger"
-                          onClick={() =>
-                            onOpenProfileCard({
-                              userId: gm.userId,
-                              organizationId: null,
-                              fallbackDisplayName: gm.displayName,
-                              fallbackUsername: gm.username
-                            })
-                          }
-                        >
-                          <strong style={{ fontSize: 13 }}>{gm.displayName}</strong>
-                        </button>
-                        <Badge variant="role">{gm.role}</Badge>
-                      </div>
-                      <div className="nx-muted nx-inline-status-meta">
-                        <span className={`nx-dot ${gmStatus.dotTone}`} aria-hidden="true" />
-                        <span>{gmStatus.label}</span>
-                        <span>· @{gm.username}</span>
-                      </div>
-                    </div>
-                  {(activeConv.role === 'Owner' || activeConv.role === 'Admin') &&
-                    gm.userId !== currentUserId &&
-                    gm.role !== 'Owner' && (
-                      <div className="nx-member-actions">
-                        {activeConv.role === 'Owner' && gm.isActive !== false && (
-                          <Button variant="ghost" size="sm" disabled={loadingMembers}
-                            aria-label={`Transfer ownership to ${gm.displayName} (@${gm.username})`}
-                            onClick={() => setOwnershipTransfer({
-                              path: personalApiPath(`/api/conversations/${activeConv.id}/transfer-ownership`),
-                              resourceLabel: 'Group chat',
-                              resourceName: activeConv.title,
-                              userId: gm.userId,
-                              displayName: gm.displayName,
-                              username: gm.username
-                            })}
-                          >Transfer ownership</Button>
-                        )}
-                        <Button variant="danger" size="sm" onClick={() => void handleRemoveMember(gm.userId)}>
-                          Remove
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <ListPaging loading={loadingMembers} error={groupMemberPage.error} hasMore={groupMemberPage.next !== null}
-              onMore={groupMemberPage.loadMore} onRetry={groupMemberPage.retry} moreLabel="Load more members" />
-
-            <div className="nx-drawer-footer">
-              <Button variant="danger" fullWidth onClick={() => void handleLeaveGroup()}>
-                Leave group
-              </Button>
-            </div>
-          </div>
-        </aside>
+        <ChatMembersDrawer
+          activeConv={activeConv}
+          currentUserId={currentUserId}
+          headingRef={groupMembersHeading}
+          groupMembers={groupMembers}
+          loadingMembers={loadingMembers}
+          memberError={groupMemberPage.error}
+          memberHasMore={groupMemberPage.next !== null}
+          onLoadMoreMembers={groupMemberPage.loadMore}
+          onRetryMembers={groupMemberPage.retry}
+          groupMemberSearch={groupMemberSearch}
+          setGroupMemberSearch={setGroupMemberSearch}
+          addMemberId={addMemberId}
+          setAddMemberId={setAddMemberId}
+          addMemberCandidates={addMemberCandidates}
+          availabilityMap={availabilityMap}
+          nowMs={nowMs}
+          onOpenProfileCard={onOpenProfileCard}
+          onAddMember={() => void handleAddMember()}
+          onRemoveMember={uid => void handleRemoveMember(uid)}
+          onLeaveGroup={() => void handleLeaveGroup()}
+          onSetOwnershipTransfer={setOwnershipTransfer}
+          onClose={() => setRightDrawer('none')}
+        />
       )}
 
-      {ownershipTransfer && activeConv && (
-        <TransferOwnershipDialog target={ownershipTransfer} onClose={() => setOwnershipTransfer(null)}
-          onRefresh={() => { void loadConversations(); void loadGroupMembers(activeConv.id); }}
-          onTransferred={() => {
+      {activeConv && rightDrawer === 'files' && (
+        <ChatFilesDrawer
+          files={conversationFiles}
+          loading={loadingFiles}
+          moreFiles={moreFiles}
+          filesLoadError={filesLoadError}
+          quota={quota}
+          onPreviewImage={setLightboxImage}
+          onLoadMore={older => void loadConversationFiles(activeConv.id, older)}
+          onClose={() => setRightDrawer('none')}
+        />
+      )}
+
+      <ChatModals
+        activeConv={activeConv}
+        showNewGroupModal={showNewGroupModal}
+        setShowNewGroupModal={setShowNewGroupModal}
+        newGroupTitle={newGroupTitle}
+        setNewGroupTitle={setNewGroupTitle}
+        newGroupSearch={newGroupSearch}
+        setNewGroupSearch={setNewGroupSearch}
+        selectedGroupMemberIds={selectedGroupMemberIds}
+        setSelectedGroupMemberIds={setSelectedGroupMemberIds}
+        groupCandidates={groupCandidates}
+        onCreateGroup={handleCreateGroup}
+        blockTarget={blockTarget}
+        setBlockTarget={setBlockTarget}
+        blockingPeer={blockingPeer}
+        blockError={blockError}
+        onBlockPeer={() => void handleBlockPeer()}
+        showReportModal={showReportModal}
+        setShowReportModal={setShowReportModal}
+        reportReason={reportReason}
+        setReportReason={setReportReason}
+        reportDetails={reportDetails}
+        setReportDetails={setReportDetails}
+        onSubmitReport={handleSubmitReport}
+        ownershipTransfer={ownershipTransfer}
+        onCloseOwnershipTransfer={() => setOwnershipTransfer(null)}
+        onRefreshOwnership={() => {
+          if (activeConv) {
+            void loadConversations();
+            void loadGroupMembers(activeConv.id);
+          }
+        }}
+        onTransferredOwnership={() => {
+          if (activeConv && ownershipTransfer) {
+            const transferredName = ownershipTransfer.displayName;
+            const resourceName = ownershipTransfer.resourceName;
             setOwnershipTransfer(null);
             void loadConversations();
             void loadGroupMembers(activeConv.id);
-            setNotice(`${ownershipTransfer.displayName} is now Owner of ${ownershipTransfer.resourceName}.`);
+            setNotice(`${transferredName} is now Owner of ${resourceName}.`);
             requestAnimationFrame(() => groupMembersHeading.current?.focus());
-          }} />
-      )}
-
-      {/* Conversation Files Drawer (M3.5) */}
-      {activeConv && rightDrawer === 'files' && (
-        <aside className="nx-drawer" aria-label="Conversation files">
-          <div className="nx-drawer-head">
-            <strong>{loadingFiles && conversationFiles.length === 0 ? 'Files' : `Files (${conversationFiles.length})`}</strong>
-            <Button variant="ghost" size="sm" onClick={() => setRightDrawer('none')}>Close</Button>
-          </div>
-          <div className="nx-drawer-body">
-            {quota && (
-              <div className="nx-quota-box">
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong>Conversation storage</strong>
-                  <span className="nx-muted">
-                    {formatBytes(quota.conversationUsedBytes)} / {formatBytes(quota.conversationQuotaBytes)}
-                  </span>
-                </div>
-                <div className="nx-quota-bar">
-                  <div
-                    className="nx-quota-fill"
-                    style={{ width: `${Math.min(100, Math.round((quota.conversationUsedBytes / Math.max(1, quota.conversationQuotaBytes)) * 100))}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {loadingFiles && conversationFiles.length === 0 ? (
-              <p className="nx-muted" role="status" style={{ textAlign: 'center', marginTop: 18 }}>
-                Loading files…
-              </p>
-            ) : conversationFiles.length === 0 && !filesLoadError ? (
-              <p className="nx-muted" style={{ textAlign: 'center', marginTop: 18 }}>
-                No files shared in this conversation yet.
-              </p>
-            ) : (
-              <div>
-                {conversationFiles.map(f => (
-                  <div className="nx-row" key={f.id}>
-                    {f.thumbnailUrl ? (
-                      <button
-                        type="button"
-                        className="nx-file-preview-trigger"
-                        onClick={() => setLightboxImage(f)}
-                        title={`Preview ${f.fileName}`}
-                      >
-                        <img src={f.thumbnailUrl} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
-                        <span style={{ minWidth: 0 }}>
-                          <div className="nx-att-file-title">{f.fileName}</div>
-                          <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
-                        </span>
-                      </button>
-                    ) : (
-                      <div className="nx-att-file-meta">
-                        <FileText size={18} aria-hidden="true" />
-                        <div style={{ minWidth: 0 }}>
-                          <div className="nx-att-file-title">{f.fileName}</div>
-                          <div className="nx-muted">{formatBytes(f.sizeBytes)}</div>
-                        </div>
-                      </div>
-                    )}
-                    <a href={f.downloadUrl} download={f.fileName} className="nx-btn sm" aria-label={`Download ${f.fileName}`} title={`Download ${f.fileName}`}>
-                      <Download size={13} aria-hidden="true" />
-                    </a>
-                  </div>
-                ))}
-              </div>
-            )}
-            {(moreFiles || filesLoadError || (loadingFiles && conversationFiles.length > 0)) && (
-              <div className="nx-empty-side">
-                {filesLoadError && <p className="nx-error" role="alert">Unable to load files.</p>}
-                {loadingFiles && conversationFiles.length > 0 && <span role="status">Loading files…</span>}
-                {!loadingFiles && (
-                  <Button size="sm" onClick={() => void loadConversationFiles(activeConv.id, filesLoadError !== 'refresh')}>
-                    {filesLoadError ? 'Retry' : 'Load more files'}
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-        </aside>
-      )}
-
-      {/* New Group Modal (Radix Dialog) */}
-      <Modal
-        open={showNewGroupModal}
-        onOpenChange={setShowNewGroupModal}
-        title="Create group chat"
-        footer={
-          <>
-            <Button onClick={() => setShowNewGroupModal(false)}>Cancel</Button>
-            <Button type="submit" form="create-group-form" variant="primary">Create group</Button>
-          </>
-        }
-      >
-        <form id="create-group-form" onSubmit={handleCreateGroup}>
-          <Field label="Group name" htmlFor="modal-group-name">
-            <input
-              id="modal-group-name"
-              type="text"
-              required
-              maxLength={120}
-              placeholder="e.g. Engineering, Ops Team…"
-              value={newGroupTitle}
-              onChange={e => setNewGroupTitle(e.target.value)}
-            />
-          </Field>
-
-          <Field label="Find people to add (optional)" htmlFor="new-group-search" compact>
-            <input id="new-group-search" type="search" value={newGroupSearch} onChange={event => setNewGroupSearch(event.target.value)} />
-          </Field>
-          {selectedGroupMemberIds.length > 0 && <p className="nx-muted">{selectedGroupMemberIds.length} selected</p>}
-          {groupCandidates.items.length === 0 && !groupCandidates.error &&
-            <p className="nx-muted">{groupCandidates.loading ? 'Searching…' : 'No matching people.'}</p>}
-          {groupCandidates.items.length > 0 && (
-              <div className="nx-member-picker">
-                {groupCandidates.items.map(u => {
-                  const checked = selectedGroupMemberIds.includes(u.id);
-                  const contextTag = [
-                    ...(u.workspaceNames ?? []),
-                    ...(u.isContact ? ['Contact'] : []),
-                    ...(u.departmentName ? [u.departmentName] : [])
-                  ].filter(Boolean).join(', ');
-                  return (
-                    <label className="nx-member-option" key={u.id}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={e => {
-                          setSelectedGroupMemberIds(prev =>
-                            e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id)
-                          );
-                        }}
-                      />
-                      <Avatar displayName={u.displayName} avatarUrl={u.avatarUrl} size="sm" />
-                      <div>
-                        <div className="nx-user-name-wrap">
-                          <strong style={{ fontSize: 13 }}>{u.displayName}</strong>
-                        </div>
-                        <div className="nx-muted">@{u.username}{contextTag ? ` · ${contextTag}` : ''}</div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-          )}
-          <ListPaging loading={groupCandidates.loading} error={groupCandidates.error} hasMore={groupCandidates.next !== null}
-            onMore={groupCandidates.loadMore} onRetry={groupCandidates.retry} moreLabel="Load more people" />
-        </form>
-      </Modal>
-
-      <Modal
-        open={Boolean(blockTarget)}
-        onOpenChange={open => { if (!open && !blockingPeer) setBlockTarget(null); }}
-        title={blockTarget ? `Block ${blockTarget.name}?` : 'Block user'}
-        footer={(
-          <>
-            <Button disabled={blockingPeer} onClick={() => setBlockTarget(null)}>Cancel</Button>
-            <Button variant="danger" disabled={blockingPeer} onClick={() => void handleBlockPeer()}>
-              {blockingPeer ? 'Blocking…' : 'Block user'}
-            </Button>
-          </>
-        )}
-      >
-        <p className="nx-muted">Neither of you will be able to send direct messages until you unblock this user.</p>
-        {blockError && <ToastBar variant="error" message={blockError} />}
-      </Modal>
-
-      {/* Report User Modal (Radix Dialog) */}
-      <Modal
-        open={showReportModal && Boolean(activeConv?.peer)}
-        onOpenChange={setShowReportModal}
-        title={activeConv?.peer ? `Report ${activeConv.peer.displayName}` : 'Report user'}
-        footer={
-          <>
-            <Button onClick={() => setShowReportModal(false)}>Cancel</Button>
-            <Button type="submit" form="report-user-form" variant="danger">Submit report</Button>
-          </>
-        }
-      >
-        <form id="report-user-form" onSubmit={handleSubmitReport}>
-          <Field label="Reason" htmlFor="report-reason">
-            <select id="report-reason" value={reportReason} onChange={e => setReportReason(e.target.value)}>
-              <option value="spam">Spam or unsolicited messages</option>
-              <option value="impersonation">Impersonation</option>
-              <option value="harassment">Harassment or abuse</option>
-              <option value="other">Other</option>
-            </select>
-          </Field>
-          <Field label="Additional details (optional)" htmlFor="report-details" compact>
-            <textarea
-              id="report-details"
-              rows={3}
-              maxLength={1000}
-              value={reportDetails}
-              onChange={e => setReportDetails(e.target.value)}
-            />
-          </Field>
-        </form>
-      </Modal>
-      <SidebarSectionModal
-        open={sectionModal !== null}
-        mode={sectionModal?.mode === 'rename' ? 'rename' : 'create'}
-        initialName={sectionModal?.mode === 'rename' ? sectionModal.section.name : ''}
-        busy={sidebarOrg.busy}
-        onClose={() => setSectionModal(null)}
-        onSubmit={async name => {
+          }
+        }}
+        sectionModal={sectionModal}
+        setSectionModal={setSectionModal}
+        sidebarBusy={sidebarOrg.busy}
+        onSubmitSection={async name => {
           if (sectionModal?.mode === 'rename') {
             const ok = await sidebarOrg.renameSection(sectionModal.section.id, name);
             if (ok) setSectionModal(null);
@@ -2846,39 +2409,8 @@ export function ChatWorkspace({
           }
         }}
       />
-      {/* Image Lightbox Modal (Teams-style full-resolution viewer) */}
-      <Modal
-        open={Boolean(lightboxImage)}
-        onOpenChange={open => { if (!open) setLightboxImage(null); }}
-        title={lightboxImage?.fileName ?? 'Image preview'}
-        size="xl"
-        footer={
-          lightboxImage ? (
-            <>
-              <span className="nx-muted" style={{ marginRight: 'auto', alignSelf: 'center' }}>
-                {lightboxImage.imageWidth && lightboxImage.imageHeight
-                  ? `${lightboxImage.imageWidth}×${lightboxImage.imageHeight} · `
-                  : ''}
-                {formatBytes(lightboxImage.sizeBytes)}
-              </span>
-              <a href={lightboxImage.downloadUrl} download={lightboxImage.fileName} className="nx-btn primary sm">
-                <Download size={14} aria-hidden="true" /> Download
-              </a>
-              <Button size="sm" onClick={() => setLightboxImage(null)}>Close</Button>
-            </>
-          ) : undefined
-        }
-      >
-        {lightboxImage && (
-          <div className="nx-lightbox-body">
-            <img
-              className="nx-lightbox-img"
-              src={lightboxImage.previewUrl ?? lightboxImage.thumbnailUrl ?? lightboxImage.downloadUrl}
-              alt={lightboxImage.fileName}
-            />
-          </div>
-        )}
-      </Modal>
+
+      <ImageLightboxModal image={lightboxImage} onClose={() => setLightboxImage(null)} />
     </div>
   );
 }

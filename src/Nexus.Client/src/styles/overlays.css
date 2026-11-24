@@ -1,0 +1,540 @@
+@media (max-width: 860px) {
+  .nx-auth-page { grid-template-columns: 1fr; }
+  .nx-auth-hero { padding: 28px 24px; }
+  .nx-auth-features { display: none; }
+
+  .nx-topbar { padding: 0 10px; gap: 6px; }
+
+  .nx-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 60px;
+  }
+  .nx-rail {
+    grid-row: 2;
+    flex-direction: row;
+    padding: 4px 6px;
+    justify-content: space-around;
+  }
+  .nx-rail-logo, .nx-rail-footer { display: none; }
+  .nx-rail-nav { flex-direction: row; justify-content: space-around; gap: 2px; }
+  .nx-rail-btn {
+    flex: 1;
+    width: auto;
+    min-height: 48px;
+    padding: 4px 2px;
+  }
+  .nx-rail-btn.active::before { display: none; }
+
+  .nx-stage-header { padding: 0 10px; gap: 8px; }
+  .nx-composer-wrap { padding-inline: var(--space-2); }
+  .nx-composer-box textarea { font-size: 16px; }
+  .nx-community-stage-header { flex-wrap: wrap; padding-block: var(--space-2); }
+  .nx-stage-handle { display: none; }
+
+  .nx-chat-sidebar { width: 100%; min-width: 100%; }
+  .nx-chat-layout.has-selection .nx-chat-sidebar { display: none; }
+  .nx-chat-layout:not(.has-selection) .nx-chat-stage { display: none; }
+  .nx-mobile-back { display: inline-flex; }
+  .nx-drawer {
+    position: fixed;
+    right: 0;
+    top: var(--topbar-h);
+    bottom: 60px;
+    width: min(var(--drawer-w), 100vw);
+    min-width: 0;
+    max-width: 100vw;
+    z-index: 40;
+    box-shadow: var(--shadow-lg);
+  }
+  .nx-page-scroll { padding: var(--space-4); }
+  .nx-settings-grid { grid-template-columns: 1fr; }
+  .nx-dir-grid { grid-template-columns: minmax(0, 1fr); }
+  .nx-topbar-user-name { display: none; }
+  .nx-avail-pill-expiry { display: none; }
+}
+
+/* ==========================================================================
+   M6.28 TIMED AVAILABILITY PICKER & ACCESSIBLE PROFILE CARDS
+   ========================================================================== */
+.nx-avail-popover-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nx-avail-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 240px;
+  min-width: 0;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.nx-avail-pill-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--brand-400);
+}
+
+.nx-avail-pill-btn:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.nx-avail-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-avail-pill-expiry {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.nx-avail-popover {
+  position: absolute;
+  z-index: 90;
+  width: 286px;
+  max-width: calc(100vw - 16px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.nx-avail-popover.placement-rail {
+  left: calc(100% + 10px);
+  bottom: 0;
+}
+
+.nx-avail-popover.placement-topbar {
+  right: 0;
+  top: calc(100% + 6px);
+}
+
+.nx-avail-popover-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  min-width: 0;
+}
+
+.nx-avail-popover-name {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-avail-popover-foot {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+
+.nx-avail-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nx-avail-current {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.nx-avail-current-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.nx-avail-expiry {
+  font-size: 12px;
+}
+
+.nx-avail-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nx-avail-option {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.nx-avail-option:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.nx-avail-option:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.nx-avail-option.active {
+  background: var(--bg-active);
+  border-color: var(--brand-500);
+}
+
+.nx-avail-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.nx-avail-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.nx-avail-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-avail-option-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.nx-avail-duration-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: var(--space-1);
+}
+
+.nx-avail-duration-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.nx-avail-dnd-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nx-avail-dnd-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--status-dnd);
+}
+
+/* Profile card triggers across Chat, Communities & People */
+.nx-profile-trigger {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.nx-profile-trigger:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.nx-avatar-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.nx-name-trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nx-name-trigger:hover strong {
+  text-decoration: underline;
+  color: var(--brand-600);
+}
+
+.nx-stage-profile-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 6px 3px 2px;
+  border-radius: var(--radius-md);
+}
+
+.nx-stage-profile-btn:hover {
+  background: var(--bg-hover);
+}
+
+.nx-inline-status-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* Profile Card Modal body */
+.nx-profile-card-state {
+  padding: var(--space-5) var(--space-2);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+
+.nx-profile-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.nx-profile-card-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.nx-profile-card-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nx-profile-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.nx-profile-card-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-profile-card-handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-avail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 2px;
+}
+
+.nx-profile-card-quote {
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.nx-profile-card-meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-3);
+}
+
+.nx-profile-card-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.nx-profile-card-meta-row dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.nx-profile-card-meta-row dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .nx-stage-header {
+    padding: 0 8px;
+    gap: 6px;
+  }
+  .nx-stage-title {
+    gap: 6px;
+  }
+  .nx-stage-profile-btn {
+    gap: 8px;
+    padding: 2px 4px 2px 0;
+  }
+  .nx-stage-profile-btn .nx-avatar,
+  .nx-stage-title > .nx-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+  .nx-stage-actions {
+    gap: 4px;
+  }
+  .nx-stage-actions .nx-stage-action-label {
+    display: none;
+  }
+  .nx-stage-actions .nx-btn.sm {
+    padding: 6px;
+    min-width: 32px;
+    height: 32px;
+  }
+  .nx-community-stage-header .nx-inline-actions {
+    width: 100%;
+    gap: 4px;
+  }
+  .nx-community-stage-header .nx-stage-action-label {
+    display: none;
+  }
+  .nx-community-stage-header .nx-btn.sm {
+    padding: 5px 8px;
+  }
+  .nx-avail-badge {
+    font-size: 12px;
+    padding: 3px 8px;
+    gap: 5px;
+  }
+  .nx-avail-popover.placement-topbar {
+    position: fixed;
+    top: calc(var(--topbar-h) + 6px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+  .nx-conn-pill {
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+  .nx-avail-pill-btn {
+    padding: 4px 8px;
+    max-width: 150px;
+  }
+  .nx-profile-card-meta-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .nx-profile-card-meta-row dd {
+    text-align: left;
+  }
+  .nx-composer-popover {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+  .nx-emoji-picker {
+    max-height: min(320px, 55dvh);
+  }
+  .nx-emoji-search-input,
+  .nx-link-popover-field input {
+    font-size: 16px;
+  }
+  .nx-comm-feed {
+    padding: 12px 10px 20px;
+  }
+  .nx-post-composer {
+    padding: 12px;
+  }
+}

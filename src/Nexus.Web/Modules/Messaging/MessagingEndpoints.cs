@@ -157,12 +157,8 @@ public static class MessagingEndpoints
         List<AttachmentEntity> pendingAttachments = [];
         if (attachmentIds.Length > 0)
         {
-            pendingAttachments = await db.Attachments
-                .Where(a => attachmentIds.Contains(a.Id) &&
-                            a.ConversationId == conversationId &&
-                            a.UploaderUserId == actorId &&
-                            a.State == AttachmentState.Pending)
-                .ToListAsync(ct);
+            pendingAttachments = await AttachmentProjection.LoadPendingForBindingAsync(
+                db, conversationId, db.ConversationOrganizationId, actorId, attachmentIds, ct);
 
             if (pendingAttachments.Count != attachmentIds.Length)
             {

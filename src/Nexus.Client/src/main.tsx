@@ -1,10 +1,8 @@
 import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLink, workspaceInvitation } from './scope';
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
-import { ChangeEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
-import { ActivityWorkspace } from './activity';
-import { BlockedUsersSettings } from './blockedUsers';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
@@ -13,7 +11,6 @@ import {
   resolveContentLink
 } from './contentLinks';
 import { ChatWorkspace, CommunityFeedDelta } from './chat';
-import { CommunitiesWorkspace } from './communities';
 import {
   AvailabilityChangedEvent,
   AvailabilityDto,
@@ -25,13 +22,31 @@ import {
   resolveUserAvailability
 } from './availability';
 import { AvailabilityPicker, AvailabilityUpdateResult } from './AvailabilityPicker';
-import { ProfileCardModal, ProfileCardTarget } from './ProfileCardModal';
+import type { ProfileCardTarget } from './ProfileCardModal';
 import { clearChatWork } from './offlineQueue';
-import { PasswordResetForm } from './passwordReset';
 import { loadOrganizationDepartments, personKey, searchChatCandidates, searchPeopleScope } from './peopleDirectory';
 import { ListPaging, useCursorList } from './cursorList';
 import { Avatar, Badge, Button, Card, Field, Modal, ToastBar } from './ui';
-import './style.css';
+import './ui/tokens.css';
+import './ui/components.css';
+import './styles/base-layout.css';
+import './styles/chat.css';
+import './styles/communities.css';
+import './styles/overlays.css';
+
+const ActivityWorkspace = lazy(() =>
+  import('./activity').then(m => ({ default: m.ActivityWorkspace }))
+);
+const CommunitiesWorkspace = lazy(() => import('./communities'));
+const BlockedUsersSettings = lazy(() =>
+  import('./blockedUsers').then(m => ({ default: m.BlockedUsersSettings }))
+);
+const PasswordResetForm = lazy(() =>
+  import('./passwordReset').then(m => ({ default: m.PasswordResetForm }))
+);
+const ProfileCardModal = lazy(() =>
+  import('./ProfileCardModal').then(m => ({ default: m.ProfileCardModal }))
+);
 
 interface UserSummary {
   id: string;
@@ -909,7 +924,9 @@ function App() {
           <div className="nx-auth-card">
             {workspaceInvitation && <p className="nx-muted">Sign in or create an account to accept your workspace invitation.</p>}
             {resetOpen ? (
-              <PasswordResetForm onBack={() => returnToSignIn()} onReset={() => returnToSignIn(true)} />
+              <Suspense fallback={<div className="nx-empty-side" role="status">Loading…</div>}>
+                <PasswordResetForm onBack={() => returnToSignIn()} onReset={() => returnToSignIn(true)} />
+              </Suspense>
             ) : (
             <>
             <div
@@ -1193,19 +1210,21 @@ function App() {
 
         <main className="nx-main-area">
           {workspaceTab === 'activity' && (
-            <ActivityWorkspace
-              onOpenChat={id => {
-                setActiveConvId(id);
-                setWorkspaceTab('chat');
-              }}
-              onOpenChannel={id => {
-                setRequestedChannel({ id });
-                setCommunitiesVisited(true);
-                setWorkspaceTab('communities');
-              }}
-              onOpenContentLink={token => void openContentLink(token)}
-              onRead={() => refreshMentionCountRef.current?.()}
-            />
+            <Suspense fallback={<div className="nx-empty-side" role="status">Loading Activity…</div>}>
+              <ActivityWorkspace
+                onOpenChat={id => {
+                  setActiveConvId(id);
+                  setWorkspaceTab('chat');
+                }}
+                onOpenChannel={id => {
+                  setRequestedChannel({ id });
+                  setCommunitiesVisited(true);
+                  setWorkspaceTab('communities');
+                }}
+                onOpenContentLink={token => void openContentLink(token)}
+                onRead={() => refreshMentionCountRef.current?.()}
+              />
+            </Suspense>
           )}
           <div className={`nx-tab-keepalive ${workspaceTab === 'chat' ? '' : 'hidden'}`}>
             <ChatWorkspace
@@ -1249,21 +1268,23 @@ function App() {
 
           {communitiesVisited && (
             <div className={`nx-tab-keepalive ${workspaceTab === 'communities' ? '' : 'hidden'}`}>
-              <CommunitiesWorkspace
-                currentUserId={user.id}
-                currentDisplayName={user.displayName}
-                organizations={organizations}
-                requestedChannel={requestedChannel}
-                jumpTarget={communityJumpTarget}
-                feedListenerRef={communityFeedListenerRef}
-                onOpenContentLink={token => void openContentLink(token)}
-                onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
-                onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
-                onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}
-                availabilityMap={availabilityMap}
-                nowMs={nowMs}
-                onOpenProfileCard={setProfileCardTarget}
-              />
+              <Suspense fallback={<div className="nx-empty-side" role="status">Loading Communities…</div>}>
+                <CommunitiesWorkspace
+                  currentUserId={user.id}
+                  currentDisplayName={user.displayName}
+                  organizations={organizations}
+                  requestedChannel={requestedChannel}
+                  jumpTarget={communityJumpTarget}
+                  feedListenerRef={communityFeedListenerRef}
+                  onOpenContentLink={token => void openContentLink(token)}
+                  onOpenCreateWorkspace={() => setWorkspaceModal({ mode: 'create' })}
+                  onOpenJoinWorkspace={() => setWorkspaceModal({ mode: 'join' })}
+                  onOpenWorkspaceSettings={org => setWorkspaceModal({ mode: 'settings', organization: org })}
+                  availabilityMap={availabilityMap}
+                  nowMs={nowMs}
+                  onOpenProfileCard={setProfileCardTarget}
+                />
+              </Suspense>
             </div>
           )}
 
@@ -1530,7 +1551,9 @@ function App() {
                   )}
 
                   <div ref={blockedUsersRef} tabIndex={-1} role="region" aria-label="Blocked user settings">
-                    <BlockedUsersSettings onChanged={refreshSafetyViews} />
+                    <Suspense fallback={<div className="nx-empty-side" role="status">Loading blocked users…</div>}>
+                      <BlockedUsersSettings onChanged={refreshSafetyViews} />
+                    </Suspense>
                   </div>
 
                   <Card title="Change password">
@@ -1650,26 +1673,32 @@ function App() {
         </main>
       </div>
 
-      <ProfileCardModal
-        target={profileCardTarget}
-        currentUserId={user.id}
-        availabilityMap={availabilityMap}
-        nowMs={nowMs}
-        avatarCacheKey={avatarBust}
-        onClose={() => setProfileCardTarget(null)}
-        onStartDirectChat={openDm}
-      />
+      {profileCardTarget && (
+        <Suspense fallback={null}>
+          <ProfileCardModal
+            target={profileCardTarget}
+            currentUserId={user.id}
+            availabilityMap={availabilityMap}
+            nowMs={nowMs}
+            avatarCacheKey={avatarBust}
+            onClose={() => setProfileCardTarget(null)}
+            onStartDirectChat={openDm}
+          />
+        </Suspense>
+      )}
 
-      <WorkspaceModals
-        modal={workspaceModal}
-        mfaEnabled={user.mfaEnabled}
-        onClose={() => setWorkspaceModal(null)}
-        onOrganizationsChanged={handleOrganizationsChanged}
-        onSecurity={() => {
-          setWorkspaceModal(null);
-          setWorkspaceTab('security');
-        }}
-      />
+      {workspaceModal && (
+        <WorkspaceModals
+          modal={workspaceModal}
+          mfaEnabled={user.mfaEnabled}
+          onClose={() => setWorkspaceModal(null)}
+          onOrganizationsChanged={handleOrganizationsChanged}
+          onSecurity={() => {
+            setWorkspaceModal(null);
+            setWorkspaceTab('security');
+          }}
+        />
+      )}
     </div>
   );
 }
