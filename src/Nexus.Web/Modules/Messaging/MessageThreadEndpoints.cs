@@ -68,6 +68,7 @@ public static class MessageThreadEndpoints
             parent.LastReplySeq, parent.LastReplySeq.GetValueOrDefault() > parent.LastReadReplySeq, parent.ThreadStateVersion);
 
         await tx.CommitAsync(ct);
+        ctx.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
         {
             parent,

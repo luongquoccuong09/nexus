@@ -21,6 +21,8 @@ export interface SharedContentDrawerProps {
   conversationId: string;
   originLabel: 'message' | 'post';
   lightboxOpen: boolean;
+  hiddenMessageIds?: ReadonlySet<string>;
+  linkRevision?: number;
   onClose: () => void;
   onPreviewImage: (att: AttachmentItem) => void;
   onOpenContentLink?: (token: string) => void;
@@ -62,6 +64,8 @@ export default function SharedContentDrawer({
   conversationId,
   originLabel,
   lightboxOpen,
+  hiddenMessageIds,
+  linkRevision,
   onClose,
   onPreviewImage,
   onOpenContentLink
@@ -69,7 +73,10 @@ export default function SharedContentDrawer({
   const [activeTab, setActiveTab] = useState<SharedTab>('files');
   const [queryInput, setQueryInput] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
-  const [items, setItems] = useState<SharedContentItem[]>([]);
+  const [loadedItems, setItems] = useState<SharedContentItem[]>([]);
+  const items = hiddenMessageIds?.size
+    ? loadedItems.filter(item => !item.messageId || !hiddenMessageIds.has(item.messageId))
+    : loadedItems;
   const [nextCursor, setNextCursor] = useState<SharedContentCursor | null>(null);
   const [quota, setQuota] = useState<SharedQuotaSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,12 +159,13 @@ export default function SharedContentDrawer({
     [conversationId, scopeKey]
   );
 
+  const activeLinkRevision = activeTab === 'links' ? linkRevision : undefined;
   useEffect(() => {
     void fetchTab(activeTab, appliedQuery, null, false);
     return () => {
       abortRef.current?.abort();
     };
-  }, [activeTab, appliedQuery, fetchTab]);
+  }, [activeTab, activeLinkRevision, appliedQuery, fetchTab]);
 
   function handleTabKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const idx = SHARED_TABS.findIndex(t => t.id === activeTab);

@@ -1280,6 +1280,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("seq");
 
+                    b.Property<long>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L)
+                        .HasColumnName("version");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ConversationId", "Seq")

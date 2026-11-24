@@ -604,7 +604,7 @@ public static class FilesEndpoints
 
         ctx.Response.ContentType = "image/png";
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
-        ctx.Response.Headers.CacheControl = "private, max-age=300";
+        ctx.Response.Headers.CacheControl = attachment.MessageId.HasValue ? "private, no-store" : "private, max-age=300";
 
         await using (stream)
         {
@@ -643,7 +643,7 @@ public static class FilesEndpoints
         ctx.Response.ContentType = attachment.ContentType;
         ctx.Response.Headers.ContentDisposition = StorageKeyHelper.BuildContentDisposition("inline", attachment.FileName);
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
-        ctx.Response.Headers.CacheControl = "private, max-age=300";
+        ctx.Response.Headers.CacheControl = attachment.MessageId.HasValue ? "private, no-store" : "private, max-age=300";
 
         await using (stream)
         {

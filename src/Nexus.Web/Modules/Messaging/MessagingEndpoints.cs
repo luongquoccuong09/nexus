@@ -51,7 +51,8 @@ public static class MessagingEndpoints
         bool IsFollowing = false,
         long LastReadReplySeq = 0,
         long ThreadStateVersion = 0,
-        bool HasUnread = false);
+        bool HasUnread = false,
+        long Version = 1);
 
     public static IEndpointRouteBuilder MapMessagingEndpoints(this IEndpointRouteBuilder app, string prefix = OrganizationScope.Api)
     {
@@ -83,6 +84,7 @@ public static class MessagingEndpoints
     {
         var requestStarted = Stopwatch.GetTimestamp();
         if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        ctx.Response.Headers.CacheControl = "no-store";
         var clientMsgId = (request.ClientMsgId ?? string.Empty).Trim();
         if (clientMsgId.Length is < 1 or > 128)
         {
@@ -112,12 +114,7 @@ public static class MessagingEndpoints
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        // Membership changes and chat mutations use the same conversation lock.
-        var conv = await db.Conversations.FromSqlInterpolated($"""
-            SELECT * FROM conversations
-            WHERE id = {conversationId} AND organization_id IS NOT DISTINCT FROM {db.ConversationOrganizationId}
-            FOR UPDATE
-            """).AsNoTracking().SingleOrDefaultAsync(ct);
+        var conv = await LockConversationAsync(db, conversationId, ct);
         var actor = await db.ActiveScopePeople.AsNoTracking().SingleOrDefaultAsync(a => a.Id == actorId, ct);
         if (actor is null) return Results.Unauthorized();
         if (conv is null) return Results.Forbid();
@@ -178,7 +175,7 @@ public static class MessagingEndpoints
                 string.Equals(existing.PayloadSha256, payloadHash, StringComparison.OrdinalIgnoreCase))
             {
                 if (existing.Seq <= member.VisibleFromSeq) return Results.NotFound(new { code = "message_not_found" });
-                var existingAttachments = await db.Attachments.AsNoTracking()
+                var existingAttachments = existing.DeletedAt.HasValue ? [] : await db.Attachments.AsNoTracking()
                     .Where(a => a.MessageId == existing.Id && a.State == AttachmentState.Attached)
                     .OrderBy(a => a.CreatedAt)
                     .Select(a => FilesEndpoints.ToDto(a))
@@ -271,22 +268,7 @@ public static class MessagingEndpoints
         };
 
         db.Messages.Add(message);
-        foreach (var link in SharedLinkExtractor.Extract(body))
-        {
-            db.SharedLinks.Add(new SharedLinkEntity
-            {
-                Id = Guid.CreateVersion7(),
-                OrganizationId = db.ConversationOrganizationId,
-                ConversationId = conversationId,
-                MessageId = message.Id,
-                MessageSeq = message.Seq,
-                SenderUserId = actorId,
-                Url = link.Url,
-                Host = link.Host,
-                Label = link.Label,
-                CreatedAt = now
-            });
-        }
+        AddSharedLinks(db, message, body);
         db.ConversationEvents.Add(evt);
         if (conv.Kind != ConversationKind.Self)
         {
@@ -401,6 +383,7 @@ public static class MessagingEndpoints
         var items = await ProjectMessagesAsync(db, selectedMessages, actorId, ct);
 
         await snapshot.CommitAsync(ct);
+        ctx.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
         {
             items,
@@ -572,7 +555,8 @@ public static class MessagingEndpoints
                 state?.IsFollowing ?? false,
                 state?.LastReadReplySeq ?? 0,
                 state?.Version ?? 0,
-                state?.IsFollowing == true && m.LastReplySeq > state.LastReadReplySeq);
+                state?.IsFollowing == true && m.LastReplySeq > state.LastReadReplySeq,
+                m.Version);
         }).ToList();
     }
 
@@ -605,6 +589,7 @@ public static class MessagingEndpoints
         {
             return Results.Forbid();
         }
+        ctx.Response.Headers.CacheControl = "no-store";
 
         // Full-resync trigger when client cursor falls behind retained delta window (SYNC_PROTOCOL.md §3).
         if (after > 0 && after < conv.MinAvailableChangeSeq - 1)
@@ -765,6 +750,34 @@ public static class MessagingEndpoints
         });
     }
 
+    // Group membership changes and chat mutations serialize on the same row.
+    internal static Task<ConversationEntity?> LockConversationAsync(NexusDbContext db, Guid conversationId, CancellationToken ct) =>
+        db.Conversations.FromSqlInterpolated($"""
+            SELECT * FROM conversations
+            WHERE id = {conversationId} AND organization_id IS NOT DISTINCT FROM {db.ConversationOrganizationId}
+            FOR UPDATE
+            """).AsNoTracking().SingleOrDefaultAsync(ct);
+
+    internal static void AddSharedLinks(NexusDbContext db, MessageEntity message, string body)
+    {
+        foreach (var link in SharedLinkExtractor.Extract(body))
+        {
+            db.SharedLinks.Add(new SharedLinkEntity
+            {
+                Id = Guid.CreateVersion7(),
+                OrganizationId = db.ConversationOrganizationId,
+                ConversationId = message.ConversationId,
+                MessageId = message.Id,
+                MessageSeq = message.Seq,
+                SenderUserId = message.SenderId,
+                Url = link.Url,
+                Host = link.Host,
+                Label = link.Label,
+                CreatedAt = message.CreatedAt
+            });
+        }
+    }
+
     private static async Task<(long NextSeq, long ChangeSeq)> AllocateSequencesAsync(
         NexusDbContext db,
         Guid conversationId,
@@ -836,5 +849,6 @@ public static class MessagingEndpoints
         m.ParentMessageId,
         m.ReplyCount,
         m.LastReplyAt,
-        m.LastReplySeq);
+        m.LastReplySeq,
+        Version: m.Version);
 }

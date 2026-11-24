@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import {
   QUICK_CHAT_REACTIONS,
   applyChatDelta,
+  applyPreviewMutation,
   applyReactionToMessage,
   applyThreadStateToMessage,
   deltaFromConversationEvent
 } from '../src/chat/chatDeltaReducer.ts';
+
+test('M6.3: a redacted history event clears old content and rejects stale edits', () => {
+  const message = makeMessage({ version: 1, attachments: [{ id: 'file' }], reactions: [{ emoji: '👍', count: 1 }] });
+  const recall = deltaFromConversationEvent('message.edited', {
+    messageId: message.id, seq: message.seq, version: 3, body: '', deletedAt: '2026-11-24T12:03:00Z'
+  });
+  assert.equal(recall.type, 'message_recalled');
+  const [recalled] = applyChatDelta([message], recall, 'user-2', 3);
+  assert.equal(recalled.body, '');
+  assert.deepEqual(recalled.attachments, []);
+  assert.deepEqual(recalled.reactions, []);
+  const current = [recalled];
+  assert.equal(applyChatDelta(current, { ...recall, type: 'message_edited', version: 2, body: 'old' }, 'user-2', 2), current);
+  assert.equal(applyPreviewMutation({ seq: message.seq, bodyPreview: message.body, version: 1 }, recall).bodyPreview,
+    'This message was recalled');
+});
 
 test('M6.2: thread reply deltas update the loaded root once without inserting the reply into the timeline', () => {
   const reply = { id: 'reply', parentMessageId: 'root', seq: 6 };

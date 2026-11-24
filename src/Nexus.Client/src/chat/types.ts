@@ -21,6 +21,8 @@ export interface ConversationListItem {
     senderDisplayName: string;
     createdAt: string;
     seq: number;
+    messageId?: string;
+    version?: number;
   } | null;
   peer?: {
     id: string;
@@ -69,7 +71,18 @@ export interface ThreadState {
   version: number;
 }
 
-export type ChatDelta = ChatReactionDelta | ThreadReplyDelta;
+export interface MessageMutationDelta {
+  type: 'message_edited' | 'message_recalled';
+  messageId: string;
+  seq: number;
+  parentMessageId?: string | null;
+  version: number;
+  body: string;
+  editedAt: string | null;
+  deletedAt: string | null;
+}
+
+export type ChatDelta = ChatReactionDelta | ThreadReplyDelta | MessageMutationDelta;
 
 export interface ChatMessageItem {
   id: string;
@@ -82,6 +95,7 @@ export interface ChatMessageItem {
   createdAt: string;
   editedAt?: string | null;
   deletedAt?: string | null;
+  version?: number;
   pending?: boolean;
   attachments?: AttachmentItem[];
   reactions?: ReactionSummary[];

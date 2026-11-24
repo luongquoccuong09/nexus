@@ -70,6 +70,12 @@ The single-window SPA routes unified account-level Chat (`dm` and `group`) throu
 - The durable `message.thread_reply.created` event contains the root summary and reply DTO. Live `ConversationChanged` sends the same payload to members whose history includes the root. The root visibility floor also applies to later reply reaction events and reply links and attachments. Clients apply the summary to the root and add the reply to an open thread without inserting it in the main timeline.
 - A thread page snapshots its root, replies, and conversation cursor together. The cursor supports catch-up through `/changes`. Follow and read state are per user and are delivered through `ThreadStateUpdated` with a monotonically increasing state version. The thread's read cursor does not advance the main chat cursor.
 
+### Message edit and recall (`M6.3`)
+
+- The server checks authorship, current send permission, the 15-minute window, and `If-Match` in the mutation transaction. It advances the message version and `change_seq` and writes `message.edited` or `message.recalled`. Message sequence and conversation ordering stay intact.
+- The same delta is used for live delivery and replay. An edit replaces the visible body. A recall applies the marker and clears body, attachments, and reactions from the displayed message. The server removes prior content from that message's replay events as part of a recall. An authorized reply mutation uses the root sequence as its visibility floor.
+- The client updates optimistically with at most one mutation for the message in flight. A stale version returns `412` so the client reconciles against the current version. The server never accepts an optimistic change beyond the author window.
+
 ## 3. Delta Retention, Full-Resync Triggers & Rejoin History
 
 | Rule | Specification |

@@ -39,14 +39,21 @@ import {
 } from './offlineQueue';
 import { Avatar, Badge, Button, EmptyState, ToastBar } from './ui';
 import { ChatMembersDrawer } from './chat/ChatDrawers';
-import { ChatModals } from './chat/ChatModals';
+import { MessageMutationActions } from './chat/MessageMutationActions';
+import type { OpenMessageMutation } from './chat/MessageMutationActions';
+import type { MessageMutationResult, MessageMutationTarget } from './chat/MessageMutationDialog';
 import type { ThreadDeltaReceiver, ThreadTarget } from './chat/ThreadPane';
 import {
   QUICK_CHAT_REACTIONS,
+  RECALLED_MESSAGE_LABEL,
   applyChatDelta,
+  applyMessageMutation,
+  applyPreviewMutation,
   applyReactionToMessage,
   applyThreadStateToMessage,
-  deltaFromConversationEvent
+  deltaFromConversationEvent,
+  formatMessagePreview,
+  isMessageMutation
 } from './chat/chatDeltaReducer';
 import {
   ChatDelta,
@@ -57,6 +64,7 @@ import {
   ConversationListItem,
   DirectoryUserLite,
   GroupMemberItem,
+  MessageMutationDelta,
   ReactionSummary,
   ThreadState
 } from './chat/types';
@@ -65,6 +73,8 @@ const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'
 const LazyVoiceNoteRecorder = lazy(() => import('./voice/VoiceNoteRecorder'));
 const LazyEmojiPicker = lazy(() => import('./EmojiPicker'));
 const LazyThreadPane = lazy(() => import('./chat/ThreadPane').then(module => ({ default: module.ThreadPane })));
+const LazyMessageMutationDialog = lazy(() => import('./chat/MessageMutationDialog'));
+const LazyChatModals = lazy(() => import('./chat/ChatModals').then(module => ({ default: module.ChatModals })));
 
 const QUICK_REACTION_LABELS: Record<(typeof QUICK_CHAT_REACTIONS)[number], string> = {
   '👍': 'thumbs up',
@@ -315,6 +325,7 @@ export function ChatWorkspace({
   const groupMembersHeading = useRef<HTMLElement | null>(null);
   const [addMemberId, setAddMemberId] = useState('');
   const [sharedRefreshNonce, setSharedRefreshNonce] = useState(0);
+  const [sharedLinkRevision, setSharedLinkRevision] = useState(0);
   const sharedBtnWrapRef = useRef<HTMLSpanElement | null>(null);
   const [uploads, setUploads] = useState(new Set<string>());
   const uploadRequests = useRef(new Map<string, AbortController>());
@@ -330,6 +341,13 @@ export function ChatWorkspace({
   const [reportReason, setReportReason] = useState('spam');
   const [reportDetails, setReportDetails] = useState('');
   const [lightboxImage, setLightboxImage] = useState<AttachmentItem | null>(null);
+  const [mutationTarget, setMutationTarget] = useState<MessageMutationTarget | null>(null);
+  const [pendingMutations, setPendingMutations] = useState(new Map<string, MessageMutationDelta>());
+  const inFlightMessageIdsRef = useRef(new Map<string, MessageMutationDelta>());
+  const confirmedMutations = useRef(new Map<string, { conversationId: string; delta: MessageMutationDelta }>());
+  const [recalledMessageIds, setRecalledMessageIds] = useState(new Set<string>());
+  const [mutationError, setMutationError] = useState<{ conversationId: string; message: string } | null>(null);
+  const mutationTrigger = useRef<HTMLButtonElement | null>(null);
 
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -373,11 +391,42 @@ export function ChatWorkspace({
     setOutgoing(outgoingRef.current);
   }, []);
 
+  const closeRecalledMedia = useCallback((messageId: string) => {
+    setLightboxImage(current => current?.messageId === messageId ? null : current);
+    setReactionPicker(current => current?.messageId === messageId ? null : current);
+  }, []);
+
+  const applyConfirmedMutation = useCallback((conversationId: string, delta: MessageMutationDelta, changeSeq = 0) => {
+    if (discarded.current.has(conversationId)) return;
+    const previous = confirmedMutations.current.get(delta.messageId)?.delta;
+    if (previous && (previous.version >= delta.version || previous.deletedAt)) return;
+    confirmedMutations.current.set(delta.messageId, { conversationId, delta });
+    const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, changeSeq);
+    const cached = messagesCacheRef.current.get(conversationId);
+    if (cached) messagesCacheRef.current.set(conversationId, { ...cached, items: apply(cached.items) });
+    if (activeConvRef.current === conversationId) setMessages(apply);
+    threadDeltaRef.current?.(conversationId, delta, changeSeq);
+    if (!delta.parentMessageId) setConversations(current => current.map(item => {
+      if (item.id !== conversationId || !item.lastMessagePreview) return item;
+      const preview = applyPreviewMutation(item.lastMessagePreview, delta);
+      return preview === item.lastMessagePreview ? item : { ...item, lastMessagePreview: preview };
+    }));
+    if (delta.type === 'message_recalled') {
+      setRecalledMessageIds(current => new Set([...current, delta.messageId]));
+      closeRecalledMedia(delta.messageId);
+    } else if (activeConvRef.current === conversationId) {
+      setSharedLinkRevision(current => current + 1);
+    }
+  }, [closeRecalledMedia]);
+
   const discardConversation = useCallback((id: string) => {
     discarded.current.add(id);
     uploadRequests.current.get(id)?.abort();
     messagesCacheRef.current.delete(id);
     cursorCacheRef.current.delete(id);
+    for (const [messageId, entry] of confirmedMutations.current) {
+      if (entry.conversationId === id) confirmedMutations.current.delete(messageId);
+    }
     setThreadStates(current => Object.fromEntries(Object.entries(current).filter(([, state]) => state.conversationId !== id)));
     setLocalDraft(id, null);
     updateOutgoing(items => items.filter(item => item.conversationId !== id));
@@ -477,7 +526,12 @@ export function ChatWorkspace({
       setConversations(previous => {
         const readByConversation = new Map(previous.map(item => [item.id, item.lastReadSeq]));
         const merged = new Map(older ? previous.map(item => [item.id, item]) : []);
-        for (const item of items) merged.set(item.id, applyReadState(item, readByConversation.get(item.id) ?? 0));
+        for (const item of items) {
+          const preview = item.lastMessagePreview;
+          const mutation = preview?.messageId ? confirmedMutations.current.get(preview.messageId)?.delta : undefined;
+          const projected = preview && mutation ? { ...item, lastMessagePreview: applyPreviewMutation(preview, mutation) } : item;
+          merged.set(item.id, applyReadState(projected, readByConversation.get(item.id) ?? 0));
+        }
         return [...merged.values()].sort((a, b) => {
           const diff = Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? '');
           return diff || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || b.id.localeCompare(a.id);
@@ -537,7 +591,10 @@ export function ChatWorkspace({
       if (data.changeSeq < (cursorCacheRef.current.get(convId) ?? 0)) continue;
       return {
         ...data,
-        items: (data.items ?? []).map(message => ({ ...message, reactionSnapshotSeq: data.changeSeq }))
+        items: (data.items ?? []).map(message => {
+          const mutation = confirmedMutations.current.get(message.id)?.delta;
+          return { ...(mutation ? applyMessageMutation(message, mutation) : message), reactionSnapshotSeq: data.changeSeq };
+        })
       };
     }
     return null;
@@ -768,7 +825,8 @@ export function ChatWorkspace({
         const delta = deltaFromConversationEvent(event.eventType, event.payload);
         if (delta) {
           deltas.set(event.changeSeq, delta);
-          dispatchThreadDelta(convId, delta, event.changeSeq);
+          if (isMessageMutation(delta)) applyConfirmedMutation(convId, delta, event.changeSeq);
+          else dispatchThreadDelta(convId, delta, event.changeSeq);
         }
       }
 
@@ -776,7 +834,9 @@ export function ChatWorkspace({
         let next = prev;
         for (const event of relevantEvents) {
           if (event.eventType === 'message.created' && event.payload) {
-            const incomingMsg = event.payload as ChatMessageItem;
+            const original = event.payload as ChatMessageItem;
+            const mutation = confirmedMutations.current.get(original.id)?.delta;
+            const incomingMsg = mutation ? applyMessageMutation(original, mutation) : original;
             if (includeCreated && !incomingMsg.parentMessageId && !next.some(message => message.id === incomingMsg.id)) {
               next = [...next, incomingMsg].sort((a, b) => a.seq - b.seq);
             }
@@ -809,7 +869,7 @@ export function ChatWorkspace({
       cursor = nextCursor;
       if (!data.hasMore) return;
     }
-  }, [discardConversation, dispatchThreadDelta, loadMessagesFull, offlineScope]);
+  }, [applyConfirmedMutation, discardConversation, dispatchThreadDelta, loadMessagesFull, offlineScope]);
 
   const requestConversationDelta = useCallback((convId: string, full = false) => {
     const existing = deltaRequests.current.get(convId);
@@ -995,6 +1055,7 @@ export function ChatWorkspace({
   useEffect(() => {
     setRightDrawer('none');
     setThreadTarget(null);
+    setMutationTarget(null);
     threadOriginRef.current = null;
     setVoiceRecorderOpen(false);
     setReactionPicker(null);
@@ -1092,7 +1153,8 @@ export function ChatWorkspace({
       message?: ChatMessageItem | null;
       delta?: ChatDelta | null;
     }) => {
-      const incoming = evt.message;
+      const mutation = evt.message ? confirmedMutations.current.get(evt.message.id)?.delta : undefined;
+      const incoming = evt.message && mutation ? applyMessageMutation(evt.message, mutation) : evt.message;
       const isActive = evt.conversationId === activeConvRef.current;
 
       if (incoming && !incoming.parentMessageId) {
@@ -1122,7 +1184,12 @@ export function ChatWorkspace({
               latestMainSeq: Math.max(latestMainSeq, incoming.seq),
               changeSeq: Math.max(c.changeSeq, evt.changeSeq),
               unreadCount: c.unreadCount + (isNewRoot && incoming.seq > c.lastReadSeq ? 1 : 0),
-              updatedAt: isNewRoot ? incoming.createdAt : c.updatedAt
+              updatedAt: isNewRoot ? incoming.createdAt : c.updatedAt,
+              lastMessagePreview: isNewRoot ? {
+                messageId: incoming.id, version: incoming.version, seq: incoming.seq,
+                senderDisplayName: incoming.senderDisplayName, createdAt: incoming.createdAt,
+                bodyPreview: incoming.deletedAt ? RECALLED_MESSAGE_LABEL : formatMessagePreview(incoming.body)
+              } : c.lastMessagePreview
             };
           });
           return foundInList
@@ -1150,17 +1217,21 @@ export function ChatWorkspace({
 
       if (evt.delta) {
         const delta = evt.delta;
+        const messageMutation = isMessageMutation(delta);
+        if (messageMutation) applyConfirmedMutation(evt.conversationId, delta, evt.changeSeq);
         const knownSeq = cursorCacheRef.current.get(evt.conversationId);
         if (knownSeq !== undefined && evt.changeSeq <= knownSeq) return;
 
         if (knownSeq !== undefined && evt.changeSeq === knownSeq + 1) {
-          dispatchThreadDelta(evt.conversationId, delta, evt.changeSeq);
-          const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, evt.changeSeq);
-          const cached = messagesCacheRef.current.get(evt.conversationId);
-          if (cached) {
-            messagesCacheRef.current.set(evt.conversationId, { ...cached, items: apply(cached.items) });
+          if (!messageMutation) {
+            dispatchThreadDelta(evt.conversationId, delta, evt.changeSeq);
+            const apply = (items: ChatMessageItem[]) => applyChatDelta(items, delta, currentUserIdRef.current, evt.changeSeq);
+            const cached = messagesCacheRef.current.get(evt.conversationId);
+            if (cached) {
+              messagesCacheRef.current.set(evt.conversationId, { ...cached, items: apply(cached.items) });
+            }
+            if (isActive) setMessages(apply);
           }
-          if (isActive) setMessages(apply);
           cursorCacheRef.current.set(evt.conversationId, evt.changeSeq);
           void setConversationCursor(offlineScope, evt.conversationId, evt.changeSeq);
           return;
@@ -1286,7 +1357,7 @@ export function ChatWorkspace({
       refresh.queued = false;
       void connection.stop();
     };
-  }, [dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
+  }, [applyConfirmedMutation, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
 
   async function sendCurrentMessage() {
     const conversationId = selectedConversationId;
@@ -1437,6 +1508,53 @@ export function ChatWorkspace({
       if (origin?.isConnected) origin.focus();
       else composerRef.current?.focus();
     });
+  }
+
+  const openMessageMutation: OpenMessageMutation = (kind, message, trigger) => {
+    if (inFlightMessageIdsRef.current.has(message.id)) return;
+    mutationTrigger.current = trigger;
+    setMutationError(null);
+    setReactionPicker(null);
+    setMutationTarget({ kind, message });
+  };
+
+  function closeMessageMutation() {
+    const trigger = mutationTrigger.current;
+    mutationTrigger.current = null;
+    const fallback = trigger?.closest<HTMLElement>('[data-thread-reply-id], [data-thread-message-id]')
+      ?? trigger?.closest('.nx-msg-row')?.querySelector<HTMLElement>('[data-message-id]');
+    setMutationTarget(null);
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+      else fallback?.focus({ preventScroll: true });
+    });
+  }
+
+  function beginMessageMutation(delta: MessageMutationDelta) {
+    if (inFlightMessageIdsRef.current.has(delta.messageId)) return false;
+    inFlightMessageIdsRef.current.set(delta.messageId, delta);
+    setPendingMutations(new Map(inFlightMessageIdsRef.current));
+    if (delta.type === 'message_recalled') closeRecalledMedia(delta.messageId);
+    return true;
+  }
+
+  function completeMessageMutation(message: ChatMessageItem, result: MessageMutationResult) {
+    const { conversationId, id } = message;
+    const pending = inFlightMessageIdsRef.current.get(id);
+    inFlightMessageIdsRef.current.delete(id);
+    setPendingMutations(new Map(inFlightMessageIdsRef.current));
+    if (discarded.current.has(conversationId)) return;
+    if ('delta' in result) {
+      applyConfirmedMutation(conversationId, result.delta);
+      return;
+    }
+    if (result.recalled && pending) {
+      applyConfirmedMutation(conversationId, { ...pending, type: 'message_recalled', deletedAt: new Date().toISOString(), body: '' });
+    }
+    if (activeConvRef.current === conversationId) {
+      setMutationError({ conversationId, message: result.error });
+      if (result.refresh) void requestConversationDelta(conversationId).catch(() => {});
+    }
   }
 
   function focusAddReactionButton(messageId: string) {
@@ -1747,6 +1865,14 @@ export function ChatWorkspace({
   const confirmedOwnMessages = new Set(activeMessages.filter(message => message.senderId === currentUserId).map(message => message.clientMsgId));
   const visibleOutgoing = outgoing.filter(item => item.conversationId === selectedConversationId && !confirmedOwnMessages.has(item.clientMsgId));
   const openThreadTarget = rightDrawer === 'thread' && threadTarget?.conversationId === selectedConversationId ? threadTarget : null;
+  const activeMutationError = mutationError?.conversationId === selectedConversationId ? mutationError?.message : undefined;
+  const hiddenSharedMessageIds = useMemo(() => {
+    const ids = new Set(recalledMessageIds);
+    for (const delta of pendingMutations.values()) {
+      if (delta.type === 'message_recalled') ids.add(delta.messageId);
+    }
+    return ids;
+  }, [pendingMutations, recalledMessageIds]);
   const reading = useChatReading(activeConv?.id ?? null, visible && !openThreadTarget, activeMessages, visibleOutgoing.length,
     activeConv?.lastReadSeq ?? 0, markRead, reconnectCount);
   const pendingThreadCounts = useMemo(() => {
@@ -1881,7 +2007,9 @@ export function ChatWorkspace({
     const pref = sidebarOrg.itemByTargetId.get(c.id);
     const groupIds = groupList.map(item => item.id);
     const idx = groupIds.indexOf(c.id);
-    const preview = c.lastMessagePreview;
+    const savedPreview = c.lastMessagePreview;
+    const pending = savedPreview?.messageId ? pendingMutations.get(savedPreview.messageId) : undefined;
+    const preview = savedPreview && pending ? applyPreviewMutation(savedPreview, pending) : savedPreview;
     const peerStatus = isDm && c.peer
       ? resolveUserAvailability(c.peer.id, c.peer, availabilityMap, nowMs)
       : null;
@@ -2131,6 +2259,7 @@ export function ChatWorkspace({
         onDrop={handleStageDrop}
       >
         {error && <ToastBar variant="error" message={error} onDismiss={() => setError('')} />}
+        {!openThreadTarget && activeMutationError && <ToastBar variant="error" message={activeMutationError} onDismiss={() => setMutationError(null)} />}
         {notice && <ToastBar variant="ok" message={notice} onDismiss={() => setNotice('')} />}
 
         {!activeConv ? (
@@ -2352,7 +2481,9 @@ export function ChatWorkspace({
                 </div>
               )}
 
-              {activeMessages.map((m, idx) => {
+              {activeMessages.map((saved, idx) => {
+                const pendingMutation = pendingMutations.get(saved.id);
+                const m = pendingMutation ? applyMessageMutation(saved, pendingMutation) : saved;
                 const prev = idx > 0 ? activeMessages[idx - 1] : null;
                 const prevSeq = prev ? prev.seq : 0;
                 const showDivider = lastReadSnapshot > 0 && prevSeq <= lastReadSnapshot && m.seq > lastReadSnapshot && !m.pending;
@@ -2435,17 +2566,19 @@ export function ChatWorkspace({
                                 )}
                                 <span className="nx-msg-time">
                                   {m.pending ? 'Sending…' : formatTime(m.createdAt)}
+                                  {m.editedAt && !m.deletedAt && <> · <span>Edited</span></>}
                                 </span>
                               </div>
                             )}
-                            {m.body && (
+                            {compact && m.editedAt && !m.deletedAt && <span className="nx-msg-time">Edited</span>}
+                            {m.deletedAt ? <span className="nx-muted">{RECALLED_MESSAGE_LABEL}</span> : m.body && (
                               <div
                                 className="nx-msg-body"
                                 onClick={handleInlineContentLinkClick}
                                 dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(m.body) }}
                               />
                             )}
-                            {m.attachments && m.attachments.length > 0 && (
+                            {!m.deletedAt && m.attachments && m.attachments.length > 0 && (
                               <AttachmentGallery attachments={m.attachments} onPreviewImage={setLightboxImage} />
                             )}
                           </div>
@@ -2525,6 +2658,8 @@ export function ChatWorkspace({
                               >
                                 <MessageSquare size={13} aria-hidden="true" />
                               </Button>
+                              <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blockedPeer}
+                                pending={Boolean(pendingMutation)} onOpen={openMessageMutation} />
                             </div>
                           )}
                         </div>
@@ -2772,6 +2907,10 @@ export function ChatWorkspace({
             onCopyLink={message => handleCopyMessageLink(message, false)}
             onInlineLink={handleInlineContentLinkClick}
             onPreviewImage={setLightboxImage}
+            mutationError={activeMutationError}
+            pendingMutations={pendingMutations}
+            onDismissMutationError={() => setMutationError(null)}
+            onOpenMutation={openMessageMutation}
           />
         </Suspense>
       )}
@@ -2819,67 +2958,84 @@ export function ChatWorkspace({
             }}
             onPreviewImage={setLightboxImage}
             onOpenContentLink={onOpenContentLink}
+            hiddenMessageIds={hiddenSharedMessageIds}
+            linkRevision={sharedLinkRevision}
           />
         </Suspense>
       )}
 
-      <ChatModals
-        activeConv={activeConv}
-        showNewGroupModal={showNewGroupModal}
-        setShowNewGroupModal={setShowNewGroupModal}
-        newGroupTitle={newGroupTitle}
-        setNewGroupTitle={setNewGroupTitle}
-        newGroupSearch={newGroupSearch}
-        setNewGroupSearch={setNewGroupSearch}
-        selectedGroupMemberIds={selectedGroupMemberIds}
-        setSelectedGroupMemberIds={setSelectedGroupMemberIds}
-        groupCandidates={groupCandidates}
-        onCreateGroup={handleCreateGroup}
-        blockTarget={blockTarget}
-        setBlockTarget={setBlockTarget}
-        blockingPeer={blockingPeer}
-        blockError={blockError}
-        onBlockPeer={() => void handleBlockPeer()}
-        showReportModal={showReportModal}
-        setShowReportModal={setShowReportModal}
-        reportReason={reportReason}
-        setReportReason={setReportReason}
-        reportDetails={reportDetails}
-        setReportDetails={setReportDetails}
-        onSubmitReport={handleSubmitReport}
-        ownershipTransfer={ownershipTransfer}
-        onCloseOwnershipTransfer={() => setOwnershipTransfer(null)}
-        onRefreshOwnership={() => {
-          if (activeConv) {
-            void loadConversations();
-            void loadGroupMembers(activeConv.id);
-          }
-        }}
-        onTransferredOwnership={() => {
-          if (activeConv && ownershipTransfer) {
-            const transferredName = ownershipTransfer.displayName;
-            const resourceName = ownershipTransfer.resourceName;
-            setOwnershipTransfer(null);
-            void loadConversations();
-            void loadGroupMembers(activeConv.id);
-            setNotice(`${transferredName} is now Owner of ${resourceName}.`);
-            requestAnimationFrame(() => groupMembersHeading.current?.focus());
-          }
-        }}
-        sectionModal={sectionModal}
-        setSectionModal={setSectionModal}
-        sidebarBusy={sidebarOrg.busy}
-        onSubmitSection={async name => {
-          if (sectionModal?.mode === 'rename') {
-            const ok = await sidebarOrg.renameSection(sectionModal.section.id, name);
-            if (ok) setSectionModal(null);
-          } else {
-            const created = await sidebarOrg.createSection(name);
-            if (created) setSectionModal(null);
-          }
-        }}
-      />
+      {(showNewGroupModal || blockTarget || showReportModal || ownershipTransfer || sectionModal) && (
+        <Suspense fallback={null}>
+          <LazyChatModals
+            activeConv={activeConv}
+            showNewGroupModal={showNewGroupModal}
+            setShowNewGroupModal={setShowNewGroupModal}
+            newGroupTitle={newGroupTitle}
+            setNewGroupTitle={setNewGroupTitle}
+            newGroupSearch={newGroupSearch}
+            setNewGroupSearch={setNewGroupSearch}
+            selectedGroupMemberIds={selectedGroupMemberIds}
+            setSelectedGroupMemberIds={setSelectedGroupMemberIds}
+            groupCandidates={groupCandidates}
+            onCreateGroup={handleCreateGroup}
+            blockTarget={blockTarget}
+            setBlockTarget={setBlockTarget}
+            blockingPeer={blockingPeer}
+            blockError={blockError}
+            onBlockPeer={() => void handleBlockPeer()}
+            showReportModal={showReportModal}
+            setShowReportModal={setShowReportModal}
+            reportReason={reportReason}
+            setReportReason={setReportReason}
+            reportDetails={reportDetails}
+            setReportDetails={setReportDetails}
+            onSubmitReport={handleSubmitReport}
+            ownershipTransfer={ownershipTransfer}
+            onCloseOwnershipTransfer={() => setOwnershipTransfer(null)}
+            onRefreshOwnership={() => {
+              if (activeConv) {
+                void loadConversations();
+                void loadGroupMembers(activeConv.id);
+              }
+            }}
+            onTransferredOwnership={() => {
+              if (activeConv && ownershipTransfer) {
+                const transferredName = ownershipTransfer.displayName;
+                const resourceName = ownershipTransfer.resourceName;
+                setOwnershipTransfer(null);
+                void loadConversations();
+                void loadGroupMembers(activeConv.id);
+                setNotice(`${transferredName} is now Owner of ${resourceName}.`);
+                requestAnimationFrame(() => groupMembersHeading.current?.focus());
+              }
+            }}
+            sectionModal={sectionModal}
+            setSectionModal={setSectionModal}
+            sidebarBusy={sidebarOrg.busy}
+            onSubmitSection={async name => {
+              if (sectionModal?.mode === 'rename') {
+                const ok = await sidebarOrg.renameSection(sectionModal.section.id, name);
+                if (ok) setSectionModal(null);
+              } else {
+                const created = await sidebarOrg.createSection(name);
+                if (created) setSectionModal(null);
+              }
+            }}
+          />
+        </Suspense>
+      )}
 
+      {mutationTarget && (
+        <Suspense fallback={null}>
+          <LazyMessageMutationDialog
+            key={mutationTarget.message.id + ':' + mutationTarget.kind}
+            target={mutationTarget}
+            onClose={closeMessageMutation}
+            onBegin={beginMessageMutation}
+            onResult={result => completeMessageMutation(mutationTarget.message, result)}
+          />
+        </Suspense>
+      )}
       <ImageLightboxModal image={lightboxImage} onClose={() => setLightboxImage(null)} />
     </div>
   );

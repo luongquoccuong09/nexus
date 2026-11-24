@@ -455,6 +455,17 @@
   max-width: min(620px, calc(100% - 240px));
 }
 
+@media (min-width: 861px) and (hover: hover) {
+  .nx-msg-bubble:has(~ .nx-msg-hover-bar .nx-msg-mutation-action) {
+    max-width: min(620px, calc(100% - 296px));
+  }
+}
+
+.nx-message-edit-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 .nx-msg-hover-bar {
   position: static;
   flex-shrink: 0;

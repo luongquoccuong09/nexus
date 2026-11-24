@@ -186,45 +186,34 @@ public static class ConversationEndpoints
         var latestPreviews = new Dictionary<Guid, object>();
         if (convIds.Count > 0)
         {
-            var latestSeqs = await db.Messages.AsNoTracking()
-                .Where(m => convIds.Contains(m.ConversationId) && m.ParentMessageId == null && m.DeletedAt == null &&
+            var latestSeqs = db.Messages.AsNoTracking()
+                .Where(m => convIds.Contains(m.ConversationId) && m.ParentMessageId == null &&
                     db.ConversationMembers.Any(cm =>
                         cm.ConversationId == m.ConversationId &&
                         cm.UserId == actorId &&
                         cm.LeftAt == null &&
                         m.Seq > cm.VisibleFromSeq))
                 .GroupBy(m => m.ConversationId)
-                .Select(g => new { ConversationId = g.Key, MaxSeq = g.Max(m => m.Seq) })
+                .Select(g => new { ConversationId = g.Key, Seq = g.Max(m => m.Seq) });
+
+            var previews = await (from latest in latestSeqs
+                                  join message in db.Messages.AsNoTracking()
+                                      on new { latest.ConversationId, latest.Seq } equals new { message.ConversationId, message.Seq }
+                                  join sender in db.OrganizationPeople.AsNoTracking() on message.SenderId equals sender.Id
+                                  select new { message.Id, message.ConversationId, message.Seq, message.Body, message.CreatedAt,
+                                      message.DeletedAt, message.Version, sender.DisplayName })
                 .ToListAsync(ct);
-
-            if (latestSeqs.Count > 0)
+            foreach (var row in previews)
             {
-                var targetConvIds = latestSeqs.Select(x => x.ConversationId).ToList();
-                var maxByConv = latestSeqs.ToDictionary(x => x.ConversationId, x => x.MaxSeq);
-                var minTargetSeq = latestSeqs.Min(x => x.MaxSeq);
-
-                var candidates = await db.Messages.AsNoTracking()
-                    .Where(m => targetConvIds.Contains(m.ConversationId) && m.Seq >= minTargetSeq && m.DeletedAt == null)
-                    .Join(
-                        db.OrganizationPeople.AsNoTracking(),
-                        m => m.SenderId,
-                        u => u.Id,
-                        (m, u) => new { m.ConversationId, m.Seq, m.Body, m.CreatedAt, SenderDisplayName = u.DisplayName })
-                    .ToListAsync(ct);
-
-                foreach (var row in candidates)
+                latestPreviews[row.ConversationId] = new
                 {
-                    if (maxByConv.TryGetValue(row.ConversationId, out var targetSeq) && row.Seq == targetSeq)
-                    {
-                        latestPreviews[row.ConversationId] = new
-                        {
-                            bodyPreview = FormatPreview(row.Body, "[Attachment]"),
-                            senderDisplayName = row.SenderDisplayName,
-                            createdAt = row.CreatedAt,
-                            seq = row.Seq
-                        };
-                    }
-                }
+                    bodyPreview = row.DeletedAt.HasValue ? "This message was recalled" : FormatPreview(row.Body, "[Attachment]"),
+                    senderDisplayName = row.DisplayName,
+                    createdAt = row.CreatedAt,
+                    seq = row.Seq,
+                    messageId = row.Id,
+                    version = row.Version
+                };
             }
         }
 
@@ -268,6 +257,7 @@ public static class ConversationEndpoints
             };
         }).ToList();
 
+        ctx.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
         {
             items,

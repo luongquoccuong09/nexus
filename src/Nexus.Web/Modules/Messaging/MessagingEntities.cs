@@ -18,6 +18,7 @@ public sealed class MessageEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? EditedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
+    public long Version { get; set; } = 1;
     public int ReplyCount { get; set; }
     public DateTimeOffset? LastReplyAt { get; set; }
     public long? LastReplySeq { get; set; }
@@ -73,6 +74,7 @@ public sealed class MessageEntityConfiguration : IEntityTypeConfiguration<Messag
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(x => x.EditedAt).HasColumnName("edited_at");
         builder.Property(x => x.DeletedAt).HasColumnName("deleted_at");
+        builder.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1L);
         builder.Property(x => x.ReplyCount).HasColumnName("reply_count");
         builder.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
         builder.Property(x => x.LastReplySeq).HasColumnName("last_reply_seq");

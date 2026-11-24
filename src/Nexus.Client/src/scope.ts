@@ -27,14 +27,14 @@ export function orgFetch(orgId: string, path: string, init?: RequestInit) {
   return window.fetch(scoped ? orgApiPath(orgId, path) : path, init);
 }
 
-export async function protectedRequest(path: string, method: string, body?: unknown, signal?: AbortSignal) {
+export async function protectedRequest(path: string, method: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>) {
   const csrfResponse = await window.fetch('/api/auth/csrf', { signal });
   if (!csrfResponse.ok) throw new Error('Unable to verify the session.');
   const csrf = await csrfResponse.json();
   return window.fetch(path, {
     method,
     signal,
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf.token },
+    headers: { ...headers, 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf.token },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
 }

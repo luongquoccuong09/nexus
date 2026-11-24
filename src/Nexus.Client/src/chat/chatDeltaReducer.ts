@@ -1,6 +1,36 @@
-import type { ChatDelta, ChatMessageItem, ThreadState } from './types';
+import type { ChatDelta, ChatMessageItem, ConversationListItem, MessageMutationDelta, ThreadState } from './types';
 
 export const QUICK_CHAT_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀'] as const;
+export const RECALLED_MESSAGE_LABEL = 'This message was recalled';
+
+export function isMessageMutation(delta: ChatDelta): delta is MessageMutationDelta {
+  return delta.type === 'message_edited' || delta.type === 'message_recalled';
+}
+
+export function applyMessageMutation(message: ChatMessageItem, delta: MessageMutationDelta): ChatMessageItem {
+  if (message.id !== delta.messageId || delta.version <= (message.version ?? 1) || message.deletedAt) return message;
+  const updated = { ...message, body: delta.body, version: delta.version, editedAt: delta.editedAt, deletedAt: delta.deletedAt };
+  return delta.type === 'message_recalled' || delta.deletedAt ? { ...updated, body: '', attachments: [], reactions: [] } : updated;
+}
+
+export function formatMessagePreview(body: string) {
+  const text = body.trim().replace(/\s+/g, ' ');
+  if (text.length > 120) return text.slice(0, 117) + '…';
+  return text || '[Attachment]';
+}
+
+export function applyPreviewMutation(
+  preview: NonNullable<ConversationListItem['lastMessagePreview']>,
+  delta: MessageMutationDelta
+) {
+  if (delta.parentMessageId || preview.seq !== delta.seq || delta.version <= (preview.version ?? 1)) return preview;
+  return {
+    ...preview,
+    messageId: delta.messageId,
+    bodyPreview: delta.type === 'message_recalled' || delta.deletedAt ? RECALLED_MESSAGE_LABEL : formatMessagePreview(delta.body),
+    version: delta.version
+  };
+}
 
 export interface ReactionUpdateInput {
   emoji: string;
@@ -58,7 +88,7 @@ export function applyChatDelta(
       isMine: delta.userId === currentUserId
     });
     if (updated !== target) updated = { ...updated, reactionSnapshotSeq: changeSeq };
-  } else {
+  } else if (delta.type === 'thread_reply_created') {
     if (delta.lastReplySeq <= (target.lastReplySeq ?? 0)) return messages;
     updated = {
       ...target,
@@ -66,6 +96,8 @@ export function applyChatDelta(
       lastReplyAt: delta.lastReplyAt,
       lastReplySeq: delta.lastReplySeq
     };
+  } else {
+    updated = applyMessageMutation(target, delta);
   }
   if (updated === target) return messages;
   const next = messages.slice();
@@ -104,6 +136,16 @@ export function deltaFromConversationEvent(
     return {
       type: 'thread_reply_created', messageId, seq: record.seq, message,
       replyCount: record.replyCount, lastReplyAt: record.lastReplyAt, lastReplySeq: record.lastReplySeq
+    };
+  }
+  if (eventType === 'message.edited' || eventType === 'message.recalled') {
+    if (!messageId || typeof record.seq !== 'number' || typeof record.version !== 'number' || typeof record.body !== 'string') return null;
+    const type = eventType === 'message.recalled' || record.deletedAt ? 'message_recalled' : 'message_edited';
+    return {
+      type, messageId, seq: record.seq, version: record.version, body: record.body,
+      parentMessageId: typeof record.parentMessageId === 'string' ? record.parentMessageId : null,
+      editedAt: typeof record.editedAt === 'string' ? record.editedAt : null,
+      deletedAt: typeof record.deletedAt === 'string' ? record.deletedAt : null
     };
   }
   if (eventType !== 'message.reaction.added' && eventType !== 'message.reaction.removed') return null;

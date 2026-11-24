@@ -28,11 +28,13 @@ public static class CommunityAccessHelper
         var conv = await db.Conversations.AsNoTracking()
             .SingleOrDefaultAsync(c => c.Id == conversationId && c.OrganizationId == scopeId, ct);
 
-        if (conv is null)
-        {
-            return null;
-        }
+        return conv is null ? null : await ResolveAsync(db, actor, conv, ct);
+    }
 
+    internal static async Task<ResolvedConversationAccess?> ResolveAsync(
+        NexusDbContext db, OrganizationMembership actor, ConversationEntity conv, CancellationToken ct)
+    {
+        var conversationId = conv.Id;
         if (conv.Kind == ConversationKind.Channel && conv.CommunityId.HasValue)
         {
             var community = await db.Communities.AsNoTracking()

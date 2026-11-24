@@ -46,6 +46,24 @@ The PostgreSQL 17 integration checks exercised concurrent replies and retries, m
 
 The isolated `Nexus.Web` fixture at `127.0.0.1:5191` served the production client to two Edge contexts. Across `1440×900`, `390×844`, and `320×700` in Light and Dark, replies rendered in 3.2–6.4 ms locally and 39.7–59.9 ms for the peer. The browser verified visible keyboard focus and Escape restoration, follow and unread state, 50-reply paging, copied reply links, optimistic rendering before commit, deduplication on repeat activation, and retry after a simulated failure. Sequential replies caused no timeline reload, duplicate, flicker, overflow, or unexpected console or network error.
 
+## M6.3 Edit and recall messages
+
+**Verified on November 24, 2026.** Message authors can edit or recall messages in Chat and Thread within the server-enforced 15-minute window. Mutations use `If-Match` and update the message and conversation versions atomically. Recall retains a timeline marker, clears prior content and reactions from replay, removes shared links, and denies subsequent attachment access and content-link resolution. The same marker appears in the sidebar preview.
+
+```powershell
+$efCommand = Join-Path $env:TEMP 'nexus-ef-10\dotnet-ef.exe'
+& $efCommand migrations add ChatMessageVersions --configuration Release --project src/Nexus.Web --startup-project src/Nexus.Web --output-dir Infrastructure/Data/Migrations
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --filter FullyQualifiedName~RichChatEditRecallTests --verbosity minimal
+pwsh -File ./scripts/Run-Tests.ps1
+node (Join-Path $env:TEMP 'nexus-m63-qa\edit-recall.mjs')
+git diff --check
+git diff --cached --check
+```
+
+The full pipeline passed 182 integration tests, 48 client tests, all three repository audits, and the Release builds with zero warnings or errors. The standard run skipped the opt-in Docker Monitor smoke test. PostgreSQL 17 coverage included concurrent writes, expired edits, DM blocks, current membership and reply visibility in two Organization scopes, replay redaction, and recall through the file, shared-content and content-link entry points.
+
+The isolated fixture at `127.0.0.1:5191` passed the two-account Edge walkthrough in both themes at `1440×900`, `390×844` and `320×700`. Root edits and recalls rendered in 1.7–5.4 ms locally and 36.9–55.2 ms for the peer. Reply mutations updated the open Thread, an intercepted request confirmed optimistic editing before commit, and a concurrent-device conflict returned `412` and restored the committed text. The six layouts passed keyboard, marker, overflow, duplicate, and console and network checks. The peer applied sequential deltas without reloading history.
+
 ## M6.16 Chat and Files pagination
 
 **Verified on November 24, 2026.** The Chat and Files lists use a timestamp and ID cursor and keep the 50-item page cap. The UI can load more even when a filter matches zero loaded conversations. Refresh revalidates the loaded pages, and transient failures leave loaded items available while offering retry. Personal Chat Files now resolve the null Organization scope through the same authorization helper as Organization Files.

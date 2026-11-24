@@ -8,8 +8,9 @@ import { renderSafeMarkdown } from '../markdown';
 import { generateClientMsgId } from '../offlineQueue';
 import { chatFetch, personalApiPath, protectedRequest } from '../scope';
 import { Button, Field, ToastBar } from '../ui';
-import { applyChatDelta } from './chatDeltaReducer';
-import { ChatDelta, ChatMessageItem, ThreadState } from './types';
+import { applyChatDelta, applyMessageMutation, isMessageMutation, RECALLED_MESSAGE_LABEL } from './chatDeltaReducer';
+import { MessageMutationActions, OpenMessageMutation } from './MessageMutationActions';
+import { ChatDelta, ChatMessageItem, MessageMutationDelta, ThreadState } from './types';
 
 export interface ThreadTarget {
   conversationId: string;
@@ -59,6 +60,10 @@ interface ThreadPaneProps {
   onCopyLink: (message: ChatMessageItem) => Promise<boolean>;
   onInlineLink: (event: MouseEvent<HTMLDivElement>) => void;
   onPreviewImage: (attachment: AttachmentItem) => void;
+  mutationError?: string;
+  pendingMutations: ReadonlyMap<string, MessageMutationDelta>;
+  onDismissMutationError: () => void;
+  onOpenMutation: OpenMessageMutation;
 }
 
 const replyTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -67,7 +72,10 @@ function mergeReplies(current: ChatMessageItem[], incoming: ChatMessageItem[]) {
   const byId = new Map(current.map(item => [item.id, item]));
   for (const reply of incoming) {
     const existing = byId.get(reply.id);
-    if (!existing || (reply.reactionSnapshotSeq ?? 0) > (existing.reactionSnapshotSeq ?? 0)) {
+    const version = reply.version ?? 1;
+    const existingVersion = existing?.version ?? 1;
+    if (!existing || version > existingVersion || (version === existingVersion &&
+      (reply.reactionSnapshotSeq ?? 0) > (existing.reactionSnapshotSeq ?? 0))) {
       byId.set(reply.id, reply);
     }
   }
@@ -85,7 +93,7 @@ function applyThreadDelta(
     const items = page.nextAfterSeq ? page.items : mergeReplies(page.items, [delta.message]);
     return { ...page, parent, items };
   }
-  if (delta.type === 'reaction') {
+  if (delta.type === 'reaction' || isMessageMutation(delta)) {
     const [parent] = applyChatDelta([page.parent], delta, currentUserId, changeSeq);
     const items = applyChatDelta(page.items, delta, currentUserId, changeSeq);
     if (parent !== page.parent || items !== page.items) return { ...page, parent, items };
@@ -95,7 +103,8 @@ function applyThreadDelta(
 
 export function ThreadPane({
   target, currentUserId, visible, blocked, reconnectCount, deltaRef, liveState, onState,
-  onPendingReply, onConfirmReply, onClose, onCopyLink, onInlineLink, onPreviewImage
+  onPendingReply, onConfirmReply, onClose, onCopyLink, onInlineLink, onPreviewImage,
+  mutationError, pendingMutations, onDismissMutationError, onOpenMutation
 }: ThreadPaneProps) {
   const { conversationId, parentMessageId, replyId, replySeq } = target;
   const endpoint = '/api/conversations/' + conversationId + '/messages/' + parentMessageId + '/thread';
@@ -147,7 +156,7 @@ export function ThreadPane({
           nextAfterSeq: cursor?.kind === 'beforeSeq' ? previous?.nextAfterSeq : loaded.hasNewer ? loaded.nextAfterSeq : null
         };
         for (const event of request.events) {
-          if (event.changeSeq > loaded.changeSeq) {
+          if (event.changeSeq > loaded.changeSeq || isMessageMutation(event.delta)) {
             result = applyThreadDelta(result, event.delta, event.changeSeq, currentUserId);
           }
         }
@@ -240,7 +249,7 @@ export function ThreadPane({
   }
 
   async function sendReply(reply: PendingReply) {
-    if (!page || blocked || page.parent.deletedAt || inFlightIdsRef.current.has(parentMessageId)) return;
+    if (!page || blocked || visibleMessage(page.parent).deletedAt || inFlightIdsRef.current.has(parentMessageId)) return;
     inFlightIdsRef.current.add(parentMessageId);
     setSending(true);
     onPendingReply(parentMessageId, reply.clientMsgId, true);
@@ -282,11 +291,22 @@ export function ThreadPane({
 
   const beforeSeq = page?.nextBeforeSeq;
   const afterSeq = page?.nextAfterSeq;
+  const root = page ? visibleMessage(page.parent) : null;
+
+  function visibleMessage(item: ChatMessageItem) {
+    const pending = pendingMutations.get(item.id);
+    return pending ? applyMessageMutation(item, pending) : item;
+  }
+
+  function actions(saved: ChatMessageItem) {
+    return <MessageMutationActions message={saved} currentUserId={currentUserId} blocked={blocked}
+      pending={pendingMutations.has(saved.id)} onOpen={onOpenMutation} />;
+  }
 
   function messageBody(item: ChatMessageItem) {
     return (
       <>
-        {item.deletedAt ? <p className="nx-muted">This message was recalled.</p> : (
+        {item.deletedAt ? <p className="nx-muted">{RECALLED_MESSAGE_LABEL}</p> : (
           <>
             {item.body && <div className="nx-msg-body" onClick={onInlineLink} dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(item.body) }} />}
             {!!item.attachments?.length && <AttachmentGallery attachments={item.attachments} onPreviewImage={onPreviewImage} />}
@@ -318,12 +338,17 @@ export function ThreadPane({
       {copied !== null && <ToastBar variant={copied ? 'ok' : 'error'}
         message={copied ? 'Reply link copied.' : 'Unable to copy link automatically.'}
         onDismiss={() => setCopied(null)} />}
+      {mutationError && <ToastBar variant="error" message={mutationError} onDismiss={onDismissMutationError} />}
       <div className="nx-drawer-body nx-thread-feed" ref={reading.feedRef} onScroll={reading.onScroll}
         role="region" aria-label="Thread replies" tabIndex={0}>
-        {page && (
-          <div className="nx-thread-parent">
-            <strong>{page.parent.senderDisplayName}</strong>
-            {messageBody(page.parent)}
+        {page && root && (
+          <div className="nx-thread-parent" data-thread-message-id={root.id} tabIndex={-1}>
+            <div className="nx-thread-message-head">
+              <strong>{root.senderDisplayName}</strong>
+              {root.editedAt && !root.deletedAt && <span className="nx-muted">Edited</span>}
+              {!root.deletedAt && actions(page.parent)}
+            </div>
+            {messageBody(root)}
           </div>
         )}
         {beforeSeq ? (
@@ -339,22 +364,27 @@ export function ThreadPane({
           </div>
         )}
         {page?.items.length === 0 && outgoing.length === 0 && <p className="nx-muted">No replies yet.</p>}
-        {page?.items.map(item => (
-          <article key={item.id} className={'nx-thread-reply' + (item.id === replyId ? ' nx-highlight-target' : '')}
-            tabIndex={-1} data-thread-reply-id={item.id} data-message-seq={item.seq}>
-            <div className="nx-thread-message-head">
-              <strong>{item.senderId === currentUserId ? 'You' : item.senderDisplayName}</strong>
-              <time className="nx-muted" dateTime={item.createdAt}>{replyTime.format(new Date(item.createdAt))}</time>
-              {!item.deletedAt && (
-                <Button size="sm" variant="ghost" iconOnly className="nx-thread-copy" aria-label="Copy link to reply"
-                  onClick={() => void onCopyLink(item).then(setCopied)}>
-                  <Link2 size={13} aria-hidden="true" />
-                </Button>
-              )}
-            </div>
-            {messageBody(item)}
-          </article>
-        ))}
+        {page?.items.map(saved => {
+          const item = visibleMessage(saved);
+          return (
+            <article key={item.id} className={'nx-thread-reply' + (item.id === replyId ? ' nx-highlight-target' : '')}
+              tabIndex={-1} data-thread-reply-id={item.id} data-message-seq={item.seq}>
+              <div className="nx-thread-message-head">
+                <strong>{item.senderId === currentUserId ? 'You' : item.senderDisplayName}</strong>
+                <time className="nx-muted" dateTime={item.createdAt}>{replyTime.format(new Date(item.createdAt))}
+                  {item.editedAt && !item.deletedAt && <> · <span>Edited</span></>}</time>
+                {!item.deletedAt && actions(saved)}
+                {!item.deletedAt && (
+                  <Button size="sm" variant="ghost" iconOnly className="nx-thread-copy" aria-label="Copy link to reply"
+                    onClick={() => void onCopyLink(item).then(setCopied)}>
+                    <Link2 size={13} aria-hidden="true" />
+                  </Button>
+                )}
+              </div>
+              {messageBody(item)}
+            </article>
+          );
+        })}
         {outgoing.map(item => (
           <article key={item.clientMsgId} className="nx-thread-reply">
             <div className="nx-thread-message-head">
@@ -362,7 +392,7 @@ export function ThreadPane({
               <span className="nx-muted" role="status">{item.failed ? 'Send failed' : 'Sending…'}</span>
             </div>
             <div className="nx-msg-body" onClick={onInlineLink} dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(item.body) }} />
-            {item.failed && <Button size="sm" disabled={blocked || sending} onClick={() => void sendReply(item)}>Retry send</Button>}
+            {item.failed && <Button size="sm" disabled={blocked || !!root?.deletedAt || sending} onClick={() => void sendReply(item)}>Retry send</Button>}
           </article>
         ))}
         {afterSeq ? (
@@ -382,7 +412,7 @@ export function ThreadPane({
           {blocked && <p className="nx-muted">Replies are unavailable in this chat.</p>}
           <Field label="Reply" htmlFor="nx-thread-reply" compact>
             <textarea id="nx-thread-reply" rows={2} maxLength={4000} value={draft}
-              disabled={blocked || !!page.parent.deletedAt || !!page.nextAfterSeq}
+              disabled={blocked || !!root?.deletedAt || !!page.nextAfterSeq}
               onChange={event => setDraft(event.target.value)}
               onCompositionStart={() => { compositionActive.current = true; }}
               onCompositionEnd={() => { compositionActive.current = false; }}
@@ -394,7 +424,7 @@ export function ThreadPane({
               }} />
           </Field>
           <Button type="submit" size="sm" variant="primary"
-            disabled={blocked || !!page.parent.deletedAt || !!page.nextAfterSeq || !draft.trim() || sending}>
+            disabled={blocked || !!root?.deletedAt || !!page.nextAfterSeq || !draft.trim() || sending}>
             <Send size={14} aria-hidden="true" /> Send reply
           </Button>
         </form>
