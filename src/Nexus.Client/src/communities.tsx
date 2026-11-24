@@ -24,6 +24,7 @@ import {
   Send,
   Settings,
   Star,
+  Tag,
   Trash2,
   Users,
   X
@@ -43,6 +44,7 @@ import { Badge, Button, EmptyState, ToastBar } from './ui';
 import { CommunityMembersDrawer } from './communities/CommunityMembersDrawer';
 import { CommunityModals } from './communities/CommunityModals';
 import { CommunityPostCard } from './communities/CommunityPostCard';
+import { TagMentionPopover } from './tags/TagMentionPopover';
 import {
   ChannelPostDto,
   CommunitiesWorkspaceProps,
@@ -58,6 +60,7 @@ import {
 } from './communities/types';
 
 const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
+const LazyPeopleTagsModal = lazy(() => import('./tags/PeopleTagsModal'));
 
 export type { CommunityChannelDto, CommunityItemDto, DepartmentLite, DirectoryUserLite };
 
@@ -233,6 +236,7 @@ export function CommunitiesWorkspace({
   const [editChannelName, setEditChannelName] = useState('');
   const [editChannelDesc, setEditChannelDesc] = useState('');
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [tagsModalOpen, setTagsModalOpen] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
   const savingMetaRef = useRef(false);
 
@@ -2401,6 +2405,16 @@ export function CommunitiesWorkspace({
                   </Button>
                 </span>
                 <Button
+                  variant={tagsModalOpen ? 'primary' : 'default'}
+                  size="sm"
+                  aria-label="Community tags"
+                  title="Tags"
+                  onClick={() => setTagsModalOpen(true)}
+                >
+                  <Tag size={15} aria-hidden="true" />
+                  <span className="nx-stage-action-label">Tags</span>
+                </Button>
+                <Button
                   variant={membersOpen ? 'primary' : 'default'}
                   size="sm"
                   aria-label="Community members"
@@ -2655,6 +2669,14 @@ export function CommunitiesWorkspace({
                         >
                           <Paperclip size={14} aria-hidden="true" /> Attach
                         </Button>
+                        <TagMentionPopover
+                          organizationId={selectedCommunity.organizationId}
+                          communityId={selectedCommunity.id}
+                          disabled={posting}
+                          textareaRef={postBodyRef}
+                          value={postBody}
+                          onChange={setPostBody}
+                        />
                         <Button
                           type="button"
                           variant={includePoll ? 'primary' : 'ghost'}
@@ -2878,6 +2900,21 @@ export function CommunitiesWorkspace({
       />
 
       <ImageLightboxModal image={lightboxImage} onClose={() => setLightboxImage(null)} />
+
+      {tagsModalOpen && selectedCommunity && (
+        <Suspense fallback={null}>
+          <LazyPeopleTagsModal
+            open={tagsModalOpen}
+            onClose={() => setTagsModalOpen(false)}
+            scope={{
+              kind: 'community',
+              organizationId: selectedCommunity.organizationId,
+              communityId: selectedCommunity.id,
+              communityName: selectedCommunity.name
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

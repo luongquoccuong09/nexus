@@ -55,24 +55,44 @@ internal static partial class MentionOutbox
 
         IQueryable<MentionCandidate> candidates;
         var usernames = names.ToArray();
+
+        // Expand scoped People tags strictly within the current Organization (+ current Community if applicable, never Personal scope or cross-Org/other-Community).
+        HashSet<Guid> taggedMemberIds = [];
+        if (db.ConversationOrganizationId is { } orgId && usernames.Length > 0)
+        {
+            var commId = community?.Id;
+            taggedMemberIds = (await (
+                from tag in db.PeopleTags.AsNoTracking()
+                join tm in db.PeopleTagMembers.AsNoTracking() on tag.Id equals tm.TagId
+                where tag.OrganizationId == orgId &&
+                      usernames.Contains(tag.Slug) &&
+                      (tag.CommunityId == null || (commId != null && tag.CommunityId == commId))
+                select tm.UserId)
+                .Distinct()
+                .ToListAsync(ct))
+                .ToHashSet();
+        }
+
+        var taggedIds = taggedMemberIds.ToArray();
         if (community is null)
         {
             candidates = from member in db.ConversationMembers.AsNoTracking()
                          join person in db.ActiveScopePeople.AsNoTracking() on member.UserId equals person.Id
                          where member.ConversationId == conversationId && member.LeftAt == null &&
-                               person.Id != sender.Id && (includeOrdinaryActivity || broadcast || usernames.Contains(person.UserName.ToLower()))
+                               person.Id != sender.Id && (includeOrdinaryActivity || broadcast || usernames.Contains(person.UserName.ToLower()) || taggedIds.Contains(person.Id))
                          select new MentionCandidate(person.Id, person.UserName);
         }
         else
         {
             candidates = AnnouncementRecipients.Eligible(db, community)
                 .Where(recipient => recipient.Membership.Id != sender.Id &&
-                    (includeOrdinaryActivity || broadcast || usernames.Contains(recipient.Membership.UserName.ToLower())))
+                    (includeOrdinaryActivity || broadcast || usernames.Contains(recipient.Membership.UserName.ToLower()) || taggedIds.Contains(recipient.Membership.Id)))
                 .Select(recipient => new MentionCandidate(recipient.Membership.Id, recipient.Membership.UserName));
         }
 
         var recipients = await candidates.ToListAsync(ct);
-        var mentioned = recipients.Where(recipient => broadcast || names.Contains(recipient.Username.ToLowerInvariant()))
+        var mentioned = recipients
+            .Where(recipient => broadcast || names.Contains(recipient.Username.ToLowerInvariant()) || taggedMemberIds.Contains(recipient.Id))
             .Select(recipient => recipient.Id).ToHashSet();
         if (mentioned.Count > 0)
         {

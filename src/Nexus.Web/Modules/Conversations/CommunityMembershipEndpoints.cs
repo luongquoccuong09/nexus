@@ -255,6 +255,7 @@ public static partial class CommunityEndpoints
         targetMember.LeftAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         await SidebarEndpoints.RemoveSidebarItemAsync(db, targetUserId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
+        await People.PeopleTagEndpoints.RemoveCommunityTagMembershipsAsync(db, communityId, targetUserId, ct);
         await tx.CommitAsync(ct);
         return Results.NoContent();
     }
@@ -338,6 +339,7 @@ public static partial class CommunityEndpoints
         myMember.LeftAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         await SidebarEndpoints.RemoveSidebarItemAsync(db, actorId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
+        await People.PeopleTagEndpoints.RemoveCommunityTagMembershipsAsync(db, communityId, actorId, ct);
         await tx.CommitAsync(ct);
         return Results.NoContent();
     }

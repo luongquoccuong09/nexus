@@ -87,6 +87,7 @@ public static class NexusHost
         app.MapPersonalConnections();
         app.MapOrgEndpoints();
         app.MapPeopleEndpoints();
+        app.MapPeopleTagEndpoints();
         app.MapPeopleSafetyEndpoints();
         app.MapConversationEndpoints();
         app.MapSidebarEndpoints();

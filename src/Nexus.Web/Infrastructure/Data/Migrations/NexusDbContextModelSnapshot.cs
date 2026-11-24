@@ -2027,6 +2027,95 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("organization_memberships", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.People.PeopleTagEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("CommunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("community_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("slug");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommunityId");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("OrganizationId", "CommunityId", "Slug")
+                        .IsUnique()
+                        .HasDatabaseName("ux_people_tags_scope_slug");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "CommunityId", "Slug"), false);
+
+                    b.ToTable("people_tags", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_people_tags_lengths", "char_length(name) BETWEEN 2 AND 48 AND (description IS NULL OR char_length(description) <= 200)");
+
+                            t.HasCheckConstraint("ck_people_tags_slug_format", "slug ~ '^[a-z0-9][a-z0-9_-]{1,31}$'");
+                        });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PeopleTagMemberEntity", b =>
+                {
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tag_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<DateTimeOffset>("AddedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("added_at");
+
+                    b.Property<Guid>("AddedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("added_by_user_id");
+
+                    b.HasKey("TagId", "UserId");
+
+                    b.HasIndex("AddedByUserId");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_people_tag_members_user_id");
+
+                    b.ToTable("people_tag_members", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.People.PersonalConnection", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2650,6 +2739,47 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PeopleTagEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Conversations.CommunityEntity", null)
+                        .WithMany()
+                        .HasForeignKey("CommunityId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.People.PeopleTagMemberEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("AddedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.People.PeopleTagEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.People.PersonalConnection", b =>

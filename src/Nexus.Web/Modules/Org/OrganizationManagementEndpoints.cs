@@ -241,6 +241,7 @@ public static class OrganizationManagementEndpoints
         await communities.ExecuteUpdateAsync(set => set.SetProperty(m => m.LeftAt, now), ct);
         await conversations.ExecuteUpdateAsync(set => set.SetProperty(m => m.LeftAt, now), ct);
         await SidebarEndpoints.RemoveOrganizationSidebarItemsAsync(db, orgId, removedIds, ct);
+        await People.PeopleTagEndpoints.RemoveOrganizationTagMembershipsAsync(db, orgId, removedIds, ct);
         return true;
     }
 

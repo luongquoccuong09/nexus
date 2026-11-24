@@ -84,6 +84,8 @@ public sealed class NexusDbContext
     public DbSet<PollVoteEntity> PollVotes => Set<PollVoteEntity>();
     public DbSet<UserBlockEntity> UserBlocks => Set<UserBlockEntity>();
     public DbSet<UserReportEntity> UserReports => Set<UserReportEntity>();
+    public DbSet<PeopleTagEntity> PeopleTags => Set<PeopleTagEntity>();
+    public DbSet<PeopleTagMemberEntity> PeopleTagMembers => Set<PeopleTagMemberEntity>();
     public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();
     public DbSet<SharedLinkEntity> SharedLinks => Set<SharedLinkEntity>();
     public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();

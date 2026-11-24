@@ -2,7 +2,7 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Users } from 'lucide-react';
+import { Activity, Bell, Briefcase, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
@@ -48,6 +48,7 @@ const PasswordResetForm = lazy(() =>
 const ProfileCardModal = lazy(() =>
   import('./ProfileCardModal').then(m => ({ default: m.ProfileCardModal }))
 );
+const PeopleTagsModal = lazy(() => import('./tags/PeopleTagsModal'));
 
 interface UserSummary {
   id: string;
@@ -237,6 +238,7 @@ function App() {
   const [availabilityMap, setAvailabilityMap] = useState<Record<string, LiveAvailabilityEntry>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [profileCardTarget, setProfileCardTarget] = useState<ProfileCardTarget | null>(null);
+  const [orgTagsModalOpen, setOrgTagsModalOpen] = useState(false);
   const currentUserIdRef = useRef<string | null>(null);
   currentUserIdRef.current = user?.id ?? null;
   const [unreadTotal, setUnreadTotal] = useState(0);
@@ -1320,6 +1322,17 @@ function App() {
                         : 'Connect with external people by exact username or a one-time contact link.'}
                     </p>
                   </div>
+                  {activePeopleOrg && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      aria-label={`Manage tags for ${activePeopleOrg.name}`}
+                      onClick={() => setOrgTagsModalOpen(true)}
+                    >
+                      <Tag size={14} aria-hidden="true" />
+                      <span>Tags</span>
+                    </Button>
+                  )}
                 </div>
 
                 <div className="nx-filter-pills" role="group" aria-label="People scope">
@@ -1703,6 +1716,20 @@ function App() {
             avatarCacheKey={avatarBust}
             onClose={() => setProfileCardTarget(null)}
             onStartDirectChat={openDm}
+          />
+        </Suspense>
+      )}
+
+      {orgTagsModalOpen && activePeopleOrg && (
+        <Suspense fallback={null}>
+          <PeopleTagsModal
+            open={orgTagsModalOpen}
+            onClose={() => setOrgTagsModalOpen(false)}
+            scope={{
+              kind: 'organization',
+              organizationId: activePeopleOrg.id,
+              organizationName: activePeopleOrg.name
+            }}
           />
         </Suspense>
       )}
