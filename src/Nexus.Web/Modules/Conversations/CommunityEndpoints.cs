@@ -17,7 +17,9 @@ public static class CommunityEndpoints
     private static readonly JsonSerializerOptions AuditJsonOptions = new(JsonSerializerDefaults.Web);
 
     public sealed record CreateCommunityRequest(string Name, string? Description, string? Visibility);
-    public sealed record CreateChannelRequest(string Name, string? PostingPolicy);
+    public sealed record UpdateCommunityRequest(string Name, string? Description);
+    public sealed record CreateChannelRequest(string Name, string? PostingPolicy, string? Description = null);
+    public sealed record UpdateChannelRequest(string Name, string? Description);
     public sealed record AddCommunityMemberRequest(Guid UserId);
     public sealed record SetCommunityAdminRequest(bool IsAdmin);
     public sealed record TransferCommunityOwnerRequest(Guid NewOwnerUserId);
@@ -31,6 +33,8 @@ public static class CommunityEndpoints
         group.MapGet("/", HandleListCommunitiesAsync);
         group.MapPost("/", HandleCreateCommunityAsync)
             .AddEndpointFilter<IdempotencyEndpointFilter>();
+        group.MapPut("/{communityId:guid}", HandleUpdateCommunityAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
 
         group.MapPost("/{communityId:guid}/join", HandleJoinCommunityAsync);
         group.MapGet("/{communityId:guid}/members", HandleListMembersAsync);
@@ -42,6 +46,12 @@ public static class CommunityEndpoints
         group.MapPost("/{communityId:guid}/official", HandleDesignateOfficialAsync);
         group.MapPost("/{communityId:guid}/emergency-transfer-ownership", HandleEmergencyTransferAsync);
         group.MapPost("/{communityId:guid}/channels", HandleCreateChannelAsync);
+        group.MapPut("/{communityId:guid}/channels/{channelId:guid}", HandleUpdateChannelAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
+        group.MapPost("/{communityId:guid}/channels/{channelId:guid}/archive", HandleArchiveChannelAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
+        group.MapPost("/{communityId:guid}/channels/{channelId:guid}/restore", HandleRestoreChannelAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         group.MapPut("/{communityId:guid}/department-mapping", HandleMapDepartmentAsync);
         group.MapPost("/{communityId:guid}/sync-department", HandleSyncDepartmentAsync);
 
@@ -201,7 +211,10 @@ public static class CommunityEndpoints
                 {
                     id = x.Id,
                     name = x.Title ?? "Channel",
+                    description = x.Description,
                     postingPolicy = x.PostingPolicy.ToString(),
+                    isArchived = x.ArchivedAt is not null,
+                    archivedAt = x.ArchivedAt,
                     createdAt = x.CreatedAt
                 })
                 .ToList();
@@ -884,6 +897,12 @@ public static class CommunityEndpoints
             return Results.BadRequest(new { code = "invalid_channel_name", message = "Channel name must be 1 to 120 characters." });
         }
 
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (description is not null && description.Length > 500)
+        {
+            return Results.BadRequest(new { code = "invalid_description", message = "Description must be at most 500 characters." });
+        }
+
         var postingPolicy = string.Equals(request.PostingPolicy, "AdminsOnly", StringComparison.OrdinalIgnoreCase)
             ? PostingPolicy.AdminsOnly
             : PostingPolicy.Members;
@@ -898,6 +917,7 @@ public static class CommunityEndpoints
             IsCommunityMainFeed = false,
             PostingPolicy = postingPolicy,
             Title = name,
+            Description = description,
             NextSeq = 0,
             ChangeSeq = 1,
             MinAvailableChangeSeq = 1,
@@ -915,10 +935,371 @@ public static class CommunityEndpoints
             id = channel.Id,
             communityId,
             name = channel.Title,
+            description = channel.Description,
             postingPolicy = channel.PostingPolicy.ToString(),
+            isArchived = false,
+            archivedAt = (DateTimeOffset?)null,
             createdAt = channel.CreatedAt
         });
     }
+
+    private static async Task<IResult> HandleUpdateCommunityAsync(
+        HttpContext ctx,
+        Guid communityId,
+        UpdateCommunityRequest request,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        MessagingFanoutService fanout,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+
+        var name = (request.Name ?? string.Empty).Trim();
+        if (name.Length is < 1 or > 120)
+        {
+            return Results.BadRequest(new { code = "invalid_name", message = "Community name must be 1 to 120 characters." });
+        }
+
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (description is not null && description.Length > 500)
+        {
+            return Results.BadRequest(new { code = "invalid_description", message = "Description must be at most 500 characters." });
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await LockCommunityAsync(db, communityId, ct);
+        var myMember = await db.CommunityMembers.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
+
+        if (community is null || !authz.Can(
+                actor.ToActorContext(),
+                ResourceAction.CommunityManageSettings,
+                new ResourceContext(ResourceKind.Community, actor.OrganizationId, MembershipRole: myMember?.Role, IsOfficial: community.IsOfficial)))
+        {
+            return Results.Forbid();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await db.Communities
+            .Where(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(c => c.Name, name)
+                .SetProperty(c => c.Description, description)
+                .SetProperty(c => c.UpdatedAt, now), ct);
+        community.Name = name;
+        community.Description = description;
+        community.UpdatedAt = now;
+
+        var mainFeed = await db.Conversations
+            .SingleOrDefaultAsync(c => c.CommunityId == communityId && c.OrganizationId == actor.OrganizationId && c.IsCommunityMainFeed, ct);
+        if (mainFeed is not null)
+        {
+            mainFeed.Title = name;
+            mainFeed.UpdatedAt = now;
+        }
+
+        db.AuditLogs.Add(new AuditLogEntity
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = actor.OrganizationId,
+            ActorUserId = actorId,
+            Action = "COMMUNITY_SETTINGS_UPDATED",
+            ResourceType = "Community",
+            ResourceId = communityId.ToString(),
+            Result = "Allowed",
+            DetailJson = JsonSerializer.Serialize(new { name }, AuditJsonOptions),
+            IpAddress = ctx.Connection.RemoteIpAddress?.ToString(),
+            CreatedAt = now
+        });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        if (mainFeed is not null)
+        {
+            await fanout.NotifyCommunityFeedChangedAsync(
+                communityId,
+                mainFeed.Id,
+                new { type = "community_updated", communityId, name = community.Name, description = community.Description, updatedAt = now },
+                ct);
+        }
+
+        return Results.Ok(new
+        {
+            id = community.Id,
+            name = community.Name,
+            description = community.Description,
+            updatedAt = community.UpdatedAt
+        });
+    }
+
+    private static async Task<IResult> HandleUpdateChannelAsync(
+        HttpContext ctx,
+        Guid communityId,
+        Guid channelId,
+        UpdateChannelRequest request,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        MessagingFanoutService fanout,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+
+        var name = (request.Name ?? string.Empty).Trim();
+        if (name.Length is < 1 or > 120)
+        {
+            return Results.BadRequest(new { code = "invalid_channel_name", message = "Channel name must be 1 to 120 characters." });
+        }
+
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (description is not null && description.Length > 500)
+        {
+            return Results.BadRequest(new { code = "invalid_description", message = "Description must be at most 500 characters." });
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await db.Communities.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        var myMember = await db.CommunityMembers.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
+
+        if (community is null || !authz.Can(
+                actor.ToActorContext(),
+                ResourceAction.CommunityManageSettings,
+                new ResourceContext(ResourceKind.CommunityChannel, actor.OrganizationId, MembershipRole: myMember?.Role, IsOfficial: community.IsOfficial)))
+        {
+            return Results.Forbid();
+        }
+
+        var channel = await LockChannelAsync(db, communityId, channelId, actor.OrganizationId, ct);
+        if (channel is null)
+        {
+            return Results.NotFound(new { code = "channel_not_found", message = "Channel not found." });
+        }
+
+        if (channel.IsCommunityMainFeed)
+        {
+            return Results.Conflict(new { code = "main_feed_managed_by_community", message = "Edit the community settings to rename the main feed." });
+        }
+
+        if (channel.ArchivedAt is not null)
+        {
+            return Results.Conflict(new { code = "channel_archived", message = "This channel is archived and read-only." });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        channel.Title = name;
+        channel.Description = description;
+        channel.UpdatedAt = now;
+
+        db.AuditLogs.Add(new AuditLogEntity
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = actor.OrganizationId,
+            ActorUserId = actorId,
+            Action = "CHANNEL_SETTINGS_UPDATED",
+            ResourceType = "Channel",
+            ResourceId = channelId.ToString(),
+            Result = "Allowed",
+            DetailJson = JsonSerializer.Serialize(new { communityId, name }, AuditJsonOptions),
+            IpAddress = ctx.Connection.RemoteIpAddress?.ToString(),
+            CreatedAt = now
+        });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await fanout.NotifyCommunityFeedChangedAsync(
+            communityId,
+            channel.Id,
+            new { type = "channel_updated", communityId, channelId = channel.Id, name = channel.Title, description = channel.Description, updatedAt = now },
+            ct);
+
+        return Results.Ok(new
+        {
+            id = channel.Id,
+            communityId,
+            name = channel.Title,
+            description = channel.Description,
+            postingPolicy = channel.PostingPolicy.ToString(),
+            isArchived = false,
+            archivedAt = (DateTimeOffset?)null,
+            updatedAt = channel.UpdatedAt
+        });
+    }
+
+    private static async Task<IResult> HandleArchiveChannelAsync(
+        HttpContext ctx,
+        Guid communityId,
+        Guid channelId,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        MessagingFanoutService fanout,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await db.Communities.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        var myMember = await db.CommunityMembers.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
+
+        if (community is null || !authz.Can(
+                actor.ToActorContext(),
+                ResourceAction.CommunityManageSettings,
+                new ResourceContext(ResourceKind.CommunityChannel, actor.OrganizationId, MembershipRole: myMember?.Role, IsOfficial: community.IsOfficial)))
+        {
+            return Results.Forbid();
+        }
+
+        var channel = await LockChannelAsync(db, communityId, channelId, actor.OrganizationId, ct);
+        if (channel is null)
+        {
+            return Results.NotFound(new { code = "channel_not_found", message = "Channel not found." });
+        }
+
+        if (channel.IsCommunityMainFeed)
+        {
+            return Results.Conflict(new { code = "cannot_archive_main_feed", message = "The community main feed cannot be archived." });
+        }
+
+        if (channel.ArchivedAt is not null)
+        {
+            return Results.Conflict(new { code = "channel_already_archived", message = "This channel is already archived." });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        channel.ArchivedAt = now;
+        channel.ArchivedByUserId = actorId;
+        channel.UpdatedAt = now;
+
+        db.AuditLogs.Add(new AuditLogEntity
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = actor.OrganizationId,
+            ActorUserId = actorId,
+            Action = "CHANNEL_ARCHIVED",
+            ResourceType = "Channel",
+            ResourceId = channelId.ToString(),
+            Result = "Allowed",
+            DetailJson = JsonSerializer.Serialize(new { communityId }, AuditJsonOptions),
+            IpAddress = ctx.Connection.RemoteIpAddress?.ToString(),
+            CreatedAt = now
+        });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await fanout.NotifyCommunityFeedChangedAsync(
+            communityId,
+            channel.Id,
+            new { type = "channel_archived", communityId, channelId = channel.Id, archivedAt = now, archivedByUserId = actorId },
+            ct);
+
+        return Results.Ok(new
+        {
+            id = channel.Id,
+            communityId,
+            isArchived = true,
+            archivedAt = channel.ArchivedAt,
+            archivedByUserId = channel.ArchivedByUserId
+        });
+    }
+
+    private static async Task<IResult> HandleRestoreChannelAsync(
+        HttpContext ctx,
+        Guid communityId,
+        Guid channelId,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        MessagingFanoutService fanout,
+        CancellationToken ct)
+    {
+        if (!ctx.User.TryGetUserId(out var actorId)) return Results.Unauthorized();
+        var actor = await db.FindOrganizationActorAsync(actorId, ct);
+        if (actor is null) return Results.Unauthorized();
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var community = await db.Communities.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == communityId && c.OrganizationId == actor.OrganizationId, ct);
+        var myMember = await db.CommunityMembers.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.CommunityId == communityId && m.UserId == actorId && m.LeftAt == null, ct);
+
+        if (community is null || !authz.Can(
+                actor.ToActorContext(),
+                ResourceAction.CommunityManageSettings,
+                new ResourceContext(ResourceKind.CommunityChannel, actor.OrganizationId, MembershipRole: myMember?.Role, IsOfficial: community.IsOfficial)))
+        {
+            return Results.Forbid();
+        }
+
+        var channel = await LockChannelAsync(db, communityId, channelId, actor.OrganizationId, ct);
+        if (channel is null)
+        {
+            return Results.NotFound(new { code = "channel_not_found", message = "Channel not found." });
+        }
+
+        if (channel.IsCommunityMainFeed)
+        {
+            return Results.Conflict(new { code = "cannot_archive_main_feed", message = "The community main feed cannot be archived." });
+        }
+
+        if (channel.ArchivedAt is null)
+        {
+            return Results.Conflict(new { code = "channel_not_archived", message = "This channel is not archived." });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        channel.ArchivedAt = null;
+        channel.ArchivedByUserId = null;
+        channel.UpdatedAt = now;
+
+        db.AuditLogs.Add(new AuditLogEntity
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = actor.OrganizationId,
+            ActorUserId = actorId,
+            Action = "CHANNEL_RESTORED",
+            ResourceType = "Channel",
+            ResourceId = channelId.ToString(),
+            Result = "Allowed",
+            DetailJson = JsonSerializer.Serialize(new { communityId }, AuditJsonOptions),
+            IpAddress = ctx.Connection.RemoteIpAddress?.ToString(),
+            CreatedAt = now
+        });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await fanout.NotifyCommunityFeedChangedAsync(
+            communityId,
+            channel.Id,
+            new { type = "channel_restored", communityId, channelId = channel.Id, restoredAt = now, restoredByUserId = actorId },
+            ct);
+
+        return Results.Ok(new
+        {
+            id = channel.Id,
+            communityId,
+            isArchived = false,
+            archivedAt = (DateTimeOffset?)null,
+            archivedByUserId = (Guid?)null
+        });
+    }
+
+    private static Task<ConversationEntity?> LockChannelAsync(NexusDbContext db, Guid communityId, Guid channelId, Guid organizationId, CancellationToken ct) =>
+        db.Conversations.FromSqlInterpolated($"""
+            SELECT * FROM conversations
+            WHERE id = {channelId} AND community_id = {communityId} AND organization_id = {organizationId} AND kind = 'Channel'
+            FOR UPDATE
+            """).SingleOrDefaultAsync(ct);
 
     private static async Task<IResult> HandleMapDepartmentAsync(
         HttpContext ctx,

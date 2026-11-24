@@ -35,6 +35,7 @@ public sealed class ConversationEntity
     public bool IsCommunityMainFeed { get; set; }
     public PostingPolicy PostingPolicy { get; set; } = PostingPolicy.Members;
     public string? Title { get; set; }
+    public string? Description { get; set; }
     public string? DmKey { get; set; }
     public long NextSeq { get; set; }
     public long ChangeSeq { get; set; }
@@ -42,6 +43,8 @@ public sealed class ConversationEntity
     public Guid CreatedByUserId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? ArchivedAt { get; set; }
+    public Guid? ArchivedByUserId { get; set; }
 }
 
 public sealed class ConversationMemberEntity
@@ -68,6 +71,15 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
             table.HasCheckConstraint(
                 "ck_conversations_self_invariants",
                 "kind <> 'Self' OR (organization_id IS NULL AND community_id IS NULL AND dm_key = 'self:' || replace(created_by_user_id::text, '-', ''))");
+            table.HasCheckConstraint(
+                "ck_conversations_channel_archive_invariants",
+                "archived_at IS NULL OR (kind = 'Channel' AND is_community_main_feed = false)");
+            table.HasCheckConstraint(
+                "ck_conversations_archived_by_consistent",
+                "(archived_at IS NULL) = (archived_by_user_id IS NULL)");
+            table.HasCheckConstraint(
+                "ck_conversations_description_length",
+                "description IS NULL OR char_length(description) <= 500");
         });
         builder.HasKey(x => x.Id);
 
@@ -78,6 +90,7 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
         builder.Property(x => x.IsCommunityMainFeed).HasColumnName("is_community_main_feed").IsRequired();
         builder.Property(x => x.PostingPolicy).HasColumnName("posting_policy").HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(120);
+        builder.Property(x => x.Description).HasColumnName("description").HasColumnType("text");
         builder.Property(x => x.DmKey).HasColumnName("dm_key").HasMaxLength(128);
         builder.Property(x => x.NextSeq).HasColumnName("next_seq").IsRequired();
         builder.Property(x => x.ChangeSeq).HasColumnName("change_seq").IsRequired();
@@ -85,13 +98,20 @@ public sealed class ConversationEntityConfiguration : IEntityTypeConfiguration<C
         builder.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsRequired();
+        builder.Property(x => x.ArchivedAt).HasColumnName("archived_at");
+        builder.Property(x => x.ArchivedByUserId).HasColumnName("archived_by_user_id");
 
         builder.HasOne<OrganizationEntity>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.ArchivedByUserId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne<CommunityEntity>().WithMany().HasForeignKey(x => x.CommunityId).OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(x => new { x.CommunityId, x.IsCommunityMainFeed })
             .HasDatabaseName("ix_conversations_community_feed");
+
+        builder.HasIndex(x => x.ArchivedByUserId)
+            .HasFilter("archived_by_user_id IS NOT NULL")
+            .HasDatabaseName("ix_conversations_archived_by_user_id");
 
         builder.HasIndex(x => new { x.OrganizationId, x.DmKey })
             .IsUnique()

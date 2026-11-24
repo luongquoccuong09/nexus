@@ -1,6 +1,7 @@
-import { orgApiPath, orgFetch } from './scope';
+import { orgApiPath, orgFetch, protectedRequest } from './scope';
 import { FormEvent, MouseEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Archive,
   ArrowLeft,
   BarChart2,
   Bell,
@@ -17,9 +18,11 @@ import {
   Lock,
   Megaphone,
   MessageSquare,
+  Pencil,
   Pin,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Settings,
@@ -47,7 +50,10 @@ import { Avatar, Badge, Button, EmptyState, Field, Modal, ToastBar } from './ui'
 export interface CommunityChannelDto {
   id: string;
   name: string;
+  description?: string | null;
   postingPolicy: string;
+  isArchived?: boolean;
+  archivedAt?: string | null;
   createdAt: string;
 }
 
@@ -291,6 +297,9 @@ export function CommunitiesWorkspace({
     pages: number;
     canPost: boolean;
     canManage: boolean;
+    isArchived: boolean;
+    archivedAt: string | null;
+    channelDescription: string | null;
   }>());
   const initialCommunitySelectedRef = useRef(false);
   const [pendingReactions, setPendingReactions] = useState<Record<string, ReactionChange>>({});
@@ -303,6 +312,8 @@ export function CommunitiesWorkspace({
   } | null>(null);
   const [canPost, setCanPost] = useState(false);
   const [canManage, setCanManage] = useState(false);
+  const [feedIsArchived, setFeedIsArchived] = useState(false);
+  const [feedChannelDescription, setFeedChannelDescription] = useState<string | null>(null);
   const [loadingPosts, setLoadingPosts] = useState(false);
 
   const [membersOpen, setMembersOpen] = useState(false);
@@ -338,7 +349,19 @@ export function CommunitiesWorkspace({
 
   const [addChannelForId, setAddChannelForId] = useState<string | null>(null);
   const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelDesc, setNewChannelDesc] = useState('');
   const [newChannelPolicy, setNewChannelPolicy] = useState<'Members' | 'AdminsOnly'>('Members');
+
+  // M6.30 Community/Channel metadata editing & channel archive/restore modals
+  const [editCommOpen, setEditCommOpen] = useState(false);
+  const [editCommName, setEditCommName] = useState('');
+  const [editCommDesc, setEditCommDesc] = useState('');
+  const [editChannelOpen, setEditChannelOpen] = useState(false);
+  const [editChannelName, setEditChannelName] = useState('');
+  const [editChannelDesc, setEditChannelDesc] = useState('');
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [savingMeta, setSavingMeta] = useState(false);
+  const savingMetaRef = useRef(false);
 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -392,8 +415,16 @@ export function CommunitiesWorkspace({
     return page.items[0] ?? null;
   }, [orgById]);
 
-  const { refresh: refreshCommunityPage } = communitiesPage;
+  const { refresh: refreshCommunityPage, updateItems: updateCommunityItems } = communitiesPage;
   const { refresh: loadDiscover } = discoverPage;
+
+  const patchCommunityInState = useCallback(
+    (communityId: string, updater: (comm: CommunityItemDto) => CommunityItemDto) => {
+      updateCommunityItems(prev => prev.map(c => (c.id === communityId ? updater(c) : c)));
+      setFocusedCommunity(prev => (prev && prev.id === communityId ? updater(prev) : prev));
+    },
+    [updateCommunityItems]
+  );
   const loadCommunities = useCallback(async () => {
     const visible = await refreshCommunityPage();
     const selected = selectedSummaryRef.current;
@@ -444,6 +475,9 @@ export function CommunitiesWorkspace({
       let pagesRead = 0;
       let nextCanPost = cached?.canPost ?? false;
       let nextCanManage = cached?.canManage ?? false;
+      let nextIsArchived = cached?.isArchived ?? false;
+      let nextArchivedAt: string | null = cached?.archivedAt ?? null;
+      let nextChannelDescription: string | null = cached?.channelDescription ?? null;
 
       do {
         const params = new URLSearchParams({ limit: '50' });
@@ -464,6 +498,8 @@ export function CommunitiesWorkspace({
             setPostsNextCursor(null);
             setCanPost(false);
             setCanManage(false);
+            setFeedIsArchived(false);
+            setFeedChannelDescription(null);
           }
           setPostsError({ message, append: !lostAccess && append });
           setError(message);
@@ -480,6 +516,9 @@ export function CommunitiesWorkspace({
         }
         nextCanPost = Boolean(data.canPost);
         nextCanManage = Boolean(data.canManage);
+        nextIsArchived = Boolean(data.isArchived);
+        nextArchivedAt = typeof data.archivedAt === 'string' ? data.archivedAt : null;
+        nextChannelDescription = typeof data.channelDescription === 'string' ? data.channelDescription : null;
         cursor = typeof data.nextCursor === 'string' && data.nextCursor.length > 0 ? data.nextCursor : null;
         pagesRead += 1;
       } while (cursor !== null && pagesRead < pagesToRead);
@@ -502,13 +541,18 @@ export function CommunitiesWorkspace({
         nextCursor: cursor,
         pages: totalPages,
         canPost: nextCanPost,
-        canManage: nextCanManage
+        canManage: nextCanManage,
+        isArchived: nextIsArchived,
+        archivedAt: nextArchivedAt,
+        channelDescription: nextChannelDescription
       });
       setPosts(nextPosts);
       setPostsNextCursor(cursor);
       if (!append) setPostsHasNewer(false);
       setCanPost(nextCanPost);
       setCanManage(nextCanManage);
+      setFeedIsArchived(nextIsArchived);
+      setFeedChannelDescription(nextChannelDescription);
     } catch {
       if (!request.controller.signal.aborted && activeFeedRef.current === conversationId) {
         setPostsError({ message: 'Unable to load posts.', append });
@@ -548,13 +592,19 @@ export function CommunitiesWorkspace({
       const hasNewer = Boolean(data.hasNewer);
       const nextCanPost = Boolean(data.canPost);
       const nextCanManage = Boolean(data.canManage);
+      const nextIsArchived = Boolean(data.isArchived);
+      const nextArchivedAt = typeof data.archivedAt === 'string' ? data.archivedAt : null;
+      const nextChannelDescription = typeof data.channelDescription === 'string' ? data.channelDescription : null;
       if (!hasNewer) {
         postsCacheRef.current.set(conversationId, {
           items,
           nextCursor: cursor,
           pages: 1,
           canPost: nextCanPost,
-          canManage: nextCanManage
+          canManage: nextCanManage,
+          isArchived: nextIsArchived,
+          archivedAt: nextArchivedAt,
+          channelDescription: nextChannelDescription
         });
       }
       setPosts(items);
@@ -562,6 +612,8 @@ export function CommunitiesWorkspace({
       setPostsHasNewer(hasNewer);
       setCanPost(nextCanPost);
       setCanManage(nextCanManage);
+      setFeedIsArchived(nextIsArchived);
+      setFeedChannelDescription(nextChannelDescription);
       return true;
     } catch {
       if (!request.controller.signal.aborted && activeFeedRef.current === conversationId) {
@@ -636,12 +688,16 @@ export function CommunitiesWorkspace({
       setPostsNextCursor(cached.nextCursor);
       setCanPost(cached.canPost);
       setCanManage(cached.canManage);
+      setFeedIsArchived(cached.isArchived);
+      setFeedChannelDescription(cached.channelDescription);
       setLoadingPosts(false);
     } else {
       setPosts([]);
       setPostsNextCursor(null);
       setCanPost(false);
       setCanManage(false);
+      setFeedIsArchived(false);
+      setFeedChannelDescription(null);
     }
     if (selectedConversationId && pendingJumpRef.current?.conversationId !== selectedConversationId) {
       void loadPosts(selectedConversationId, Boolean(cached));
@@ -730,6 +786,78 @@ export function CommunitiesWorkspace({
       if (!targetId) return;
 
       if (delta && changedConversationId) {
+        if (delta.type === 'community_updated' && delta.communityId) {
+          patchCommunityInState(delta.communityId, comm => ({
+            ...comm,
+            name: typeof delta.name === 'string' && delta.name ? delta.name : comm.name,
+            description: delta.description !== undefined ? delta.description : comm.description
+          }));
+          return;
+        }
+
+        if (delta.type === 'channel_updated' && delta.communityId && delta.channelId) {
+          const chId = delta.channelId;
+          patchCommunityInState(delta.communityId, comm => ({
+            ...comm,
+            channels: comm.channels.map(ch =>
+              ch.id === chId
+                ? {
+                    ...ch,
+                    name: typeof delta.name === 'string' && delta.name ? delta.name : ch.name,
+                    description: delta.description !== undefined ? delta.description : ch.description
+                  }
+                : ch
+            )
+          }));
+          const cached = postsCacheRef.current.get(chId);
+          if (cached && delta.description !== undefined) {
+            postsCacheRef.current.set(chId, { ...cached, channelDescription: delta.description ?? null });
+          }
+          if (activeFeedRef.current === chId && delta.description !== undefined) {
+            setFeedChannelDescription(delta.description ?? null);
+          }
+          return;
+        }
+
+        if (delta.type === 'channel_archived' && delta.communityId && delta.channelId) {
+          const chId = delta.channelId;
+          const archivedAt = delta.archivedAt ?? new Date().toISOString();
+          patchCommunityInState(delta.communityId, comm => ({
+            ...comm,
+            channels: comm.channels.map(ch =>
+              ch.id === chId ? { ...ch, isArchived: true, archivedAt } : ch
+            )
+          }));
+          const cached = postsCacheRef.current.get(chId);
+          if (cached) {
+            postsCacheRef.current.set(chId, { ...cached, isArchived: true, archivedAt, canPost: false });
+          }
+          if (activeFeedRef.current === chId) {
+            setFeedIsArchived(true);
+            setCanPost(false);
+          }
+          return;
+        }
+
+        if (delta.type === 'channel_restored' && delta.communityId && delta.channelId) {
+          const chId = delta.channelId;
+          patchCommunityInState(delta.communityId, comm => ({
+            ...comm,
+            channels: comm.channels.map(ch =>
+              ch.id === chId ? { ...ch, isArchived: false, archivedAt: null } : ch
+            )
+          }));
+          const cached = postsCacheRef.current.get(chId);
+          if (cached) {
+            postsCacheRef.current.set(chId, { ...cached, isArchived: false, archivedAt: null });
+          }
+          if (activeFeedRef.current === chId) {
+            setFeedIsArchived(false);
+            void loadPosts(chId, true);
+          }
+          return;
+        }
+
         if (delta.type === 'ownership') {
           void loadCommunities().catch(() => setError('Unable to refresh community roles.'));
           if (activeCommunityRef.current === delta.communityId && activeFeedRef.current) {
@@ -779,7 +907,7 @@ export function CommunitiesWorkspace({
       }
     };
     return () => { feedListenerRef.current = null; };
-  }, [currentUserId, feedListenerRef, loadCommunities, loadMembers, loadPosts, updateFeedPosts]);
+  }, [currentUserId, feedListenerRef, loadCommunities, loadMembers, loadPosts, patchCommunityInState, updateFeedPosts]);
 
   useEffect(() => {
     setMemberSearchQuery('');
@@ -917,6 +1045,7 @@ export function CommunitiesWorkspace({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: newChannelName,
+        description: newChannelDesc.trim() || null,
         postingPolicy: newChannelPolicy
       })
     });
@@ -928,6 +1057,7 @@ export function CommunitiesWorkspace({
     const targetCommId = addChannelForId;
     setAddChannelForId(null);
     setNewChannelName('');
+    setNewChannelDesc('');
     setNewChannelPolicy('Members');
     const updated = await lookupCommunity(comm.organizationId, targetCommId).catch(() => null);
     if (updated) setFocusedCommunity(updated);
@@ -935,6 +1065,195 @@ export function CommunitiesWorkspace({
     setSelectedCommunityId(targetCommId);
     setSelectedConversationId(data.id);
     setNotice(`Channel "#${data.name}" created.`);
+  }
+
+  function surfaceArchivedConflictIfNeeded(res: Response, data: { code?: string; message?: string }, convId?: string | null) {
+    if (res.status === 409 && data?.code === 'channel_archived') {
+      const targetConv = convId ?? selectedConversationId;
+      if (targetConv && selectedCommunity) {
+        patchCommunityInState(selectedCommunity.id, comm => ({
+          ...comm,
+          channels: comm.channels.map(ch =>
+            ch.id === targetConv ? { ...ch, isArchived: true } : ch
+          )
+        }));
+      }
+      if (targetConv && activeFeedRef.current === targetConv) {
+        setFeedIsArchived(true);
+        setCanPost(false);
+      }
+      setError(data.message || 'This channel is archived and read-only.');
+      return true;
+    }
+    return false;
+  }
+
+  function openEditCommunityModal() {
+    if (!selectedCommunity) return;
+    setEditCommName(selectedCommunity.name);
+    setEditCommDesc(selectedCommunity.description ?? '');
+    setEditCommOpen(true);
+  }
+
+  async function handleSaveCommunityMeta(e: FormEvent) {
+    e.preventDefault();
+    if (!selectedCommunity || savingMetaRef.current) return;
+    const trimmedName = editCommName.trim();
+    if (!trimmedName) return;
+    savingMetaRef.current = true;
+    setSavingMeta(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await protectedRequest(
+        orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}`),
+        'PUT',
+        { name: trimmedName, description: editCommDesc.trim() || null }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.message || 'Unable to update community.');
+        return;
+      }
+      patchCommunityInState(selectedCommunity.id, comm => ({
+        ...comm,
+        name: data.name ?? trimmedName,
+        description: data.description !== undefined ? data.description : (editCommDesc.trim() || null)
+      }));
+      setEditCommOpen(false);
+      setNotice('Community updated.');
+    } catch {
+      setError('Unable to update community.');
+    } finally {
+      savingMetaRef.current = false;
+      setSavingMeta(false);
+    }
+  }
+
+  function openEditChannelModal() {
+    if (!selectedSubChannel) return;
+    setEditChannelName(selectedSubChannel.name);
+    setEditChannelDesc(selectedSubChannel.description ?? feedChannelDescription ?? '');
+    setEditChannelOpen(true);
+  }
+
+  async function handleSaveChannelMeta(e: FormEvent) {
+    e.preventDefault();
+    if (!selectedCommunity || !selectedSubChannel || savingMetaRef.current) return;
+    const trimmedName = editChannelName.trim();
+    if (!trimmedName) return;
+    savingMetaRef.current = true;
+    setSavingMeta(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await protectedRequest(
+        orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/channels/${selectedSubChannel.id}`),
+        'PUT',
+        { name: trimmedName, description: editChannelDesc.trim() || null }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (!surfaceArchivedConflictIfNeeded(res, data, selectedSubChannel.id)) {
+          setError(data.message || 'Unable to update channel.');
+        }
+        return;
+      }
+      const nextDesc = data.description !== undefined ? data.description : (editChannelDesc.trim() || null);
+      patchCommunityInState(selectedCommunity.id, comm => ({
+        ...comm,
+        channels: comm.channels.map(ch =>
+          ch.id === selectedSubChannel.id
+            ? { ...ch, name: data.name ?? trimmedName, description: nextDesc }
+            : ch
+        )
+      }));
+      setFeedChannelDescription(nextDesc);
+      const cached = postsCacheRef.current.get(selectedSubChannel.id);
+      if (cached) postsCacheRef.current.set(selectedSubChannel.id, { ...cached, channelDescription: nextDesc });
+      setEditChannelOpen(false);
+      setNotice('Channel updated.');
+    } catch {
+      setError('Unable to update channel.');
+    } finally {
+      savingMetaRef.current = false;
+      setSavingMeta(false);
+    }
+  }
+
+  async function handleArchiveChannel() {
+    if (!selectedCommunity || !selectedSubChannel || savingMetaRef.current) return;
+    savingMetaRef.current = true;
+    setSavingMeta(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await protectedRequest(
+        orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/channels/${selectedSubChannel.id}/archive`),
+        'POST'
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (!surfaceArchivedConflictIfNeeded(res, data, selectedSubChannel.id)) {
+          setError(data.message || 'Unable to archive channel.');
+        }
+        return;
+      }
+      const archivedAt = data.archivedAt ?? new Date().toISOString();
+      patchCommunityInState(selectedCommunity.id, comm => ({
+        ...comm,
+        channels: comm.channels.map(ch =>
+          ch.id === selectedSubChannel.id ? { ...ch, isArchived: true, archivedAt } : ch
+        )
+      }));
+      const cached = postsCacheRef.current.get(selectedSubChannel.id);
+      if (cached) postsCacheRef.current.set(selectedSubChannel.id, { ...cached, isArchived: true, archivedAt, canPost: false });
+      setFeedIsArchived(true);
+      setCanPost(false);
+      setArchiveConfirmOpen(false);
+      setNotice(`Channel "#${selectedSubChannel.name}" archived.`);
+    } catch {
+      setError('Unable to archive channel.');
+    } finally {
+      savingMetaRef.current = false;
+      setSavingMeta(false);
+    }
+  }
+
+  async function handleRestoreChannel() {
+    if (!selectedCommunity || !selectedSubChannel || savingMetaRef.current) return;
+    savingMetaRef.current = true;
+    setSavingMeta(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await protectedRequest(
+        orgApiPath(selectedCommunity.organizationId, `/api/communities/${selectedCommunity.id}/channels/${selectedSubChannel.id}/restore`),
+        'POST'
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.message || 'Unable to restore channel.');
+        return;
+      }
+      patchCommunityInState(selectedCommunity.id, comm => ({
+        ...comm,
+        channels: comm.channels.map(ch =>
+          ch.id === selectedSubChannel.id ? { ...ch, isArchived: false, archivedAt: null } : ch
+        )
+      }));
+      const cached = postsCacheRef.current.get(selectedSubChannel.id);
+      if (cached) postsCacheRef.current.set(selectedSubChannel.id, { ...cached, isArchived: false, archivedAt: null, canPost: true });
+      setFeedIsArchived(false);
+      setCanPost(true);
+      setNotice(`Channel "#${selectedSubChannel.name}" restored.`);
+      void loadPosts(selectedSubChannel.id, true);
+    } catch {
+      setError('Unable to restore channel.');
+    } finally {
+      savingMetaRef.current = false;
+      setSavingMeta(false);
+    }
   }
 
   async function handleCreatePost(e: FormEvent) {
@@ -1041,7 +1360,9 @@ export function CommunitiesWorkspace({
         setPollQuestion(savedPollQuestion);
         setPollOptions(savedPollOptions);
         setPollAllowMultiple(savedPollAllowMultiple);
-        setError(data.message || 'Unable to publish post.');
+        if (!surfaceArchivedConflictIfNeeded(res, data, targetConvId)) {
+          setError(data.message || 'Unable to publish post.');
+        }
         return;
       }
 
@@ -1097,11 +1418,14 @@ export function CommunitiesWorkspace({
       body: JSON.stringify({ isPinned: nextPinned })
     });
     if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       updateFeedPosts(post.conversationId, prev => prev
         .map(p => p.id === post.id ? { ...p, isPinned: post.isPinned } : p)
         .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
       );
-      setError('Unable to update pin state.');
+      if (!surfaceArchivedConflictIfNeeded(res, data, post.conversationId)) {
+        setError(data.message || 'Unable to update pin state.');
+      }
     }
   }
 
@@ -1122,8 +1446,11 @@ export function CommunitiesWorkspace({
       credentials: 'same-origin'
     });
     if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       if (convId) void loadPosts(convId, true);
-      setError('Unable to record acknowledgment.');
+      if (!surfaceArchivedConflictIfNeeded(res, data, convId)) {
+        setError(data.message || 'Unable to record acknowledgment.');
+      }
       return;
     }
     const data = await res.json().catch(() => null);
@@ -1146,7 +1473,9 @@ export function CommunitiesWorkspace({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.message || 'Unable to send reminder.');
+      if (!surfaceArchivedConflictIfNeeded(res, data)) {
+        setError(data.message || 'Unable to send reminder.');
+      }
       return;
     }
     setNotice(`Reminder recorded for ${data.remindedCount ?? 0} outstanding member(s).`);
@@ -1169,7 +1498,11 @@ export function CommunitiesWorkspace({
         method: reactedByMe ? 'PUT' : 'DELETE',
         credentials: 'same-origin'
       });
-      if (!res.ok) throw new Error('Reaction request failed');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (surfaceArchivedConflictIfNeeded(res, errData, post.conversationId)) return;
+        throw new Error('Reaction request failed');
+      }
 
       const request = feedRequestRef.current;
       if (request?.conversationId === post.conversationId) request.confirmedReactions.push(change);
@@ -1234,7 +1567,9 @@ export function CommunitiesWorkspace({
     if (!res.ok) {
       if (convId) void loadPosts(convId, true);
       const data = await res.json().catch(() => ({}));
-      setError(data.message || 'Unable to submit vote.');
+      if (!surfaceArchivedConflictIfNeeded(res, data, convId)) {
+        setError(data.message || 'Unable to submit vote.');
+      }
     }
   }
 
@@ -1279,7 +1614,9 @@ export function CommunitiesWorkspace({
       }
       setCommentDrafts(prev => ({ ...prev, [postId]: draft }));
       const data = await res.json().catch(() => ({}));
-      setError(data.message || 'Unable to post comment.');
+      if (!surfaceArchivedConflictIfNeeded(res, data, convId)) {
+        setError(data.message || 'Unable to post comment.');
+      }
       return;
     }
 
@@ -1422,6 +1759,10 @@ export function CommunitiesWorkspace({
   const activePolicy = selectedSubChannel
     ? selectedSubChannel.postingPolicy
     : selectedCommunity?.mainFeedPostingPolicy ?? 'Members';
+  const activeIsArchived = Boolean(selectedSubChannel && (selectedSubChannel.isArchived || feedIsArchived));
+  const activeChannelDescription = selectedSubChannel
+    ? (selectedSubChannel.description ?? feedChannelDescription ?? null)
+    : null;
 
   const filteredDiscover = discoverCommunities;
   const sidebarPage = discoverMode ? discoverPage : communitiesPage;
@@ -1560,15 +1901,18 @@ export function CommunitiesWorkspace({
                 <button
                   type="button"
                   key={ch.id}
-                  className={`nx-channel-row ${isChActive ? 'active' : ''}`}
+                  className={`nx-channel-row ${isChActive ? 'active' : ''} ${ch.isArchived ? 'archived' : ''}`}
                   onClick={() => selectSubChannel(comm, ch)}
                 >
-                  {ch.postingPolicy === 'AdminsOnly' ? (
+                  {ch.isArchived ? (
+                    <Archive size={13} aria-hidden="true" />
+                  ) : ch.postingPolicy === 'AdminsOnly' ? (
                     <Megaphone size={14} aria-hidden="true" />
                   ) : (
                     <Hash size={14} aria-hidden="true" />
                   )}
                   <span className="nx-channel-name">{ch.name}</span>
+                  {ch.isArchived && <Badge variant="role">Archived</Badge>}
                 </button>
               );
             })}
@@ -1582,6 +1926,7 @@ export function CommunitiesWorkspace({
             onClick={() => {
               setAddChannelForId(comm.id);
               setNewChannelName('');
+              setNewChannelDesc('');
               setNewChannelPolicy('Members');
             }}
           >
@@ -1881,6 +2226,11 @@ export function CommunitiesWorkspace({
                         / {selectedSubChannel.postingPolicy === 'AdminsOnly' ? <Megaphone size={14} aria-hidden="true" /> : <Hash size={14} aria-hidden="true" />} {selectedSubChannel.name}
                       </span>
                     )}
+                    {activeIsArchived && (
+                      <Badge variant="role">
+                        <Archive size={11} aria-hidden="true" /> Archived
+                      </Badge>
+                    )}
                     {selectedCommunity.isOfficial && <Badge variant="role">Official</Badge>}
                     {activePolicy === 'AdminsOnly' && <Badge variant="role">Admins only</Badge>}
                   </h3>
@@ -1892,18 +2242,70 @@ export function CommunitiesWorkspace({
                     <span>Your role: {selectedCommunity.myRole ?? 'Member'}</span>
                     <span>·</span>
                     <span>{selectedCommunity.memberCount} {selectedCommunity.memberCount === 1 ? 'member' : 'members'}</span>
-                    {selectedCommunity.description && (
+                    {!selectedSubChannel && selectedCommunity.description && (
                       <>
                         <span>·</span>
                         <span>{selectedCommunity.description}</span>
                       </>
                     )}
                   </div>
+                  {selectedSubChannel && activeChannelDescription && (
+                    <div className="nx-channel-desc">{activeChannelDescription}</div>
+                  )}
                 </div>
               </div>
 
               <div className="nx-inline-actions">
                 <ConversationNotificationButton key={selectedConversationId} conversationId={selectedConversationId} />
+                {canManage && !selectedSubChannel && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label="Edit community"
+                    title="Edit community"
+                    onClick={openEditCommunityModal}
+                  >
+                    <Pencil size={15} aria-hidden="true" />
+                  </Button>
+                )}
+                {canManage && selectedSubChannel && !activeIsArchived && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label="Edit channel"
+                      title="Edit channel"
+                      onClick={openEditChannelModal}
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label="Archive channel"
+                      title="Archive channel"
+                      onClick={() => setArchiveConfirmOpen(true)}
+                    >
+                      <Archive size={15} aria-hidden="true" />
+                    </Button>
+                  </>
+                )}
+                {canManage && selectedSubChannel && activeIsArchived && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    iconOnly
+                    aria-label="Restore channel"
+                    title="Restore channel"
+                    disabled={savingMeta}
+                    onClick={() => void handleRestoreChannel()}
+                  >
+                    <RotateCcw size={15} aria-hidden="true" />
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1938,8 +2340,25 @@ export function CommunitiesWorkspace({
 
             <div className="nx-comm-body">
               <div className="nx-comm-feed" ref={feedContainerRef}>
-                {/* Post Composer */}
-                {canPost ? (
+                {/* Post Composer or Read-Only / Archived Banner */}
+                {activeIsArchived ? (
+                  <div className="nx-readonly-banner nx-archived-banner" role="note">
+                    <div className="nx-archived-banner-text">
+                      <Archive size={15} aria-hidden="true" />
+                      <span>This channel is archived and read-only. Past posts and files remain available.</span>
+                    </div>
+                    {canManage && selectedSubChannel && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={savingMeta}
+                        onClick={() => void handleRestoreChannel()}
+                      >
+                        <RotateCcw size={14} aria-hidden="true" /> {savingMeta ? 'Restoring…' : 'Restore channel'}
+                      </Button>
+                    )}
+                  </div>
+                ) : canPost ? (
                   <form className="nx-post-composer" onSubmit={handleCreatePost}>
                     <input
                       type="text"
@@ -2219,7 +2638,7 @@ export function CommunitiesWorkspace({
                                 <Link2 size={14} aria-hidden="true" />
                               </Button>
                             )}
-                            {canManage && (
+                            {canManage && !activeIsArchived && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -2250,11 +2669,11 @@ export function CommunitiesWorkspace({
                                 <Badge variant="success">
                                   <CheckCircle2 size={12} aria-hidden="true" /> Acknowledged
                                 </Badge>
-                              ) : (
+                              ) : !activeIsArchived ? (
                                 <Button variant="primary" size="sm" onClick={() => void handleAcknowledge(post.id)}>
                                   <CheckCircle2 size={14} aria-hidden="true" /> Acknowledge
                                 </Button>
-                              )}
+                              ) : null}
                               <span className="nx-muted">
                                 {post.acknowledgedCount} / {post.totalRecipients} acknowledged
                               </span>
@@ -2269,9 +2688,11 @@ export function CommunitiesWorkspace({
                                 >
                                   <Download size={13} aria-hidden="true" /> Export CSV
                                 </a>
-                                <Button variant="default" size="sm" onClick={() => void handleRemind(post.id)}>
-                                  <Bell size={13} aria-hidden="true" /> Remind
-                                </Button>
+                                {!activeIsArchived && (
+                                  <Button variant="default" size="sm" onClick={() => void handleRemind(post.id)}>
+                                    <Bell size={13} aria-hidden="true" /> Remind
+                                  </Button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2298,6 +2719,7 @@ export function CommunitiesWorkspace({
                                     type="button"
                                     key={opt.id}
                                     className={`nx-poll-opt-btn ${opt.votedByMe ? 'voted' : ''}`}
+                                    disabled={activeIsArchived}
                                     onClick={() => void handleVotePoll(post.poll!, opt.id)}
                                   >
                                     <span className="nx-poll-opt-fill" style={{ width: `${pct}%` }} />
@@ -2328,10 +2750,11 @@ export function CommunitiesWorkspace({
                                   type="button"
                                   key={emoji}
                                   className={`nx-react-pill ${r?.reactedByMe ? 'active' : ''}`}
+                                  disabled={activeIsArchived}
                                   onClick={() => void handleToggleReaction(post, emoji)}
                                   aria-label={`React with ${emoji}`}
                                   aria-pressed={Boolean(r?.reactedByMe)}
-                                  aria-disabled={Boolean(pending)}
+                                  aria-disabled={activeIsArchived || Boolean(pending)}
                                 >
                                   <span>{emoji}</span>
                                   {r && r.count > 0 && <span>{r.count}</span>}
@@ -2385,26 +2808,28 @@ export function CommunitiesWorkspace({
                               </div>
                             ))}
 
-                            <form className="nx-comment-form" onSubmit={e => void handleAddComment(e, post.id)}>
-                              <input
-                                type="text"
-                                aria-label="Write a comment"
-                                placeholder="Write a comment…"
-                                maxLength={4000}
-                                value={commentDrafts[post.id] ?? ''}
-                                onChange={e =>
-                                  setCommentDrafts(prev => ({ ...prev, [post.id]: e.target.value }))
-                                }
-                              />
-                              <Button
-                                type="submit"
-                                variant="default"
-                                size="sm"
-                                disabled={!(commentDrafts[post.id] ?? '').trim()}
-                              >
-                                Reply
-                              </Button>
-                            </form>
+                            {!activeIsArchived && (
+                              <form className="nx-comment-form" onSubmit={e => void handleAddComment(e, post.id)}>
+                                <input
+                                  type="text"
+                                  aria-label="Write a comment"
+                                  placeholder="Write a comment…"
+                                  maxLength={4000}
+                                  value={commentDrafts[post.id] ?? ''}
+                                  onChange={e =>
+                                    setCommentDrafts(prev => ({ ...prev, [post.id]: e.target.value }))
+                                  }
+                                />
+                                <Button
+                                  type="submit"
+                                  variant="default"
+                                  size="sm"
+                                  disabled={!(commentDrafts[post.id] ?? '').trim()}
+                                >
+                                  Reply
+                                </Button>
+                              </form>
+                            )}
                           </div>
                         )}
                       </article>
@@ -2740,6 +3165,16 @@ export function CommunitiesWorkspace({
               onChange={e => setNewChannelName(e.target.value)}
             />
           </Field>
+          <Field label="Description (optional)" htmlFor="new-ch-desc">
+            <textarea
+              id="new-ch-desc"
+              rows={2}
+              maxLength={500}
+              placeholder="What is this channel for?"
+              value={newChannelDesc}
+              onChange={e => setNewChannelDesc(e.target.value)}
+            />
+          </Field>
           <Field label="Posting policy" htmlFor="new-ch-policy">
             <select
               id="new-ch-policy"
@@ -2760,6 +3195,113 @@ export function CommunitiesWorkspace({
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Edit Community Modal (M6.30) */}
+      <Modal
+        open={editCommOpen && Boolean(selectedCommunity)}
+        onOpenChange={open => {
+          if (!open && !savingMeta) setEditCommOpen(false);
+        }}
+        title="Edit community"
+        description="Update the community name and description."
+      >
+        <form onSubmit={handleSaveCommunityMeta}>
+          <Field label="Community name" htmlFor="edit-comm-name">
+            <input
+              id="edit-comm-name"
+              type="text"
+              required
+              minLength={1}
+              maxLength={120}
+              value={editCommName}
+              onChange={e => setEditCommName(e.target.value)}
+            />
+          </Field>
+          <Field label="Description (optional)" htmlFor="edit-comm-desc">
+            <textarea
+              id="edit-comm-desc"
+              rows={3}
+              maxLength={500}
+              placeholder="Describe what this community is for…"
+              value={editCommDesc}
+              onChange={e => setEditCommDesc(e.target.value)}
+            />
+          </Field>
+          <div className="nx-modal-footer">
+            <Button type="button" variant="default" disabled={savingMeta} onClick={() => setEditCommOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={savingMeta || !editCommName.trim()}>
+              {savingMeta ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Channel Modal (M6.30) */}
+      <Modal
+        open={editChannelOpen && Boolean(selectedSubChannel)}
+        onOpenChange={open => {
+          if (!open && !savingMeta) setEditChannelOpen(false);
+        }}
+        title="Edit channel"
+        description="Update the channel name and description without changing its link or history."
+      >
+        <form onSubmit={handleSaveChannelMeta}>
+          <Field label="Channel name" htmlFor="edit-ch-name">
+            <input
+              id="edit-ch-name"
+              type="text"
+              required
+              minLength={1}
+              maxLength={120}
+              value={editChannelName}
+              onChange={e => setEditChannelName(e.target.value)}
+            />
+          </Field>
+          <Field label="Description (optional)" htmlFor="edit-ch-desc">
+            <textarea
+              id="edit-ch-desc"
+              rows={3}
+              maxLength={500}
+              placeholder="Describe what this channel is for…"
+              value={editChannelDesc}
+              onChange={e => setEditChannelDesc(e.target.value)}
+            />
+          </Field>
+          <div className="nx-modal-footer">
+            <Button type="button" variant="default" disabled={savingMeta} onClick={() => setEditChannelOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={savingMeta || !editChannelName.trim()}>
+              {savingMeta ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Archive Channel Confirmation Modal (M6.30) */}
+      <Modal
+        open={archiveConfirmOpen && Boolean(selectedSubChannel)}
+        onOpenChange={open => {
+          if (!open && !savingMeta) setArchiveConfirmOpen(false);
+        }}
+        title={selectedSubChannel ? `Archive #${selectedSubChannel.name}?` : 'Archive channel'}
+        footer={
+          <>
+            <Button disabled={savingMeta} onClick={() => setArchiveConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={savingMeta} onClick={() => void handleArchiveChannel()}>
+              <Archive size={14} aria-hidden="true" /> {savingMeta ? 'Archiving…' : 'Archive channel'}
+            </Button>
+          </>
+        }
+      >
+        <p className="nx-muted" style={{ margin: 0 }}>
+          Archiving this channel makes it read-only. Its ID, past posts, comments, polls, and files remain preserved, and an owner or admin can restore it anytime.
+        </p>
       </Modal>
     </div>
   );

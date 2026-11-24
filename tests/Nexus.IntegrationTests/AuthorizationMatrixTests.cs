@@ -119,6 +119,16 @@ public sealed class AuthorizationMatrixTests
         yield return ["Self chat owner denied GroupLeave", personalUser, ResourceAction.GroupLeave, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
         yield return ["Self chat owner denied MentionChannelOrAll", personalUser, ResourceAction.MentionChannelOrAll, new ResourceContext(ResourceKind.SelfChat, Guid.Empty, ResourceRole.Owner, TargetIsSelf: true), false];
 
+        // --- Community & Channel Settings + Archive (M6.30) ---
+        yield return ["Community Owner can manage settings", VerifiedMember, ResourceAction.CommunityManageSettings, new ResourceContext(ResourceKind.Community, OrgA, ResourceRole.Owner), true];
+        yield return ["Community Admin can manage channel settings", VerifiedMember, ResourceAction.CommunityManageSettings, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Admin), true];
+        yield return ["Community Member denied managing settings", VerifiedMember, ResourceAction.CommunityManageSettings, new ResourceContext(ResourceKind.Community, OrgA, ResourceRole.Member), false];
+        yield return ["Unverified Admin denied managing Official community settings (SEC-20b)", UnverifiedMember, ResourceAction.CommunityManageSettings, new ResourceContext(ResourceKind.Community, OrgA, ResourceRole.Admin, IsOfficial: true), false];
+        yield return ["Member can read archived channel", VerifiedMember, ResourceAction.ConversationRead, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Member, IsArchived: true), true];
+        yield return ["Member can download files in archived channel", VerifiedMember, ResourceAction.FileDownload, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Member, IsArchived: true), true];
+        yield return ["Owner denied posting in archived channel", VerifiedMember, ResourceAction.MessageSend, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Owner, IsArchived: true), false];
+        yield return ["Owner denied uploading files in archived channel", VerifiedMember, ResourceAction.FileUpload, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Owner, IsArchived: true), false];
+
         // --- Default deny on unmapped / mismatched combinations ---
         yield return ["Default deny: unknown action enum value", VerifiedSystemAdmin, (ResourceAction)9999, new ResourceContext(ResourceKind.Organization, OrgA), false];
         yield return ["Default deny: AdminImportDirectory against Dm resource", VerifiedHrAdmin, ResourceAction.AdminImportDirectory, new ResourceContext(ResourceKind.Dm, OrgA, ResourceRole.Owner), false];

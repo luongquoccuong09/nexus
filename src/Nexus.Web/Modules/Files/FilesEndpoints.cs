@@ -126,11 +126,16 @@ public static class FilesEndpoints
         var allowed = access is not null && authz.Can(
             actor.ToActorContext(),
             ResourceAction.FileUpload,
-            access.Resource);
+            access.Resource with { IsArchived = false });
 
         if (!allowed)
         {
             return Results.Forbid();
+        }
+
+        if (access!.Conversation.ArchivedAt is not null)
+        {
+            return Results.Conflict(new { code = "channel_archived", message = "This channel is archived and read-only." });
         }
 
         var policy = policyOptions.Value;

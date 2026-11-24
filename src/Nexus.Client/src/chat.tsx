@@ -166,9 +166,25 @@ async function readPages<Item, Cursor>(
 }
 
 export interface CommunityFeedDelta {
-  type: 'reaction' | 'comment' | 'pin' | 'ownership';
+  type:
+    | 'reaction'
+    | 'comment'
+    | 'pin'
+    | 'ownership'
+    | 'community_updated'
+    | 'channel_updated'
+    | 'channel_archived'
+    | 'channel_restored';
   postId?: string;
   communityId?: string;
+  channelId?: string;
+  name?: string;
+  description?: string | null;
+  updatedAt?: string;
+  archivedAt?: string | null;
+  archivedByUserId?: string | null;
+  restoredAt?: string | null;
+  restoredByUserId?: string | null;
   emoji?: string;
   userId?: string;
   reacted?: boolean;

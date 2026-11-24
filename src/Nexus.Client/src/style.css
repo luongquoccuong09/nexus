@@ -703,7 +703,9 @@ body {
 }
 
 .nx-community-stage-header .nx-inline-actions {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
 }
 
@@ -1738,9 +1740,47 @@ body {
 }
 
 .nx-channel-name {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.nx-channel-row.archived {
+  color: var(--text-muted);
+}
+
+.nx-channel-row .nx-badge {
+  flex-shrink: 0;
+}
+
+.nx-channel-desc {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.nx-archived-banner {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--text-primary);
+}
+
+.nx-archived-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.nx-archived-banner-text svg {
+  flex-shrink: 0;
+  color: var(--warning);
 }
 
 .nx-add-channel-btn {
@@ -2077,8 +2117,9 @@ body {
   text-align: left;
 }
 
-.nx-poll-opt-btn:hover { border-color: var(--brand-500); background: var(--bg-hover); }
-.nx-poll-opt-btn:active { transform: scale(0.99); background: var(--bg-active); }
+.nx-poll-opt-btn:hover:not(:disabled) { border-color: var(--brand-500); background: var(--bg-hover); }
+.nx-poll-opt-btn:active:not(:disabled) { transform: scale(0.99); background: var(--bg-active); }
+.nx-poll-opt-btn:disabled { cursor: default; opacity: 0.82; }
 .nx-poll-opt-btn.voted { border-color: var(--brand-600); font-weight: 600; }
 
 .nx-poll-opt-fill {
@@ -2137,8 +2178,9 @@ body {
   transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.14s ease, border-color 0.14s ease;
 }
 
-.nx-react-pill:hover { border-color: var(--brand-400); }
-.nx-react-pill:active { transform: scale(0.9); }
+.nx-react-pill:hover:not(:disabled) { border-color: var(--brand-400); }
+.nx-react-pill:active:not(:disabled) { transform: scale(0.9); }
+.nx-react-pill:disabled { cursor: default; opacity: 0.72; }
 .nx-react-pill.active {
   background: var(--brand-100);
   border-color: var(--brand-600);
@@ -3127,6 +3169,13 @@ body {
     padding: 6px;
     min-width: 32px;
     height: 32px;
+  }
+  .nx-community-stage-header .nx-inline-actions {
+    width: 100%;
+    gap: 4px;
+  }
+  .nx-community-stage-header .nx-btn.sm {
+    padding: 5px 8px;
   }
   .nx-avail-badge {
     font-size: 12px;

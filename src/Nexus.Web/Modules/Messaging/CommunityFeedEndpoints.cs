@@ -288,9 +288,15 @@ public static class CommunityFeedEndpoints
             hasNewer,
             nextCursor = hasMore ? PaginationGuard.EncodeCursor(new PostCursor(posts[^1].IsPinned, posts[^1].CreatedAt, posts[^1].Id)) : null,
             canPost = authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, access.Resource),
-            canManage = access.Resource.MembershipRole is ResourceRole.Owner or ResourceRole.Admin
+            canManage = access.Resource.MembershipRole is ResourceRole.Owner or ResourceRole.Admin,
+            isArchived = access.Conversation.ArchivedAt is not null,
+            archivedAt = access.Conversation.ArchivedAt,
+            channelDescription = access.Conversation.Description
         });
     }
+
+    private static IResult ChannelArchived() =>
+        Results.Conflict(new { code = "channel_archived", message = "This channel is archived and read-only." });
 
     private static async Task<IResult> HandleCreatePostAsync(
         HttpContext ctx,
@@ -308,9 +314,14 @@ public static class CommunityFeedEndpoints
         if (actor is null) return Results.Unauthorized();
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, conversationId, ct);
-        if (access is null || access.Community is null || !authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, access.Resource))
+        if (access is null || access.Community is null || !authz.Can(actor.ToActorContext(), ResourceAction.MessageSend, access.Resource with { IsArchived = false }))
         {
             return Results.Forbid();
+        }
+
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
         }
 
         var isManager = access.Resource.MembershipRole is ResourceRole.Owner or ResourceRole.Admin;
@@ -424,6 +435,11 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
+        }
+
         post.IsPinned = request.IsPinned;
         post.PinnedAt = request.IsPinned ? DateTimeOffset.UtcNow : null;
         post.PinnedByUserId = request.IsPinned ? actorId : null;
@@ -459,6 +475,11 @@ public static class CommunityFeedEndpoints
         if (access is null || access.Community is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
         {
             return Results.Forbid();
+        }
+
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
         }
 
         var body = (request.Body ?? string.Empty).Trim();
@@ -527,6 +548,11 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
+        }
+
         var now = DateTimeOffset.UtcNow;
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO post_reactions (post_id, user_id, emoji, created_at)
@@ -569,6 +595,11 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
+        }
+
         await db.PostReactions
             .Where(r => r.PostId == postId && r.UserId == actorId && r.Emoji == decodedEmoji)
             .ExecuteDeleteAsync(ct);
@@ -607,6 +638,11 @@ public static class CommunityFeedEndpoints
         if (access is null || access.Community is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
         {
             return Results.Forbid();
+        }
+
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -721,6 +757,11 @@ public static class CommunityFeedEndpoints
             return Results.Forbid();
         }
 
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
+        }
+
         var now = DateTimeOffset.UtcNow;
         var outstandingCount = await AnnouncementRecipients.Outstanding(db, access.Community, postId, now).CountAsync(ct);
         if (outstandingCount > 0)
@@ -782,6 +823,11 @@ public static class CommunityFeedEndpoints
         if (access is null || !authz.Can(actor.ToActorContext(), ResourceAction.ConversationRead, access.Resource))
         {
             return Results.Forbid();
+        }
+
+        if (access.Conversation.ArchivedAt is not null)
+        {
+            return ChannelArchived();
         }
 
         var validOptions = (JsonSerializer.Deserialize<List<PollOptionSpec>>(poll.OptionsJson, WebJson) ?? [])

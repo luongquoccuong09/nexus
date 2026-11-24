@@ -51,7 +51,8 @@ public static class CommunityAccessHelper
                 MembershipRole: cm?.Role,
                 IsOfficial: community.IsOfficial,
                 Visibility: community.Visibility,
-                PostingPolicy: conv.PostingPolicy);
+                PostingPolicy: conv.PostingPolicy,
+                IsArchived: conv.ArchivedAt is not null);
 
             return new ResolvedConversationAccess(conv, community, resource, VisibleFromSeq: 0);
         }

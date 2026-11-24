@@ -86,7 +86,8 @@ public sealed class NexusAuthorizationService : IAuthorizationService
                 resource.Visibility == Visibility.Public &&
                 (!resource.IsOfficial || actor.TrustLevel == TrustLevel.Verified),
 
-            ResourceAction.ChannelCreate =>
+            ResourceAction.ChannelCreate or
+            ResourceAction.CommunityManageSettings =>
                 resource.Kind is ResourceKind.Community or ResourceKind.CommunityChannel &&
                 IsResourceManager(resource.MembershipRole) &&
                 (!resource.IsOfficial || actor.TrustLevel == TrustLevel.Verified),
@@ -167,6 +168,11 @@ public sealed class NexusAuthorizationService : IAuthorizationService
     private static bool CanWriteConversation(ActorContext actor, ResourceContext resource)
     {
         if (!CanReadConversation(actor, resource))
+        {
+            return false;
+        }
+
+        if (resource.IsArchived)
         {
             return false;
         }

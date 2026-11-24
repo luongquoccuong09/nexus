@@ -94,7 +94,12 @@ export function useCursorList<T, Cursor = string>(
   const refresh = useCallback(() => load(), [load]);
   const loadMore = useCallback(() => load(true), [load]);
   const retry = useCallback(() => load(current.current.error?.append ?? false), [load]);
-  return { ...view, refresh, loadMore, retry };
+  const updateItems = useCallback((updater: (items: T[]) => T[]) => {
+    const nextItems = updater(current.current.items);
+    current.current = { ...current.current, items: nextItems };
+    setState(current.current);
+  }, []);
+  return { ...view, refresh, loadMore, retry, updateItems };
 }
 
 export function ListPaging({ loading, error, hasMore, onRetry, onMore, moreLabel = 'Load more' }: {

@@ -73,6 +73,7 @@ public enum ResourceAction
     CommunityDesignateOfficial,
     CommunityDiscoverAndJoin,
     ChannelCreate,
+    CommunityManageSettings,
     MentionChannelOrAll,
     CommunityAddOrRemoveMember,
     CommunityManageAdmins,
@@ -107,4 +108,5 @@ public sealed record ResourceContext(
     bool TargetIsOwner = false,
     bool TargetIsVerified = true,
     bool HasOtherMembers = false,
-    bool IsHrAuditScope = false);
+    bool IsHrAuditScope = false,
+    bool IsArchived = false);

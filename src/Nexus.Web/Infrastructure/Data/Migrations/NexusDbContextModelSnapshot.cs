@@ -464,6 +464,14 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("archived_at");
+
+                    b.Property<Guid?>("ArchivedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("archived_by_user_id");
+
                     b.Property<long>("ChangeSeq")
                         .HasColumnType("bigint")
                         .HasColumnName("change_seq");
@@ -479,6 +487,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.Property<Guid>("CreatedByUserId")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text")
+                        .HasColumnName("description");
 
                     b.Property<string>("DmKey")
                         .HasMaxLength(128)
@@ -524,6 +536,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ArchivedByUserId")
+                        .HasDatabaseName("ix_conversations_archived_by_user_id")
+                        .HasFilter("archived_by_user_id IS NOT NULL");
+
                     b.HasIndex("CreatedByUserId");
 
                     b.HasIndex("CommunityId", "IsCommunityMainFeed")
@@ -541,6 +557,12 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.ToTable("conversations", null, t =>
                         {
+                            t.HasCheckConstraint("ck_conversations_archived_by_consistent", "(archived_at IS NULL) = (archived_by_user_id IS NULL)");
+
+                            t.HasCheckConstraint("ck_conversations_channel_archive_invariants", "archived_at IS NULL OR (kind = 'Channel' AND is_community_main_feed = false)");
+
+                            t.HasCheckConstraint("ck_conversations_description_length", "description IS NULL OR char_length(description) <= 500");
+
                             t.HasCheckConstraint("ck_conversations_kind", "kind IN ('Dm', 'Group', 'Channel', 'Self')");
 
                             t.HasCheckConstraint("ck_conversations_self_invariants", "kind <> 'Self' OR (organization_id IS NULL AND community_id IS NULL AND dm_key = 'self:' || replace(created_by_user_id::text, '-', ''))");
@@ -2048,6 +2070,11 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.ConversationEntity", b =>
                 {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("ArchivedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Nexus.Web.Modules.Conversations.CommunityEntity", null)
                         .WithMany()
                         .HasForeignKey("CommunityId")
