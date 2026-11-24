@@ -1,5 +1,6 @@
 import { Download, FileText } from 'lucide-react';
-import { AttachmentItem, formatBytes } from './attachmentUtils';
+import { AttachmentItem, formatBytes, isAudioAttachment } from './attachmentUtils';
+import { VoiceNotePlayer } from '../voice/VoiceNotePlayer';
 
 export interface AttachmentGalleryProps {
   attachments: AttachmentItem[];
@@ -32,6 +33,15 @@ export function AttachmentGallery({ attachments, onPreviewImage }: AttachmentGal
               <Download size={14} aria-hidden="true" />
             </a>
           </div>
+        ) : att.audioUrl && isAudioAttachment(att) ? (
+          <VoiceNotePlayer
+            key={att.id}
+            fileName={att.fileName}
+            audioUrl={att.audioUrl}
+            downloadUrl={att.downloadUrl}
+            durationMs={att.durationMs}
+            sizeBytes={att.sizeBytes}
+          />
         ) : (
           <a key={att.id} href={att.downloadUrl} download={att.fileName} className="nx-att-file-card">
             <span className="nx-att-file-meta">

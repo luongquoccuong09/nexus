@@ -733,6 +733,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
                     b.Property<string>("FileName")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -829,6 +833,8 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.ToTable("attachments", null, t =>
                         {
+                            t.HasCheckConstraint("ck_attachments_duration_ms", "duration_ms IS NULL OR (duration_ms > 0 AND duration_ms <= 120000)");
+
                             t.HasCheckConstraint("ck_attachments_single_parent", "NOT (message_id IS NOT NULL AND post_id IS NOT NULL)");
                         });
                 });

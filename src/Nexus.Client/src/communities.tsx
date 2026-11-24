@@ -15,6 +15,7 @@ import {
   Link2,
   Lock,
   Megaphone,
+  Mic,
   Paperclip,
   Pencil,
   Plus,
@@ -61,6 +62,7 @@ import {
 
 const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
 const LazyPeopleTagsModal = lazy(() => import('./tags/PeopleTagsModal'));
+const LazyVoiceNoteRecorder = lazy(() => import('./voice/VoiceNoteRecorder'));
 
 export type { CommunityChannelDto, CommunityItemDto, DepartmentLite, DirectoryUserLite };
 
@@ -237,6 +239,8 @@ export function CommunitiesWorkspace({
   const [editChannelDesc, setEditChannelDesc] = useState('');
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [tagsModalOpen, setTagsModalOpen] = useState(false);
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
+  const voiceBtnWrapRef = useRef<HTMLSpanElement | null>(null);
   const [savingMeta, setSavingMeta] = useState(false);
   const savingMetaRef = useRef(false);
 
@@ -565,6 +569,7 @@ export function CommunitiesWorkspace({
   }, [communities, organizations, requestedChannel]);
 
   useEffect(() => {
+    setVoiceRecorderOpen(false);
     setPostsError(null);
     setLoadingMorePosts(false);
     setPostsHasNewer(false);
@@ -1255,6 +1260,97 @@ export function CommunitiesWorkspace({
       if (!controller.signal.aborted && activeFeedRef.current === targetConvId) {
         setError('Upload interrupted. Try attaching the file again.');
       }
+    } finally {
+      if (uploadControllerRef.current === controller) {
+        uploadControllerRef.current = null;
+        setUploadingFiles(false);
+      }
+    }
+  }
+
+  async function uploadPostVoiceNote(file: File, durationMs: number): Promise<{ ok: true } | { ok: false; error: string }> {
+    const targetConvId = selectedConversationId;
+    const targetOrgId = activeOrgId ?? (targetConvId ? communityOrgByConvRef.current.get(targetConvId) : undefined);
+    if (!targetConvId || !targetOrgId || !canPost || activeIsArchived) {
+      return { ok: false, error: 'You cannot attach a voice note to this channel right now.' };
+    }
+    if (uploadingFiles) {
+      return { ok: false, error: 'Please wait for the current upload to finish.' };
+    }
+    if (pendingAttachments.length >= 10) {
+      return { ok: false, error: 'You can attach up to 10 files per post.' };
+    }
+
+    setError('');
+    setQuotaWarning('');
+    const controller = new AbortController();
+    uploadControllerRef.current = controller;
+    setUploadingFiles(true);
+
+    try {
+      const csrfRes = await window.fetch('/api/auth/csrf', { signal: controller.signal });
+      const csrfData = csrfRes.ok ? await csrfRes.json().catch(() => ({})) : {};
+      const csrfToken = typeof csrfData.token === 'string' ? csrfData.token : '';
+
+      const form = new FormData();
+      form.append('clientUploadId', crypto.randomUUID());
+      form.append('file', file, file.name);
+      form.append('durationMs', String(durationMs));
+
+      const headers: Record<string, string> = {};
+      if (csrfToken) headers['X-CSRF-TOKEN'] = csrfToken;
+
+      const res = await orgFetch(targetOrgId, `/api/conversations/${targetConvId}/attachments`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers,
+        body: form,
+        signal: controller.signal
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (controller.signal.aborted || activeFeedRef.current !== targetConvId) {
+        return { ok: false, error: 'Upload cancelled.' };
+      }
+
+      if (!res.ok) {
+        surfaceArchivedConflictIfNeeded(res, data, targetConvId);
+        return { ok: false, error: data.message || 'Unable to upload voice note.' };
+      }
+
+      const rawAtt = (data.attachment ?? data) as Partial<AttachmentItem> & { width?: number | null; height?: number | null };
+      if (rawAtt?.id) {
+        const normalized: AttachmentItem = {
+          id: rawAtt.id,
+          conversationId: rawAtt.conversationId ?? targetConvId,
+          messageId: rawAtt.messageId ?? null,
+          postId: rawAtt.postId ?? null,
+          uploaderUserId: rawAtt.uploaderUserId ?? currentUserId,
+          clientUploadId: rawAtt.clientUploadId ?? '',
+          fileName: rawAtt.fileName ?? file.name,
+          contentType: rawAtt.contentType ?? file.type,
+          sizeBytes: typeof rawAtt.sizeBytes === 'number' ? rawAtt.sizeBytes : file.size,
+          sha256Hex: rawAtt.sha256Hex ?? '',
+          imageWidth: rawAtt.imageWidth ?? rawAtt.width ?? null,
+          imageHeight: rawAtt.imageHeight ?? rawAtt.height ?? null,
+          durationMs: rawAtt.durationMs ?? durationMs,
+          state: rawAtt.state ?? 'pending',
+          scanStatus: rawAtt.scanStatus ?? 'clean',
+          downloadUrl: rawAtt.downloadUrl ?? '',
+          thumbnailUrl: rawAtt.thumbnailUrl ?? null,
+          previewUrl: rawAtt.previewUrl ?? null,
+          audioUrl: rawAtt.audioUrl ?? null,
+          createdAt: rawAtt.createdAt ?? new Date().toISOString()
+        };
+        setPendingAttachments(prev => (prev.some(a => a.id === normalized.id) ? prev : [...prev, normalized]));
+      }
+      if (typeof data.quotaWarning === 'string' && data.quotaWarning) {
+        setQuotaWarning(data.quotaWarning);
+      }
+      return { ok: true };
+    } catch {
+      if (controller.signal.aborted) return { ok: false, error: 'Upload cancelled.' };
+      return { ok: false, error: 'Upload interrupted. Your recording is still ready to retry.' };
     } finally {
       if (uploadControllerRef.current === controller) {
         uploadControllerRef.current = null;
@@ -2562,6 +2658,21 @@ export function CommunitiesWorkspace({
                       </div>
                     )}
 
+                    {voiceRecorderOpen && canPost && !activeIsArchived && (
+                      <Suspense fallback={<div className="nx-voice-recorder-loading" role="status">Loading recorder…</div>}>
+                        <LazyVoiceNoteRecorder
+                          disabled={posting || uploadingFiles}
+                          onUpload={uploadPostVoiceNote}
+                          onClose={() => {
+                            setVoiceRecorderOpen(false);
+                            window.requestAnimationFrame(() => {
+                              voiceBtnWrapRef.current?.querySelector('button')?.focus();
+                            });
+                          }}
+                        />
+                      </Suspense>
+                    )}
+
                     {includePoll && (
                       <div className="nx-poll-builder">
                         <div className="nx-poll-builder-head">
@@ -2669,6 +2780,19 @@ export function CommunitiesWorkspace({
                         >
                           <Paperclip size={14} aria-hidden="true" /> Attach
                         </Button>
+                        <span ref={voiceBtnWrapRef}>
+                          <Button
+                            type="button"
+                            variant={voiceRecorderOpen ? 'primary' : 'ghost'}
+                            size="sm"
+                            aria-label="Record voice note"
+                            title="Record voice note"
+                            disabled={posting || uploadingFiles || pendingAttachments.length >= 10}
+                            onClick={() => setVoiceRecorderOpen(v => !v)}
+                          >
+                            <Mic size={14} aria-hidden="true" /> Voice
+                          </Button>
+                        </span>
                         <TagMentionPopover
                           organizationId={selectedCommunity.organizationId}
                           communityId={selectedCommunity.id}

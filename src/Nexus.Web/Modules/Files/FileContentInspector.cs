@@ -21,6 +21,45 @@ public static class FileContentInspector
     public const int MaxThumbnailEdgePx = 400;
     public const int MaxImageDimensionPx = 4096;
 
+    /// <summary>
+    /// Interim P0-D08 voice-note audio allowlist (M6.34).
+    /// </summary>
+    public static readonly IReadOnlySet<string> AllowedAudioContentTypes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "audio/webm",
+        "audio/ogg",
+        "audio/mp4"
+    };
+
+    private static readonly HashSet<string> AudioMp4Brands = new(StringComparer.Ordinal)
+    {
+        "M4A ",
+        "M4B ",
+        "mp42",
+        "isom",
+        "iso2",
+        "dash"
+    };
+
+    private static readonly byte[] WebmDocTypeAscii = "webm"u8.ToArray();
+    private static readonly byte[] OpusHeadAscii = "OpusHead"u8.ToArray();
+    private static readonly byte[] VorbisHeaderAscii = [0x01, (byte)'v', (byte)'o', (byte)'r', (byte)'b', (byte)'i', (byte)'s'];
+
+    public static string NormalizeContentType(string? rawContentType)
+    {
+        if (string.IsNullOrWhiteSpace(rawContentType))
+        {
+            return string.Empty;
+        }
+
+        var semi = rawContentType.IndexOf(';');
+        var core = semi >= 0 ? rawContentType[..semi] : rawContentType;
+        return core.Trim().ToLowerInvariant();
+    }
+
+    public static bool IsAllowedAudioContentType(string? contentType) =>
+        AllowedAudioContentTypes.Contains(NormalizeContentType(contentType));
+
     private static readonly Dictionary<string, string> ZipExtensionToMime = new(StringComparer.OrdinalIgnoreCase)
     {
         [".docx"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -80,6 +119,15 @@ public static class FileContentInspector
             return TryProcessImage(rawBytes, safeName, detectedImageMime, out payload, out error);
         }
 
+        // 1b. Short voice-note audio containers (M6.34 interim P0-D08 allowlist: WebM, OGG Opus/Vorbis, MP4/M4A)
+        var detectedAudioMime = DetectAudioMagicBytes(rawBytes);
+        if (detectedAudioMime is not null)
+        {
+            safeName = NormalizeAudioExtension(safeName, ext, detectedAudioMime);
+            payload = new InspectedFilePayload(safeName, detectedAudioMime, rawBytes, null, null, null);
+            return true;
+        }
+
         // 2. PDF (%PDF-)
         if (rawBytes.Length >= 5 &&
             rawBytes[0] == 0x25 && rawBytes[1] == 0x50 && rawBytes[2] == 0x44 && rawBytes[3] == 0x46 && rawBytes[4] == 0x2D)
@@ -120,7 +168,7 @@ public static class FileContentInspector
             return true;
         }
 
-        error = "Unsupported or unrecognized file type. Allowed: PNG, JPEG, WebP, GIF, PDF, TXT, CSV, DOCX, XLSX, PPTX, ZIP.";
+        error = "Unsupported or unrecognized file type. Allowed: PNG, JPEG, WebP, GIF, WebM/OGG/M4A audio, PDF, TXT, CSV, DOCX, XLSX, PPTX, ZIP.";
         return false;
     }
 
@@ -234,6 +282,84 @@ public static class FileContentInspector
         }
 
         return null;
+    }
+
+    private static string? DetectAudioMagicBytes(byte[] b)
+    {
+        // 1. WebM (EBML header 1A 45 DF A3 + ASCII "webm" DocType in EBML header window)
+        if (b.Length >= 16 &&
+            b[0] == 0x1A && b[1] == 0x45 && b[2] == 0xDF && b[3] == 0xA3)
+        {
+            var headerWindow = b.AsSpan(4, Math.Min(b.Length - 4, 60));
+            if (headerWindow.IndexOf(WebmDocTypeAscii) >= 0)
+            {
+                return "audio/webm";
+            }
+            return null;
+        }
+
+        // 2. OGG container (OggS + version 0x00 + OpusHead or Vorbis BOS codec signature)
+        if (b.Length >= 36 &&
+            b[0] == 0x4F && b[1] == 0x67 && b[2] == 0x67 && b[3] == 0x53 &&
+            b[4] == 0x00)
+        {
+            var codecWindow = b.AsSpan(28, Math.Min(b.Length - 28, 128));
+            if (codecWindow.IndexOf(OpusHeadAscii) >= 0 ||
+                codecWindow.IndexOf(VorbisHeaderAscii) >= 0)
+            {
+                return "audio/ogg";
+            }
+            return null;
+        }
+
+        // 3. ISO BMFF MP4 / M4A (ftyp box at offset 4 + audio-safe major or compatible brand)
+        if (b.Length >= 16 &&
+            b[4] == 0x66 && b[5] == 0x74 && b[6] == 0x79 && b[7] == 0x70)
+        {
+            var boxSize = ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
+            if (boxSize < 16 || boxSize > (uint)b.Length)
+            {
+                return null;
+            }
+
+            var majorBrand = Encoding.ASCII.GetString(b, 8, 4);
+            if (AudioMp4Brands.Contains(majorBrand))
+            {
+                return "audio/mp4";
+            }
+
+            var scanEnd = (int)Math.Min(boxSize, 64u);
+            for (var offset = 16; offset + 4 <= scanEnd; offset += 4)
+            {
+                var compatBrand = Encoding.ASCII.GetString(b, offset, 4);
+                if (AudioMp4Brands.Contains(compatBrand))
+                {
+                    return "audio/mp4";
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizeAudioExtension(string safeName, string ext, string canonicalMime)
+    {
+        return canonicalMime switch
+        {
+            "audio/webm" => string.Equals(ext, ".webm", StringComparison.OrdinalIgnoreCase)
+                ? safeName
+                : Path.ChangeExtension(safeName, ".webm"),
+            "audio/ogg" => ext.Equals(".ogg", StringComparison.OrdinalIgnoreCase) ||
+                           ext.Equals(".oga", StringComparison.OrdinalIgnoreCase) ||
+                           ext.Equals(".opus", StringComparison.OrdinalIgnoreCase)
+                ? safeName
+                : Path.ChangeExtension(safeName, ".ogg"),
+            "audio/mp4" => ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase) ||
+                           ext.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+                ? safeName
+                : Path.ChangeExtension(safeName, ".m4a"),
+            _ => safeName
+        };
     }
 
     private static bool HasExecutableSignature(byte[] b)

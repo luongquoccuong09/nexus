@@ -17,11 +17,13 @@ public sealed record AttachmentDto(
     string Sha256Hex,
     int? ImageWidth,
     int? ImageHeight,
+    int? DurationMs,
     string State,
     string ScanStatus,
     string DownloadUrl,
     string? ThumbnailUrl,
     string? PreviewUrl,
+    string? AudioUrl,
     DateTimeOffset CreatedAt);
 
 /// <summary>
@@ -41,6 +43,9 @@ public static class AttachmentProjection
     public static string BuildPreviewUrl(Guid? organizationId, Guid attachmentId) =>
         $"{OrganizationScope.ApiPath(organizationId)}/files/{attachmentId}/preview";
 
+    public static string BuildAudioUrl(Guid? organizationId, Guid attachmentId) =>
+        $"{OrganizationScope.ApiPath(organizationId)}/files/{attachmentId}/audio";
+
     public static bool IsMediaContentType(string? contentType) =>
         !string.IsNullOrEmpty(contentType) &&
         (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
@@ -50,6 +55,7 @@ public static class AttachmentProjection
     public static AttachmentDto ToAttachmentDto(AttachmentEntity a)
     {
         var hasThumb = !string.IsNullOrEmpty(a.ThumbnailObjectKey);
+        var isAudio = FileContentInspector.IsAllowedAudioContentType(a.ContentType);
         return new AttachmentDto(
             a.Id,
             a.ConversationId,
@@ -63,11 +69,13 @@ public static class AttachmentProjection
             a.Sha256Hex,
             a.ImageWidth,
             a.ImageHeight,
+            a.DurationMs,
             a.State.ToString().ToLowerInvariant(),
             a.ScanStatus,
             BuildDownloadUrl(a.OrganizationId, a.Id),
             hasThumb ? BuildThumbnailUrl(a.OrganizationId, a.Id) : null,
             hasThumb ? BuildPreviewUrl(a.OrganizationId, a.Id) : null,
+            isAudio ? BuildAudioUrl(a.OrganizationId, a.Id) : null,
             a.CreatedAt);
     }
 

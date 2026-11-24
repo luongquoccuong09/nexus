@@ -10,6 +10,14 @@ public sealed class FilePolicyOptions
     public const string SectionName = "NexusFiles";
 
     public long MaxFileSizeBytes { get; set; } = 10 * 1024 * 1024; // 10 MB default (aligned with Kestrel limit until D08 finalized)
+    /// <summary>
+    /// Interim P0-D08 voice-note payload size cap (5 MB, M6.34).
+    /// </summary>
+    public long MaxVoiceNoteBytes { get; set; } = 5 * 1024 * 1024; // 5 MB
+    /// <summary>
+    /// Interim P0-D08 voice-note maximum duration in seconds (120s = 2 minutes, M6.34).
+    /// </summary>
+    public int MaxVoiceNoteDurationSeconds { get; set; } = 120;
     public long PerUserQuotaBytes { get; set; } = 200 * 1024 * 1024; // 200 MB
     public long PerConversationQuotaBytes { get; set; } = 500 * 1024 * 1024; // 500 MB
     public double QuotaWarningRatio { get; set; } = 0.80;
@@ -33,6 +41,16 @@ public sealed class FilePolicyOptions
         if (MaxFileSizeBytes <= 0)
         {
             throw new InvalidOperationException("NexusFiles:MaxFileSizeBytes must be positive.");
+        }
+
+        if (MaxVoiceNoteBytes <= 0 || MaxVoiceNoteBytes > MaxFileSizeBytes)
+        {
+            throw new InvalidOperationException("NexusFiles:MaxVoiceNoteBytes must be positive and at most MaxFileSizeBytes.");
+        }
+
+        if (MaxVoiceNoteDurationSeconds is < 1 or > 600)
+        {
+            throw new InvalidOperationException("NexusFiles:MaxVoiceNoteDurationSeconds must be between 1 and 600.");
         }
 
         if (PerUserQuotaBytes <= 0 || PerConversationQuotaBytes <= 0)

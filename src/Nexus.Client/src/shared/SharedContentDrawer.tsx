@@ -1,6 +1,7 @@
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Download, ExternalLink, FileText, Globe, Image as ImageIcon, Link2, RefreshCw, Search, X } from 'lucide-react';
-import { AttachmentItem, formatBytes } from '../attachments/attachmentUtils';
+import { AttachmentItem, formatBytes, isAudioAttachment } from '../attachments/attachmentUtils';
+import { VoiceNotePlayer } from '../voice/VoiceNotePlayer';
 import { isSafeHttpUrl } from '../markdown';
 import { Badge, Button } from '../ui';
 import {
@@ -39,11 +40,13 @@ function toAttachmentItem(item: SharedContentItem): AttachmentItem {
     sha256Hex: '',
     imageWidth: item.imageWidth ?? item.width ?? null,
     imageHeight: item.imageHeight ?? item.height ?? null,
+    durationMs: item.durationMs ?? null,
     state: 'attached',
     scanStatus: 'clean',
     downloadUrl: item.downloadUrl ?? '',
     thumbnailUrl: item.thumbnailUrl ?? null,
     previewUrl: item.previewUrl ?? null,
+    audioUrl: item.audioUrl ?? null,
     createdAt: item.createdAt
   };
 }
@@ -411,6 +414,49 @@ export default function SharedContentDrawer({
           <div className="nx-shared-media-grid">
             {items.map(item => {
               const fileName = item.fileName ?? 'Media';
+              const isAudio = Boolean(item.audioUrl && isAudioAttachment({ contentType: item.contentType ?? '' }));
+              if (isAudio && item.audioUrl) {
+                return (
+                  <div className="nx-shared-media-tile nx-shared-audio-tile" key={item.id}>
+                    <VoiceNotePlayer
+                      fileName={fileName}
+                      audioUrl={item.audioUrl}
+                      downloadUrl={item.downloadUrl}
+                      durationMs={item.durationMs}
+                      sizeBytes={item.sizeBytes}
+                      compact
+                    />
+                    <div className="nx-shared-media-bar">
+                      <span className="nx-shared-media-name" title={fileName}>{fileName}</span>
+                      <div className="nx-shared-media-actions">
+                        {item.sourceLink && onOpenContentLink && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            aria-label={`${goLabel} for ${fileName}`}
+                            title={goLabel}
+                            onClick={() => handleJumpToSource(item.sourceLink!)}
+                          >
+                            <ExternalLink size={12} aria-hidden="true" />
+                          </Button>
+                        )}
+                        {item.downloadUrl && (
+                          <a
+                            href={item.downloadUrl}
+                            download={fileName}
+                            className="nx-btn sm icon-only"
+                            aria-label={`Download ${fileName}`}
+                            title={`Download ${fileName}`}
+                          >
+                            <Download size={12} aria-hidden="true" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
               const thumbSrc = item.thumbnailUrl ?? item.previewUrl ?? item.downloadUrl ?? '';
               return (
                 <div className="nx-shared-media-tile" key={item.id}>

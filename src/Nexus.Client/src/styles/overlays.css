@@ -1177,3 +1177,208 @@ body.dark .nx-shared-tab.active {
     max-width: none;
   }
 }
+
+/* ============================================================================
+   M6.34 Short Voice Notes — Recorder & Player
+   ============================================================================ */
+
+.nx-voice-recorder-loading {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+}
+
+.nx-voice-recorder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.nx-voice-recorder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nx-voice-recorder-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.nx-voice-recorder-error {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.nx-voice-recorder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.nx-voice-live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.nx-voice-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  animation: nx-voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes nx-voice-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-voice-pulse-dot {
+    animation: none;
+  }
+}
+
+.nx-voice-timer {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.nx-voice-preview-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nx-voice-preview-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+}
+
+.nx-voice-recorder-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.nx-voice-player {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  width: min(320px, 100%);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.nx-voice-player.compact {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+}
+
+.nx-voice-player-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nx-voice-player-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--brand-600);
+  flex-shrink: 0;
+}
+
+.nx-voice-player-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.nx-voice-player-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-voice-player-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.nx-voice-dl-btn {
+  flex-shrink: 0;
+}
+
+.nx-voice-audio {
+  width: 100%;
+  max-width: 100%;
+  height: 36px;
+  display: block;
+}
+
+.nx-shared-audio-tile {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 480px) {
+  .nx-voice-player {
+    width: 100%;
+  }
+  .nx-voice-recorder {
+    padding: 8px 10px;
+  }
+}

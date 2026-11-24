@@ -32,6 +32,7 @@ public sealed class AttachmentEntity
     public string? ThumbnailObjectKey { get; set; }
     public int? ImageWidth { get; set; }
     public int? ImageHeight { get; set; }
+    public int? DurationMs { get; set; }
     public AttachmentState State { get; set; } = AttachmentState.Pending;
     public required string ScanStatus { get; set; }
     public string? ScanDetail { get; set; }
@@ -48,6 +49,9 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
             table.HasCheckConstraint(
                 "ck_attachments_single_parent",
                 "NOT (message_id IS NOT NULL AND post_id IS NOT NULL)");
+            table.HasCheckConstraint(
+                "ck_attachments_duration_ms",
+                "duration_ms IS NULL OR (duration_ms > 0 AND duration_ms <= 120000)");
         });
         builder.HasKey(x => x.Id);
 
@@ -66,6 +70,7 @@ public sealed class AttachmentEntityConfiguration : IEntityTypeConfiguration<Att
         builder.Property(x => x.ThumbnailObjectKey).HasColumnName("thumbnail_object_key").HasMaxLength(256);
         builder.Property(x => x.ImageWidth).HasColumnName("image_width");
         builder.Property(x => x.ImageHeight).HasColumnName("image_height");
+        builder.Property(x => x.DurationMs).HasColumnName("duration_ms");
         builder.Property(x => x.State).HasColumnName("state").HasConversion<string>().HasMaxLength(24).IsRequired();
         builder.Property(x => x.ScanStatus).HasColumnName("scan_status").HasMaxLength(32).IsRequired();
         builder.Property(x => x.ScanDetail).HasColumnName("scan_detail").HasMaxLength(256);

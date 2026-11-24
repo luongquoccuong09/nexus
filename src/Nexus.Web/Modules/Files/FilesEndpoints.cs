@@ -67,6 +67,7 @@ public static class FilesEndpoints
         files.MapGet("/download", HandleDownloadAttachmentAsync);
         files.MapGet("/thumbnail", HandleGetThumbnailAsync);
         files.MapGet("/preview", HandleGetImagePreviewAsync);
+        files.MapGet("/audio", HandleGetAudioPlaybackAsync);
         files.MapPost("/signed-url", HandleCreateSignedUrlAsync);
 
         return app;
@@ -107,6 +108,7 @@ public static class FilesEndpoints
         var policy = policyOptions.Value;
         string clientUploadId;
         string originalFileName;
+        string rawDurationMs;
         byte[] rawBytes;
 
         if (ctx.Request.HasFormContentType)
@@ -116,6 +118,12 @@ public static class FilesEndpoints
             if (string.IsNullOrEmpty(clientUploadId))
             {
                 clientUploadId = ctx.Request.Headers["X-Client-Upload-Id"].ToString().Trim();
+            }
+
+            rawDurationMs = (form["durationMs"].ToString() ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(rawDurationMs))
+            {
+                rawDurationMs = ctx.Request.Headers["X-Audio-Duration-Ms"].ToString().Trim();
             }
 
             var formFile = form.Files.GetFile("file") ?? (form.Files.Count > 0 ? form.Files[0] : null);
@@ -139,6 +147,7 @@ public static class FilesEndpoints
         {
             clientUploadId = ctx.Request.Headers["X-Client-Upload-Id"].ToString().Trim();
             originalFileName = ctx.Request.Headers["X-File-Name"].ToString().Trim();
+            rawDurationMs = ctx.Request.Headers["X-Audio-Duration-Ms"].ToString().Trim();
             if (string.IsNullOrWhiteSpace(originalFileName))
             {
                 originalFileName = "upload.bin";
@@ -174,11 +183,43 @@ public static class FilesEndpoints
             return Results.Ok(new { attachment = ToDto(existing), quota = existingQuota });
         }
 
-        // Magic-byte validation + allowlist + image re-encoding & thumbnail generation (M3.2, M3.4)
+        // Magic-byte validation + allowlist + image re-encoding & thumbnail generation (M3.2, M3.4, M6.34)
         if (!FileContentInspector.TryInspectAndProcess(rawBytes, originalFileName, policy.MaxFileSizeBytes, out var inspected, out var inspectError) ||
             inspected is null)
         {
             return Results.BadRequest(new { code = "invalid_file_type", message = inspectError });
+        }
+
+        int? validatedDurationMs = null;
+        if (FileContentInspector.IsAllowedAudioContentType(inspected.CanonicalContentType))
+        {
+            if (inspected.ProcessedBytes.LongLength > policy.MaxVoiceNoteBytes)
+            {
+                return Results.Json(
+                    new
+                    {
+                        code = "voice_note_too_large",
+                        message = $"Voice note exceeds maximum size of {policy.MaxVoiceNoteBytes / (1024 * 1024)} MB."
+                    },
+                    statusCode: StatusCodes.Status413PayloadTooLarge);
+            }
+
+            if (!string.IsNullOrEmpty(rawDurationMs))
+            {
+                var maxDurationMs = policy.MaxVoiceNoteDurationSeconds * 1000;
+                if (!int.TryParse(rawDurationMs, out var parsedDurationMs) ||
+                    parsedDurationMs < 1 ||
+                    parsedDurationMs > maxDurationMs)
+                {
+                    return Results.BadRequest(new
+                    {
+                        code = "invalid_voice_note_duration",
+                        message = $"Voice note duration must be between 1 and {maxDurationMs} ms."
+                    });
+                }
+
+                validatedDurationMs = parsedDurationMs;
+            }
         }
 
         // Enforce per-user and per-conversation storage quotas (M3.5)
@@ -296,6 +337,7 @@ public static class FilesEndpoints
             ThumbnailObjectKey = savedThumb?.ObjectKey,
             ImageWidth = inspected.ImageWidth,
             ImageHeight = inspected.ImageHeight,
+            DurationMs = validatedDurationMs,
             State = AttachmentState.Pending,
             ScanStatus = scanResult.StatusCode,
             ScanDetail = scanResult.Detail is null ? null : scanResult.Detail[..Math.Min(scanResult.Detail.Length, 256)],
@@ -435,12 +477,14 @@ public static class FilesEndpoints
                     imageHeight = dto.ImageHeight,
                     width = dto.ImageWidth,
                     height = dto.ImageHeight,
+                    durationMs = dto.DurationMs,
                     hasThumbnail = dto.ThumbnailUrl is not null,
                     state = dto.State,
                     scanStatus = dto.ScanStatus,
                     downloadUrl = dto.DownloadUrl,
                     thumbnailUrl = dto.ThumbnailUrl,
                     previewUrl = dto.PreviewUrl,
+                    audioUrl = dto.AudioUrl,
                     sourceLink = ContentLinkCodec.Encode("p", actor.OrganizationId, conversationId, x.PostId),
                     createdAt = dto.CreatedAt
                 };
@@ -609,6 +653,64 @@ public static class FilesEndpoints
         return Results.Empty;
     }
 
+    private static async Task<IResult> HandleGetAudioPlaybackAsync(
+        HttpContext ctx,
+        Guid attachmentId,
+        [FromServices] NexusDbContext db,
+        IAuthorizationService authz,
+        IFileStorage storage,
+        IOptions<FilePolicyOptions> policyOptions,
+        CancellationToken ct)
+    {
+        var (attachment, errorResult) = await AuthorizeAttachmentReadAsync(ctx, attachmentId, db, authz, ct);
+        if (errorResult is not null || attachment is null)
+        {
+            return errorResult ?? Results.Forbid();
+        }
+
+        // Inline playback is strictly restricted to allowlisted voice-note audio types (M6.34, SEC-11)
+        if (!FileContentInspector.IsAllowedAudioContentType(attachment.ContentType))
+        {
+            return Results.BadRequest(new
+            {
+                code = "audio_only",
+                message = "Inline audio playback is only supported for allowlisted voice-note audio types."
+            });
+        }
+
+        var stream = await storage.OpenReadAsync(attachment.ObjectKey, ct);
+        if (stream is null)
+        {
+            return Results.NotFound(new { code = "file_not_found" });
+        }
+
+        Stream playbackStream = stream;
+        if (!stream.CanSeek)
+        {
+            // Non-seekable storage streams (e.g. SupabaseFileStorage) are buffered up to MaxVoiceNoteBytes
+            // so HTTP Range seeking (206 Partial Content) works identically across Chrome & WebView2.
+            await using (stream)
+            {
+                var maxBytes = policyOptions.Value.MaxVoiceNoteBytes;
+                var buffered = await ReadBoundedBytesAsync(stream, maxBytes, ct);
+                if (buffered.LongLength > maxBytes)
+                {
+                    return Results.StatusCode(StatusCodes.Status500InternalServerError);
+                }
+                playbackStream = new MemoryStream(buffered, writable: false);
+            }
+        }
+
+        ctx.Response.Headers.ContentDisposition = StorageKeyHelper.BuildContentDisposition("inline", attachment.FileName);
+        ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        ctx.Response.Headers.CacheControl = "private, no-store";
+
+        return Results.File(
+            playbackStream,
+            contentType: attachment.ContentType,
+            enableRangeProcessing: true);
+    }
+
     private static async Task<IResult> HandleCreateSignedUrlAsync(
         HttpContext ctx,
         Guid attachmentId,
@@ -664,7 +766,9 @@ public static class FilesEndpoints
         var attachment = await db.Attachments.AsNoTracking()
             .SingleOrDefaultAsync(a => a.Id == attachmentId && a.OrganizationId == db.ConversationOrganizationId, ct);
 
-        if (attachment is null || attachment.State is AttachmentState.Quarantined or AttachmentState.Rejected)
+        if (attachment is null ||
+            attachment.State is AttachmentState.Quarantined or AttachmentState.Rejected ||
+            attachment.ScanStatus is not ("clean" or "skipped_prototype"))
         {
             return (null, Results.Forbid());
         }
@@ -686,15 +790,17 @@ public static class FilesEndpoints
             return (null, Results.Forbid());
         }
 
-        // Enforce visible_from_seq on attached files so rejoined members cannot download pre-join files (SEC-04 / SEC-18)
-        if (attachment.MessageId.HasValue && access!.VisibleFromSeq > 0)
+        // Enforce soft-delete & visible_from_seq on attached message files (SEC-04 / SEC-18)
+        if (attachment.MessageId.HasValue)
         {
             var msgSeq = await db.Messages.AsNoTracking()
-                .Where(m => m.Id == attachment.MessageId.Value)
+                .Where(m => m.Id == attachment.MessageId.Value &&
+                            m.ConversationId == attachment.ConversationId &&
+                            m.DeletedAt == null)
                 .Select(m => (long?)m.Seq)
                 .SingleOrDefaultAsync(ct);
 
-            if (!msgSeq.HasValue || msgSeq.Value <= access.VisibleFromSeq)
+            if (!msgSeq.HasValue || (access!.VisibleFromSeq > 0 && msgSeq.Value <= access.VisibleFromSeq))
             {
                 return (null, Results.Forbid());
             }

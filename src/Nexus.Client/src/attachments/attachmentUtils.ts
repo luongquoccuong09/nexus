@@ -11,11 +11,13 @@ export interface AttachmentItem {
   sha256Hex: string;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  durationMs?: number | null;
   state: string;
   scanStatus: string;
   downloadUrl: string;
   thumbnailUrl?: string | null;
   previewUrl?: string | null;
+  audioUrl?: string | null;
   createdAt: string;
 }
 

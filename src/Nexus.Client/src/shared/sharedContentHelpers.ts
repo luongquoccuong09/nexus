@@ -28,10 +28,12 @@ export interface SharedContentItem {
   height?: number | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  durationMs?: number | null;
   hasThumbnail?: boolean;
   downloadUrl?: string | null;
   thumbnailUrl?: string | null;
   previewUrl?: string | null;
+  audioUrl?: string | null;
   // Links fields
   url?: string | null;
   host?: string | null;

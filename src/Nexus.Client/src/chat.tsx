@@ -1,7 +1,7 @@
 import { chatFetch as fetch, messagingHub, personalApiPath, protectedRequest } from "./scope";
 import { ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as signalR from '@microsoft/signalr';
-import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
+import { ArrowLeft, Ban, Bookmark, ChevronDown, ChevronRight, Eye, FileText, Flag, FolderOpen, FolderPlus, Link2, MessageSquare, Mic, MoreVertical, Paperclip, Plus, Search, Send, Star, Users, X } from 'lucide-react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
 import { AttachmentItem, StorageQuotaSummary, formatBytes } from './attachments/attachmentUtils';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
@@ -51,6 +51,7 @@ import {
 } from './chat/types';
 
 const LazySharedContentDrawer = lazy(() => import('./shared/SharedContentDrawer'));
+const LazyVoiceNoteRecorder = lazy(() => import('./voice/VoiceNoteRecorder'));
 
 export type {
   AttachmentItem,
@@ -237,6 +238,8 @@ export function ChatWorkspace({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const compositionActive = useRef(false);
   const [linkTriggerSignal, setLinkTriggerSignal] = useState(0);
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
+  const voiceBtnWrapRef = useRef<HTMLSpanElement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingTimerRef = useRef<number | null>(null);
@@ -580,6 +583,57 @@ export function ChatWorkspace({
     }
   }, [changeDraft, loadingDraft, selectedConversationId]);
 
+  const uploadVoiceNoteToConversation = useCallback(async (file: File, durationMs: number): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const target = selectedConversationId;
+    if (!target || loadingDraft || staging.current.has(target) || uploadRequests.current.has(target)) {
+      return { ok: false, error: 'Please wait for the current upload to finish.' };
+    }
+    setError('');
+    const controller = new AbortController();
+    uploadRequests.current.set(target, controller);
+    setUploads(new Set(uploadRequests.current.keys()));
+    try {
+      const csrfRes = await window.fetch('/api/auth/csrf', { signal: controller.signal });
+      const csrfData = csrfRes.ok ? await csrfRes.json().catch(() => ({})) : {};
+      const csrfToken = typeof csrfData.token === 'string' ? csrfData.token : '';
+
+      const form = new FormData();
+      form.append('clientUploadId', generateClientMsgId());
+      form.append('file', file, file.name);
+      form.append('durationMs', String(durationMs));
+
+      const headers: Record<string, string> = {};
+      if (csrfToken) headers['X-CSRF-TOKEN'] = csrfToken;
+
+      const res = await fetch(`/api/conversations/${target}/attachments`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers,
+        body: form,
+        signal: controller.signal
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (controller.signal.aborted) return { ok: false, error: 'Upload cancelled.' };
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Unable to upload voice note.' };
+      }
+      if (data.attachment) {
+        const { id, fileName, sizeBytes, thumbnailUrl } = data.attachment as AttachmentItem;
+        changeDraft(target, current => ({
+          attachments: [...current.attachments, { id, fileName, sizeBytes, thumbnailUrl }]
+        }));
+      }
+      return { ok: true };
+    } catch {
+      if (controller.signal.aborted) return { ok: false, error: 'Upload cancelled.' };
+      return { ok: false, error: 'Upload interrupted. Your recording is still ready to retry.' };
+    } finally {
+      uploadRequests.current.delete(target);
+      setUploads(new Set(uploadRequests.current.keys()));
+    }
+  }, [changeDraft, loadingDraft, selectedConversationId]);
+
   const syncConversationDelta = useCallback(async (convId: string) => {
     let cursor = cursorCacheRef.current.get(convId) ?? await getConversationCursor(offlineScope, convId);
     if (cursor > 0) cursorCacheRef.current.set(convId, cursor);
@@ -810,6 +864,7 @@ export function ChatWorkspace({
 
   useEffect(() => {
     setRightDrawer('none');
+    setVoiceRecorderOpen(false);
     setOwnershipTransfer(null);
     compositionActive.current = false;
     setMoreMenuOpen(false);
@@ -2177,8 +2232,24 @@ export function ChatWorkspace({
                 ariaLabel="Message formatting"
               />
 
+              {voiceRecorderOpen && !blockedPeer && (
+                <Suspense fallback={<div className="nx-voice-recorder-loading" role="status">Loading recorder…</div>}>
+                  <LazyVoiceNoteRecorder
+                    disabled={loadingDraft || uploadingFiles}
+                    onUpload={uploadVoiceNoteToConversation}
+                    onClose={() => {
+                      setVoiceRecorderOpen(false);
+                      window.requestAnimationFrame(() => {
+                        voiceBtnWrapRef.current?.querySelector('button')?.focus();
+                      });
+                    }}
+                  />
+                </Suspense>
+              )}
+
               <div className="nx-composer-box">
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   iconOnly
@@ -2189,6 +2260,20 @@ export function ChatWorkspace({
                 >
                   <Paperclip size={16} aria-hidden="true" />
                 </Button>
+                <span ref={voiceBtnWrapRef}>
+                  <Button
+                    type="button"
+                    variant={voiceRecorderOpen ? 'primary' : 'ghost'}
+                    size="sm"
+                    iconOnly
+                    aria-label="Record voice note"
+                    title="Record voice note"
+                    disabled={blockedPeer || loadingDraft || uploadingFiles}
+                    onClick={() => setVoiceRecorderOpen(v => !v)}
+                  >
+                    <Mic size={16} aria-hidden="true" />
+                  </Button>
+                </span>
                 <textarea
                   ref={composerRef}
                   rows={1}

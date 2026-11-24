@@ -386,10 +386,12 @@ public static class SharedContentEndpoints
             sizeBytes = dto.SizeBytes,
             width = dto.ImageWidth,
             height = dto.ImageHeight,
+            durationMs = dto.DurationMs,
             hasThumbnail = dto.ThumbnailUrl is not null,
             downloadUrl = dto.DownloadUrl,
             thumbnailUrl = dto.ThumbnailUrl,
-            previewUrl = dto.PreviewUrl
+            previewUrl = dto.PreviewUrl,
+            audioUrl = dto.AudioUrl
         };
     }
 
