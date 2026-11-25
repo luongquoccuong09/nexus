@@ -12,6 +12,7 @@ using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Monitor;
 using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Calendar;
+using Nexus.Web.Modules.Calls;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 using Serilog.Core;
@@ -41,6 +42,8 @@ public static class NexusHost
         builder.Services.AddScoped<MeetingsAccess>();
         builder.Services.AddScoped<MeetingRevocations>();
         builder.Services.AddHostedService<MeetingReconciliationService>();
+        builder.Services.AddScoped<DirectCallLifecycle>();
+        builder.Services.AddHostedService<DirectCallReconciliationService>();
         builder.Services.AddKeyedScoped<IOutboxHandler, AnnouncementReminderHandler>(AnnouncementReminderHandler.Kind);
         builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.MessageKind);
         builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.PostKind);
@@ -99,6 +102,7 @@ public static class NexusHost
         app.MapCalendar(OrganizationScope.PersonalApi);
         app.MapMeetings(OrganizationScope.Api);
         app.MapMeetings(OrganizationScope.PersonalApi);
+        app.MapDirectCalls();
         app.MapOrganizations();
         app.MapPersonalConnections();
         app.MapOrgEndpoints();

@@ -13,6 +13,8 @@ import { ConversationNotificationButton } from './notificationPreferences';
 import { useChatDrafts } from './chatDrafts';
 import { useChatReading } from './chatReading';
 import ConversationMeetingButton from './meetings/ConversationMeetingButton';
+import DirectCallButtons from './calls/DirectCallButtons';
+import { useDirectCall } from './calls/DirectCallProvider';
 import { shouldSendOnEnter } from './composerKeys';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
 import {
@@ -230,6 +232,7 @@ export function ChatWorkspace({
   onAvailabilityChanged,
   onOpenProfileCard
 }: ChatWorkspaceProps) {
+  const { receive: receiveDirectCall, available: callsAvailable } = useDirectCall();
   const offlineScope = `${currentUserId}:personal`;
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [moreConversations, setMoreConversations] = useState(false);
@@ -1397,6 +1400,8 @@ export function ChatWorkspace({
       confirmBookmark(event.conversationId, { ...event, type: 'message_save' });
     });
 
+    connection.on('DirectCallChanged', receiveDirectCall);
+
     connection.on('CommunityFeedChanged', (evt: { conversationId: string; delta?: CommunityFeedDelta | null }) => {
       communityFeedCbRef.current(evt.conversationId, evt.delta ?? null);
     });
@@ -1488,7 +1493,7 @@ export function ChatWorkspace({
       refresh.queued = false;
       void connection.stop();
     };
-  }, [applyConfirmedMutation, applyDmReadReceipt, confirmBookmark, dispatchThreadDelta, loadGroupMembers, scheduleConversationRefresh, updateThreadState]);
+  }, [applyConfirmedMutation, applyDmReadReceipt, confirmBookmark, dispatchThreadDelta, loadGroupMembers, receiveDirectCall, scheduleConversationRefresh, updateThreadState]);
 
   async function sendCurrentMessage() {
     const conversationId = selectedConversationId;
@@ -2493,7 +2498,7 @@ export function ChatWorkspace({
           />
         ) : (
           <>
-            <header className="nx-stage-header">
+            <header className={`nx-stage-header${activeConv.kind === 'dm' && !blockedPeer && callsAvailable ? ' nx-stage-direct-call' : ''}`}>
               <div className="nx-stage-title">
                 <Button
                   variant="ghost"
@@ -2577,6 +2582,8 @@ export function ChatWorkspace({
               </div>
 
               <div className="nx-inline-actions nx-stage-actions">
+                {activeConv.kind === 'dm' && !blockedPeer && <DirectCallButtons organizationId={null}
+                  conversationId={activeConv.id} peerName={activeConv.title} />}
                 {!isSelfConv && !blockedPeer && <ConversationMeetingButton key={`meeting:${activeConv.id}`} organizationId={null}
                   conversationId={activeConv.id} title={activeConv.title} visible={visible} />}
                 {!isSelfConv && (

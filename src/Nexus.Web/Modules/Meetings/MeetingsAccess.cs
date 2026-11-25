@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Calendar;
+using Nexus.Web.Modules.Calls;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Org;
 
@@ -32,7 +33,7 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
             return false;
 
         var actor = await FindActorAsync(grant.UserId, room.OrganizationId, ct);
-        return actor is not null && await CanJoinAsync(room, actor, ct);
+        return actor is not null && await CanJoinAsync(room, actor, ct, sessionId);
     }
 
     internal Task<bool> IsActiveSessionAsync(Guid userId, string sessionId, CancellationToken ct)
@@ -68,7 +69,7 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
             : null;
     }
 
-    internal async Task<bool> CanJoinAsync(MeetingEntity room, OrganizationMembership actor, CancellationToken ct)
+    internal async Task<bool> CanJoinAsync(MeetingEntity room, OrganizationMembership actor, CancellationToken ct, string? sessionId = null)
     {
         if (room.EndedAt is not null ||
             !authz.Can(actor.ToActorContext(), ResourceAction.MeetingJoin, Resource(room, actor.Id)) ||
@@ -79,11 +80,21 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
             return await CalendarAccess.VisibleTo(db, actor.Id).AnyAsync(item => item.Id == eventId &&
                 item.OrganizationId == room.OrganizationId && item.IsOnlineMeeting && item.CanceledAt == null, ct);
 
+        if (room.DirectCallId is { } callId)
+        {
+            var call = await DirectCallAccess.Eligible(db).SingleOrDefaultAsync(item => item.Id == callId &&
+                item.OrganizationId == room.OrganizationId && item.State == DirectCallState.Accepted, ct);
+            if (call is null || !DirectCallAccess.MatchesSession(call, actor.Id, sessionId)) return false;
+            var peer = call.CallerId == actor.Id ? call.CalleeId : call.CallerId;
+            var peerSession = call.CallerId == actor.Id ? call.CalleeSessionId : call.CallerSessionId;
+            return peerSession is not null && await IsActiveSessionAsync(peer, peerSession, ct);
+        }
+
         return room.ConversationId is { } conversationId && await FindConversationAsync(conversationId, actor, false, ct) is not null;
     }
 
     internal bool CanManage(MeetingEntity room, OrganizationMembership actor) =>
-        authz.Can(actor.ToActorContext(), ResourceAction.MeetingManage, Resource(room, actor.Id));
+        room.DirectCallId is null && authz.Can(actor.ToActorContext(), ResourceAction.MeetingManage, Resource(room, actor.Id));
 
     private static ResourceContext Resource(MeetingEntity room, Guid actorId) =>
         new(ResourceKind.Meeting, room.OrganizationId ?? Guid.Empty, ResourceRole.Member, TargetIsOwner: room.HostId == actorId);

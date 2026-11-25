@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Modules.Calendar;
+using Nexus.Web.Modules.Calls;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Org;
@@ -14,6 +15,7 @@ public sealed class MeetingEntity
     public Guid? OrganizationId { get; set; }
     public Guid? CalendarEventId { get; set; }
     public Guid? ConversationId { get; set; }
+    public Guid? DirectCallId { get; set; }
     public Guid HostId { get; set; }
     public required string Title { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -48,12 +50,13 @@ internal sealed class MeetingConfiguration : IEntityTypeConfiguration<MeetingEnt
     public void Configure(EntityTypeBuilder<MeetingEntity> builder)
     {
         builder.ToTable("meetings", table => table.HasCheckConstraint(
-            "ck_meetings_single_source", "(calendar_event_id IS NULL) <> (conversation_id IS NULL)"));
+            "ck_meetings_single_source", "num_nonnulls(calendar_event_id, conversation_id, direct_call_id) = 1"));
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("id");
         builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.CalendarEventId).HasColumnName("calendar_event_id");
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id");
+        builder.Property(x => x.DirectCallId).HasColumnName("direct_call_id");
         builder.Property(x => x.HostId).HasColumnName("host_id");
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(160);
         builder.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -63,8 +66,10 @@ internal sealed class MeetingConfiguration : IEntityTypeConfiguration<MeetingEnt
         builder.HasOne<OrganizationEntity>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<CalendarEventEntity>().WithMany().HasForeignKey(x => x.CalendarEventId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<ConversationEntity>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<DirectCallEntity>().WithMany().HasForeignKey(x => x.DirectCallId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.HostId).OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => x.CalendarEventId).IsUnique().HasDatabaseName("ux_meetings_calendar_event");
+        builder.HasIndex(x => x.DirectCallId).IsUnique().HasDatabaseName("ux_meetings_direct_call");
         builder.HasIndex(x => x.ConversationId);
         builder.HasIndex(x => new { x.ConversationId, x.EndedAt }).IsUnique().AreNullsDistinct(false)
             .HasFilter("conversation_id IS NOT NULL AND ended_at IS NULL")

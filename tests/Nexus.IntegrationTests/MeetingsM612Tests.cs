@@ -223,7 +223,9 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         await ValidateSignalAsync(organizer, hostGrant, HttpStatusCode.OK);
     }
 
-    private async Task<WebApplication> StartHostAsync(Uri providerAddress)
+    private Task<WebApplication> StartHostAsync(Uri providerAddress) => StartHostAsync(postgres, providerAddress);
+
+    internal static async Task<WebApplication> StartHostAsync(PostgresContainerFixture postgres, Uri providerAddress)
     {
         var app = NexusHost.Build([
             "--urls", "http://127.0.0.1:0", "--environment", "Development", "--NexusDatabase:RequireTls=false",
@@ -239,22 +241,22 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
     private static Uri Address(WebApplication app) => new(Assert.Single(
         app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses));
 
-    private static string OrgApi(Guid organizationId) => $"/api/organizations/{organizationId}";
+    internal static string OrgApi(Guid organizationId) => $"/api/organizations/{organizationId}";
     private static string NewKey() => Guid.NewGuid().ToString("N");
     private static string Username(string role) => $"meet_{role}_{NewKey()[..8]}";
-    private static Guid Id(JsonElement element) => element.GetProperty("id").GetGuid();
+    internal static Guid Id(JsonElement element) => element.GetProperty("id").GetGuid();
     private static Guid MeetingId(JsonElement element) => element.GetProperty("meetingId").GetGuid();
 
-    private static async Task<Guid> CreateOrgAsync(BrowserClient client, string name) =>
+    internal static async Task<Guid> CreateOrgAsync(BrowserClient client, string name) =>
         Id(await client.SendAsync(HttpMethod.Post, "/api/organizations", new { name }, HttpStatusCode.Created));
 
-    private static async Task JoinOrgAsync(BrowserClient owner, BrowserClient joiner, Guid org)
+    internal static async Task JoinOrgAsync(BrowserClient owner, BrowserClient joiner, Guid org)
     {
         var invitation = await owner.SendAsync(HttpMethod.Post, $"{OrgApi(org)}/invitations", new { });
         await joiner.SendAsync(HttpMethod.Post, "/api/organizations/invitations/redeem", new { token = invitation.GetProperty("token").GetString() });
     }
 
-    private static async Task AcceptContactAsync(BrowserClient sender, BrowserClient recipient, string username)
+    internal static async Task AcceptContactAsync(BrowserClient sender, BrowserClient recipient, string username)
     {
         const string requests = $"{PersonalApi}/contacts/requests";
         await sender.SendAsync(HttpMethod.Post, requests, new { username }, HttpStatusCode.Accepted);
@@ -268,10 +270,10 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
             title = "Review meeting", startUtc = date, endUtc = date.AddHours(1), timeZone = "UTC", attendeeIds = invitees, isOnlineMeeting = true
         }, HttpStatusCode.Created, NewKey()));
 
-    private static async Task<Grant> JoinAsync(BrowserClient client, string path) =>
+    internal static async Task<Grant> JoinAsync(BrowserClient client, string path) =>
         (await client.SendAsync(HttpMethod.Post, path, requireNoStore: true)).Deserialize<Grant>(JsonOptions)!;
 
-    private static TokenClaims ReadClaims(Grant grant)
+    internal static TokenClaims ReadClaims(Grant grant)
     {
         var encoded = grant.Token.Split('.')[1].Replace('-', '+').Replace('_', '/');
         using var claims = JsonDocument.Parse(Convert.FromBase64String(encoded.PadRight((encoded.Length + 3) / 4 * 4, '=')));
@@ -285,7 +287,7 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
             DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64()));
     }
 
-    private static async Task ValidateSignalAsync(BrowserClient client, Grant grant, HttpStatusCode expected, string? origin = null)
+    internal static async Task ValidateSignalAsync(BrowserClient client, Grant grant, HttpStatusCode expected, string? origin = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, SignalUri(client.BaseAddress, grant, "/rtc/validate"));
         request.Headers.Add("Origin", origin ?? client.BaseAddress.GetLeftPart(UriPartial.Authority));
@@ -293,7 +295,7 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         Assert.Equal(expected, response.StatusCode);
     }
 
-    private static async Task<ClientWebSocket> OpenSignalAsync(BrowserClient client, Grant grant, string path)
+    internal static async Task<ClientWebSocket> OpenSignalAsync(BrowserClient client, Grant grant, string path)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         var socket = Socket(client);
@@ -321,7 +323,7 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         Assert.Equal(HttpStatusCode.Unauthorized, socket.HttpStatusCode);
     }
 
-    private static async Task AssertSocketClosedAsync(ClientWebSocket socket)
+    internal static async Task AssertSocketClosedAsync(ClientWebSocket socket)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         try
@@ -350,10 +352,10 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
     private static Uri SignalUri(Uri address, Grant grant, string suffix) =>
         new(address, $"{grant.SignalPath.TrimEnd('/')}{suffix}?access_token={Uri.EscapeDataString(grant.Token)}");
 
-    private sealed record Grant(Guid MeetingId, Guid? OrganizationId, Guid GrantId, string SignalPath, string Token, bool CanManage);
-    private sealed record TokenClaims(Guid Subject, string Room, DateTimeOffset ExpiresAt);
+    internal sealed record Grant(Guid MeetingId, Guid? OrganizationId, Guid GrantId, string SignalPath, string Token, bool CanManage);
+    internal sealed record TokenClaims(Guid Subject, string Room, DateTimeOffset ExpiresAt);
 
-    private sealed class BrowserClient(WebApplication app) : IDisposable
+    internal sealed class BrowserClient(WebApplication app) : IDisposable
     {
         public Uri BaseAddress { get; } = Address(app);
         public CookieContainer Cookies { get; } = new();
@@ -389,14 +391,20 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         public async Task<JsonElement> SendAsync(HttpMethod verb, string path, object? body = null,
             HttpStatusCode expected = HttpStatusCode.OK, string? key = null, bool requireNoStore = false)
         {
-            var csrf = (await GetAsync("/api/auth/csrf")).GetProperty("token").GetString();
-            using var request = new HttpRequestMessage(verb, path) { Content = body is null ? null : JsonContent.Create(body) };
-            request.Headers.Add("X-CSRF-TOKEN", csrf);
-            if (key is not null) request.Headers.Add("Idempotency-Key", key);
+            using var request = await CreateRequestAsync(verb, path, body, key);
             using var response = await Http.SendAsync(request);
             Assert.Equal(expected, response.StatusCode);
             if (requireNoStore) Assert.True(response.Headers.CacheControl?.NoStore);
             return await ReadJsonAsync(response);
+        }
+
+        internal async Task<HttpRequestMessage> CreateRequestAsync(HttpMethod verb, string path, object? body = null, string? key = null)
+        {
+            var csrf = (await GetAsync("/api/auth/csrf")).GetProperty("token").GetString();
+            var request = new HttpRequestMessage(verb, path) { Content = body is null ? null : JsonContent.Create(body) };
+            request.Headers.Add("X-CSRF-TOKEN", csrf);
+            if (key is not null) request.Headers.Add("Idempotency-Key", key);
+            return request;
         }
 
         private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
@@ -406,7 +414,7 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         public void Dispose() => _http?.Dispose();
     }
 
-    private sealed class ProviderFixture(WebApplication app) : IAsyncDisposable
+    internal sealed class ProviderFixture(WebApplication app) : IAsyncDisposable
     {
         public Uri BaseAddress => Address(app);
         public ConcurrentQueue<(string Room, Guid Subject)> Removed { get; } = new();

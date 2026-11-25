@@ -101,6 +101,12 @@ Joining or starting a meeting requires an active account and current access to t
 
 Nexus issues a 60-second room credential bound to one grant. The signaling gateway validates the signature, grant, BFF session, and current resource access before every connection and reconnect, including provider-refreshed credentials. A host removal blocks the account for that room and revokes its device grants. Source access changes and event cancellation revoke admission and evict affected provider participants. The durable reconciliation worker retries incomplete provider cleanup. Provider signaling and administration are private, and the gateway forwards credentials in an authorization header over the private connection.
 
+### 2.8 Direct calls
+
+An eligible Personal or Organization DM must have two active participants and no effective block. The server checks access when starting or responding to a call and when granting or renewing media admission. The initiating account can cancel a ringing call. The recipient can accept or decline. Both participants can end an accepted call. Simultaneous commands serialize on the call record.
+
+The initiating and winning recipient BFF sessions may join call media. Other signed-in sessions receive call state changes so they can stop ringing and dismiss the prompt. State change fanout carries identifiers, state, and version. Session binding and media credentials use separate request-time authorization.
+
 ## 3. Domain Authorization Contract (`M0.4`)
 
 Implemented in `src/Nexus.Web/Infrastructure/Security/`:

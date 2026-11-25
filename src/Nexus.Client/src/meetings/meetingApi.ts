@@ -1,4 +1,5 @@
 import { orgApiPath, personalApiPath, protectedRequest } from '../scope';
+import type { DirectCall, DirectCallKind } from '../calls/callState';
 
 interface MeetingScope { organizationId: string | null }
 export interface MeetingSummary extends MeetingScope { meetingId: string; title: string }
@@ -9,7 +10,8 @@ export interface MeetingConversation extends MeetingScope { conversationId: stri
 export type MeetingIntent =
   | { kind: 'calendar'; organizationId: string | null; eventId: string; title: string }
   | ({ kind: 'conversation'; title: string } & MeetingConversation)
-  | ({ kind: 'meeting' } & MeetingSummary);
+  | ({ kind: 'meeting' } & MeetingSummary)
+  | ({ kind: 'directCall'; callId: string; callKind: DirectCallKind; onEnded: (call: DirectCall) => void } & MeetingSummary);
 
 export class MeetingRequestError extends Error {}
 

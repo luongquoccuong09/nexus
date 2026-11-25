@@ -1,0 +1,77 @@
+.nx-call-alerts {
+  position: fixed;
+  z-index: 70;
+  inset-inline-end: var(--space-4);
+  bottom: var(--space-4);
+  width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  display: grid;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.nx-call-prompt {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.nx-call-heading,
+.nx-call-actions,
+.nx-direct-call-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nx-call-heading h2,
+.nx-call-heading p {
+  margin: 0;
+}
+
+.nx-call-heading h2 {
+  font-size: 1rem;
+}
+
+.nx-call-heading p {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.nx-call-heading svg {
+  flex: 0 0 auto;
+}
+
+.nx-call-actions {
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+.nx-direct-call-context {
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 860px) {
+  .nx-call-alerts { bottom: calc(60px + var(--space-3)); }
+}
+
+@media (max-width: 480px) {
+  .nx-stage-header.nx-stage-direct-call {
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: var(--space-2);
+  }
+
+  .nx-stage-direct-call .nx-stage-title {
+    flex: 1 0 100%;
+  }
+
+  .nx-stage-direct-call .nx-stage-actions {
+    margin-inline-start: auto;
+  }
+
+  .nx-stage-direct-call .nx-direct-call-buttons {
+    gap: var(--space-1);
+  }
+}

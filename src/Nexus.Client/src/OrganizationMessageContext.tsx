@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AttachmentGallery } from './attachments/AttachmentGallery';
+import DirectCallButtons from './calls/DirectCallButtons';
 import { ImageLightboxModal } from './attachments/ImageLightboxModal';
 import type { AttachmentItem } from './attachments/attachmentUtils';
 import type { ChatMessageItem } from './chat/types';
@@ -48,8 +49,14 @@ export default function OrganizationMessageContext({ target, onClose, onForwardC
 
   return (
     <>
-      <Modal open title={target.parentMessageId ? 'Thread context' : 'Message context'} onOpenChange={open => { if (!open) onClose(); }}>
+      <Modal open title={target.parentMessageId ? 'Thread context' : 'Message context'}
+        description="Messages around the linked message." onOpenChange={open => { if (!open) onClose(); }}>
         {error ? <p className="nx-error" role="alert">{error}</p> : !messages && <p role="status">Loading messages…</p>}
+        {messages && target.conversationKind === 'Dm' && (
+          <div className="nx-direct-call-context">
+            <DirectCallButtons organizationId={target.organizationId} conversationId={target.conversationId} peerName="contact" onStart={onClose} />
+          </div>
+        )}
         <div className="nx-organization-message-context">
           {messages?.map(message => (
             <article key={message.id} ref={message.id === target.messageId ? chosen : undefined}

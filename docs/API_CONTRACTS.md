@@ -144,6 +144,17 @@ Calendar create and update accept optional `isOnlineMeeting`. The Calendar event
 
 The browser connects to `/api/media/rtc` or `/api/media/rtc/v1` on the same origin. Both WebSocket upgrades and the corresponding `/validate` routes require a current BFF session and a signed room grant. Nexus owns admission on each reconnect. Provider signaling and administrative calls use a configured private server origin.
 
+### Direct voice and video calls (`M6.13`)
+
+| Method and path | Contract |
+|---|---|
+| `POST /api/{scope}/conversations/{id}/calls` | Starts an eligible DM call with `{ kind, clientCallId }`. The kind is `Voice` or `Video`. Replays of a caller's `clientCallId` resolve to the same call. A caller can start up to five calls per 60 seconds. |
+| `GET /api/calls/active` | Returns `{ items, nextCursor, available }` for the signed-in account's accessible ringing and accepted calls across Personal and Organization scopes. The maximum page size is 50. `available` indicates whether the media provider is enabled. |
+| `GET /api/{scope}/calls/{id}` | Returns current authorized call state and the caller's session-specific `canJoinMedia`. |
+| `POST /api/{scope}/calls/{id}/accept`, `/decline`, `/cancel`, `/end` | Applies a valid state transition for the actor. Acceptance assigns a single recipient session. A conflicting transition returns `409`. |
+
+Call state is `ringing`, `accepted`, `declined`, `canceled`, `missed`, or `ended`. Ringing expires after 30 seconds. An accepted call has a linked meeting ID. Current call reads expose the initiating and receiving accounts, scope, relevant timestamps, and a monotonic version. Only the initiating session and the session that accepted the call can request media admission. An authorized Organization message link also returns `conversationKind` so its chat context can show the call controls for a DM.
+
 ### Sidebar organization and previews (`M6.26`)
 
 - `GET /api/sidebar?surface=chat|communities` returns `{ surface, sections, items }` (`Cache-Control: no-store`), capped at 50 sections per surface, joining items against current active conversation/community/organization memberships (plus `SEC-20b` Verified status for Official communities).
@@ -205,3 +216,4 @@ All paths below are under `/api/monitor`. The user-facing read endpoints require
 - **Presence & typing (`M2.10`):** In-memory `PresenceAndTypingTracker`; `SendTyping(conversationId)` verifies DB membership via `IAuthorizationService.Can` and throttles `TypingIndicator` to 1 event per 2 seconds per `(user, conversation)`.
 - **Group access revocation (`M6.17`).** After a removal or leave commits, `ConversationAccessRevoked` sends `{ conversationId, organizationId }` only to the affected account in that scope. `organizationId` is null for Personal Chat. The client drops local work and history for the affected chat and still verifies access during HTTP reconciliation.
 - **Role refresh (`M6.21`).** Group transfer emits a `ConversationChanged` nudge. Community transfer emits `CommunityFeedChanged` on the main feed with `delta: { type: "ownership", communityId }`. Authorized clients refresh roles and an open members drawer using the normal list endpoints.
+- **Direct calls (`M6.13`).** `DirectCallChanged` sends `{ id, organizationId, conversationId, state, version }` to both accounts' sessions in the call scope. Use the authorized call endpoint for details and `GET /api/calls/active` for reconnect recovery.

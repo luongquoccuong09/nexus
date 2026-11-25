@@ -499,6 +499,125 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Calls.DirectCallEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at");
+
+                    b.Property<Guid>("CalleeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("callee_id");
+
+                    b.Property<string>("CalleeSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("callee_session_id");
+
+                    b.Property<Guid>("CallerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("caller_id");
+
+                    b.Property<string>("CallerSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("caller_session_id");
+
+                    b.Property<DateTimeOffset>("CheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("checked_at");
+
+                    b.Property<Guid>("ClientCallId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_call_id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("state");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalleeSessionId");
+
+                    b.HasIndex("CallerSessionId");
+
+                    b.HasIndex("ConversationId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_direct_calls_active_conversation")
+                        .HasFilter("state IN ('Ringing', 'Accepted')");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("CallerId", "ClientCallId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_direct_calls_caller_request");
+
+                    b.HasIndex("CheckedAt", "Id")
+                        .HasDatabaseName("ix_direct_calls_access_check")
+                        .HasFilter("state IN ('Ringing', 'Accepted')");
+
+                    b.HasIndex("ConversationId", "CreatedAt");
+
+                    b.HasIndex("ExpiresAt", "Id")
+                        .HasDatabaseName("ix_direct_calls_pending_ring")
+                        .HasFilter("state = 'Ringing'");
+
+                    b.HasIndex("CalleeId", "CreatedAt", "Id")
+                        .HasDatabaseName("ix_direct_calls_callee_created");
+
+                    b.HasIndex("CallerId", "CreatedAt", "Id")
+                        .HasDatabaseName("ix_direct_calls_caller_created");
+
+                    b.ToTable("direct_calls", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_direct_calls_distinct_participants", "caller_id <> callee_id");
+
+                            t.HasCheckConstraint("ck_direct_calls_kind", "kind IN ('Voice', 'Video')");
+
+                            t.HasCheckConstraint("ck_direct_calls_state", "state IN ('Ringing', 'Accepted', 'Declined', 'Canceled', 'Missed', 'Ended')");
+
+                            t.HasCheckConstraint("ck_direct_calls_times", "created_at < expires_at AND (state IN ('Accepted', 'Ended')) = (accepted_at IS NOT NULL) AND (state IN ('Declined', 'Canceled', 'Missed', 'Ended')) = (ended_at IS NOT NULL)");
+                        });
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.CommunityEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1279,6 +1398,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<Guid?>("DirectCallId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("direct_call_id");
+
                     b.Property<DateTimeOffset?>("EndedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("ended_at");
@@ -1309,6 +1432,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasIndex("ConversationId");
 
+                    b.HasIndex("DirectCallId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_meetings_direct_call");
+
                     b.HasIndex("HostId");
 
                     b.HasIndex("OrganizationId");
@@ -1326,7 +1453,7 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.ToTable("meetings", null, t =>
                         {
-                            t.HasCheckConstraint("ck_meetings_single_source", "(calendar_event_id IS NULL) <> (conversation_id IS NULL)");
+                            t.HasCheckConstraint("ck_meetings_single_source", "num_nonnulls(calendar_event_id, conversation_id, direct_call_id) = 1");
                         });
                 });
 
@@ -2837,6 +2964,42 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Calls.DirectCallEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("CalleeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Infrastructure.Data.AppSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("CalleeSessionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("CallerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Infrastructure.Data.AppSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("CallerSessionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Conversations.ConversationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.CommunityEntity", b =>
                 {
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
@@ -3034,6 +3197,11 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasOne("Nexus.Web.Modules.Conversations.ConversationEntity", null)
                         .WithMany()
                         .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Calls.DirectCallEntity", null)
+                        .WithMany()
+                        .HasForeignKey("DirectCallId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)

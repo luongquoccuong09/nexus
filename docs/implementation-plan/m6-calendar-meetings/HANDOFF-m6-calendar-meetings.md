@@ -183,3 +183,39 @@ pwsh -File "$meetingsQa\start-host.ps1" *> "$meetingsQa\web.log"
 # In another shell, with the host running
 node "$meetingsQa\meetings-qa.mjs"
 ```
+
+## M6.13 Direct voice and video calls
+
+Verified November 25, 2026. The full pipeline passed 209 PostgreSQL 17 integration tests, 62 client unit tests, the security and UI audits, and Web and Desktop Release builds. One opt-in Monitor test was skipped. The six-test Calls and Meetings slice included simultaneous responses, Personal and Organization isolation, session-bound media, expiry, and revocation after blocking.
+
+Eligible Personal DMs and authorized Organization DM contexts offer Voice call and Video call. SignalR propagates a versioned state change to both accounts' signed-in devices. Acceptance stops ringing everywhere and only the initiating and accepting sessions can join the media room. Decline, cancel, timeout, and end clear the corresponding prompts. Participants can share a screen or end the call.
+
+The additive `20261125102457_DirectCalls` migration applies the scope and account foreign keys and enforces one ringing or accepted call per DM. A caller-scoped request ID deduplicates retries, and a locked call row serializes acceptance with other transitions. Expiration records a single missed call. Access and media admission are rechecked against current account, session, membership, and DM block state. The Supabase Postgres Best Practices skill was reviewed before the migration.
+
+Two separate browser sessions per account verified the six viewport and theme combinations at `1440×900`, `390×844`, and `320×700`. Keyboard initiation, ringtone dismissal on the other device, missed-call expiry, an Organization DM, video and screen sharing, and microphone permission denial and recovery passed with zero unexpected browser or network errors. Audible ringing in a fresh tab requires the browser's first in-app interaction. The visible incoming prompt works before that interaction.
+
+In the final loopback run, two voice calls took 944 and 581 ms, and one video call took 665 ms from the answer click to inbound audio on both devices. The accepted call loads the deferred media module without waiting for the Suspense fallback to reveal the room. Authorized devices prepare audio alongside signaling and publish it before video. Vite emitted 556.78 kB of deferred room JavaScript (147.65 kB gzip). Remote latency remains part of the target deployment gate.
+
+The scheduled meeting, Chat Meet now, and Community Meet now browser regression also passed on the final build. Confirming End for everyone now disconnects the host before the server revokes the host credential. This prevents an unnecessary host reconnect during closure. The regression and direct-call matrices ran against fresh loopback host processes because the two harnesses share a source IP and together exceeded the host's request quota.
+
+```powershell
+dotnet ef migrations has-pending-model-changes --project src/Nexus.Web/Nexus.Web.csproj --startup-project src/Nexus.Web/Nexus.Web.csproj --context NexusDbContext --configuration Release --no-build
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj --configuration Release --artifacts-path 'D:/develop-nexus-m610-jitsi/m613-test-release-artifacts' --filter 'FullyQualifiedName~DirectCallsM613Tests|FullyQualifiedName~MeetingsM612Tests' --logger 'console;verbosity=minimal' --nologo
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The four-device, two-account Edge fixture and its logs are in `D:\develop\.nexus-m610-eval\m613`. It uses the normal Nexus host, PostgreSQL 17, and the local LiveKit evaluation container.
+
+```powershell
+$callsQa = 'D:\develop\.nexus-m610-eval\m613'
+dotnet publish src/Nexus.Web -c Release --artifacts-path "$callsQa\artifacts" -p:SkipClientPublish=true -o "$callsQa\web"
+npm.cmd --prefix src/Nexus.Client run build
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$callsQa\web\wwwroot" -Recurse -Force
+pwsh -File "$callsQa\start-host.ps1" -Migrate
+pwsh -File "$callsQa\start-host.ps1" *> "$callsQa\web.log"
+# In another shell, with the host running
+node "$callsQa\calls-qa.mjs"
+# Restart the loopback host and keep its output in web.log before running this matrix.
+node "$callsQa\scheduled-meetings-qa.mjs"
+```

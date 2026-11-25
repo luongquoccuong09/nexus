@@ -200,7 +200,8 @@ internal static class MeetingEndpoints
         var actorId = db.OrganizationActor!.Id;
         var sessionId = http.User.GetSessionId();
         if (sessionId is null || !await access.IsActiveSessionAsync(actorId, sessionId, ct) ||
-            await access.FindActorAsync(actorId, room.OrganizationId, ct) is not { } actor || !await access.CanJoinAsync(room, actor, ct))
+            await access.FindActorAsync(actorId, room.OrganizationId, ct) is not { } actor ||
+            !await access.CanJoinAsync(room, actor, ct, sessionId))
             return null;
 
         var grant = await db.MeetingGrants.AsNoTracking().SingleOrDefaultAsync(item =>

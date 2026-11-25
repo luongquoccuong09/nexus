@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Meetings;
+using Nexus.Web.Modules.Calls;
 
 namespace Nexus.Web.Infrastructure.Data;
 
@@ -107,7 +108,10 @@ public sealed class PostgreSqlSessionTicketStore : ITicketStore
             .Where(s => s.Id == key && s.RevokedAt == null)
             .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now));
         if (revoked != 0)
+        {
+            await scope.ServiceProvider.GetRequiredService<DirectCallLifecycle>().RecheckSessionAsync(key, CancellationToken.None);
             await scope.ServiceProvider.GetRequiredService<MeetingRevocations>().RecheckSessionAsync(key, CancellationToken.None);
+        }
     }
 
     private static AuthenticationTicket WithSessionIdClaim(AuthenticationTicket ticket, string sessionId)

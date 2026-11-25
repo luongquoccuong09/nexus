@@ -8,6 +8,7 @@ using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Meetings;
+using Nexus.Web.Modules.Calls;
 
 namespace Nexus.Web.Modules.People;
 
@@ -140,6 +141,9 @@ public static class SafetyEndpoints
         await transaction.CommitAsync(ct);
         if (!exists)
         {
+            var calls = ctx.RequestServices.GetRequiredService<DirectCallLifecycle>();
+            await calls.RecheckUserAsync(actorId, ct);
+            await calls.RecheckUserAsync(targetUserId, ct);
             var meetings = ctx.RequestServices.GetRequiredService<MeetingRevocations>();
             await meetings.RecheckUserAsync(actorId, ct);
             await meetings.RecheckUserAsync(targetUserId, ct);

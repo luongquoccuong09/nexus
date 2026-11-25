@@ -226,6 +226,7 @@ public static class ContentLinkEndpoints
             kind = "message",
             organizationId = payload.O,
             conversationId = conv.Id,
+            conversationKind = conv.Kind.ToString(),
             messageId = message.Id,
             seq = message.Seq,
             parentMessageId = message.ParentMessageId,

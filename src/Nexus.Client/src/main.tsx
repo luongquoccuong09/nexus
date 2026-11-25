@@ -16,6 +16,7 @@ import type { CommunityFeedDelta } from './chat/types';
 import type { DmReadReceiptPreference } from './chat/dmReadReceipts';
 import type { CalendarEventTarget } from './calendar/calendarApi';
 import MeetingProvider from './meetings/MeetingProvider';
+import DirectCallProvider from './calls/DirectCallProvider';
 import type { OrganizationMessageTarget } from './OrganizationMessageContext';
 import QuickSwitcher, { type QuickSwitchTarget } from './QuickSwitcher';
 import { isQuickSwitcherShortcut } from './quickSwitcherKeys';
@@ -1186,6 +1187,8 @@ function App() {
 
   return (
     <MeetingProvider key={user.id}>
+    <DirectCallProvider userId={user.id} connectionState={connState} accessRevision={candidateRevision}
+      suppressChime={mySuppressChime}>
     <div className="nx-app" data-suppress-chime={mySuppressChime ? 'true' : 'false'}>
       {/* Left App Rail */}
       <nav className="nx-rail" aria-label="Main navigation">
@@ -1954,6 +1957,7 @@ function App() {
         />
       )}
     </div>
+    </DirectCallProvider>
     </MeetingProvider>
   );
 }
