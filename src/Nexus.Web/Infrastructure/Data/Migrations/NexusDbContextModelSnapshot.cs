@@ -365,6 +365,136 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.ToTable("audit_logs", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarAttendeeEntity", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.HasKey("EventId", "UserId");
+
+                    b.HasIndex("UserId", "EventId")
+                        .HasDatabaseName("ix_calendar_attendees_user_event");
+
+                    b.ToTable("calendar_attendees", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_calendar_attendees_status", "status IN ('Going', 'Tentative', 'Declined')");
+                        });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarEventEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("CanceledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("canceled_at");
+
+                    b.Property<Guid?>("CommunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("community_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreationKeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("creation_key_hash");
+
+                    b.Property<string>("CreationRequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("creation_request_hash");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("description");
+
+                    b.Property<DateTimeOffset>("EndUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("end_utc");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<Guid>("OrganizerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organizer_id");
+
+                    b.Property<int?>("ReminderMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("reminder_minutes");
+
+                    b.Property<Guid?>("ReminderOutboxId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reminder_outbox_id");
+
+                    b.Property<DateTimeOffset>("StartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("start_utc");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("time_zone");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "CommunityId");
+
+                    b.HasIndex("OrganizationId", "StartUtc", "EndUtc")
+                        .HasDatabaseName("ix_calendar_events_scope_range");
+
+                    b.HasIndex("OrganizerId", "OrganizationId", "CreationKeyHash")
+                        .IsUnique()
+                        .HasDatabaseName("ux_calendar_events_scope_creation");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizerId", "OrganizationId", "CreationKeyHash"), false);
+
+                    b.ToTable("calendar_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_calendar_events_community_scope", "community_id IS NULL OR organization_id IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_calendar_events_reminder", "reminder_minutes BETWEEN 0 AND 10080");
+
+                            t.HasCheckConstraint("ck_calendar_events_time_range", "start_utc < end_utc");
+                        });
+                });
+
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.CommunityEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2516,6 +2646,41 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarAttendeeEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Calendar.CalendarEventEntity", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarEventEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Conversations.CommunityEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "CommunityId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Conversations.CommunityEntity", b =>

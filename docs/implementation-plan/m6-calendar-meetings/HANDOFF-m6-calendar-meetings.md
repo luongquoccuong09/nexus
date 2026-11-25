@@ -111,4 +111,36 @@ dotnet build src/Nexus.Desktop -c Release
 git diff --check
 ```
 
-M6.11 introduces calendar event state, authorized invitations and RSVP, and M4 outbox delivery. Before the first migration, apply the project-requested Supabase Postgres Best Practices skill guidance for composite and foreign-key indexes, short transactions, and cursor pagination. M6.12 must verify the production path for provider isolation and current Nexus grant checks before enabling real media. The M6.15 release gate includes Internet or staging TURN/TLS and target deployment capacity.
+M6.12 must verify the production path for provider isolation and current Nexus grant checks before enabling real media. The M6.15 release gate includes Internet or staging TURN/TLS and target deployment capacity.
+
+## M6.11 Calendar and RSVP
+
+Verified November 25, 2026. The full pipeline passed 203 PostgreSQL integration tests, 56 client unit tests, security and UI audits, and the Web and Desktop Release builds. One opt-in Monitor test was skipped. The five Calendar integration tests covered Personal and two Organization scopes, Community revocation, concurrent edits, 51-item event and attendee pagination, DST offsets, and reminder authorization and deduplication.
+
+The Calendar destination loads FullCalendar Standard on first open. It offers Personal and Organization calendars with a Community filter, Month, Week, and Agenda views, and event creation, editing, cancellation, invitations, and RSVP. Activity opens calendar notifications directly in an authorized event dialog. The production build emitted 330.19 kB of Calendar JavaScript (93.44 kB gzip) and 22.67 kB of Calendar CSS (4.87 kB gzip). Both assets were absent from the startup trace and requested on open.
+
+The additive `20261125041156_CalendarEvents` migration was applied to a PostgreSQL 17 database with the previous `develop` schema. It adds the composite range index, scope and attendee foreign keys, and a Personal- and Organization-scoped creation key. Event changes and their M4 outbox entries commit together. The worker rechecks eligibility, suppresses expired reminders, and deduplicates deliveries. Activity rechecks access and hides superseded reminders. The Supabase Postgres Best Practices skill was reviewed before the migration.
+
+Two authenticated Edge contexts in `America/New_York` and `Europe/London` passed the browser matrix at `1440×900`, `390×844`, and `320×700` in Light and Dark. Both accounts used keyboard navigation to reach Calendar and switch views. The runs covered creating a Personal event, matching local display to a shared UTC instant, inviting an eligible contact, all three RSVP states, Community calendar access, opening an event from Activity, updating and canceling an event. They recorded zero unexpected browser or HTTP errors and no page-width overflow.
+
+```powershell
+dotnet ef migrations has-pending-model-changes --project src/Nexus.Web --configuration Release --no-build
+npm.cmd --prefix src/Nexus.Client run build
+node --test src/Nexus.Client/tests/calendar-time.test.mjs
+dotnet test tests/Nexus.IntegrationTests -c Release --filter 'FullyQualifiedName~CalendarM611Tests|FullyQualifiedName~AuthorizationMatrixTests' --verbosity minimal
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj --configuration Release --artifacts-path 'D:/develop-nexus-m610-jitsi/m611-test-release-artifacts' --filter FullyQualifiedName~CalendarM611Tests --logger 'console;verbosity=minimal' --nologo
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The isolated browser harness used the built SPA with the normal `Nexus.Web` host on loopback and PostgreSQL 17 with separate migration and runtime roles. Its scratch files and observations are under `D:\develop\.nexus-m610-eval\m611`.
+
+```powershell
+$calendarQa = 'D:\develop\.nexus-m610-eval\m611'
+dotnet publish src/Nexus.Web -c Release --no-restore -p:SkipClientPublish=true -o "$calendarQa\web"
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$calendarQa\web\wwwroot" -Recurse -Force
+pwsh -File "$calendarQa\start-host.ps1" -Migrate
+pwsh -File "$calendarQa\start-host.ps1"
+# In another shell, with the host running
+node "$calendarQa\calendar-qa.mjs"
+```

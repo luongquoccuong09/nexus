@@ -28,6 +28,13 @@ public sealed class NexusAuthorizationService : IAuthorizationService
             ResourceAction.DirectorySearch =>
                 resource.Kind == ResourceKind.Organization,
 
+            ResourceAction.CalendarRead or ResourceAction.CalendarCreate =>
+                CanAccessCalendar(actor, resource),
+            ResourceAction.CalendarEdit =>
+                CanAccessCalendar(actor, resource) && resource.TargetIsOwner,
+            ResourceAction.CalendarRespond =>
+                CanAccessCalendar(actor, resource) && resource.TargetIsSelf,
+
             ResourceAction.DmOpen =>
                 resource.Kind == ResourceKind.Dm &&
                 resource.TargetIsActive &&
@@ -203,6 +210,11 @@ public sealed class NexusAuthorizationService : IAuthorizationService
 
     private static bool IsResourceManager(ResourceRole? role) =>
         role is ResourceRole.Owner or ResourceRole.Admin;
+
+    private static bool CanAccessCalendar(ActorContext actor, ResourceContext resource) =>
+        resource.Kind == ResourceKind.CalendarEvent && resource.OrganizationId == actor.OrganizationId &&
+        resource.MembershipRole is not null &&
+        (!resource.IsOfficial || actor.TrustLevel == TrustLevel.Verified);
 
     private static bool IsVerifiedRole(ActorContext actor, OrgRole role) =>
         actor.TrustLevel == TrustLevel.Verified && actor.OrgRole == role;

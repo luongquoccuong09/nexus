@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CalendarEventTarget } from './calendar/calendarApi';
 import { renderSafeMarkdown } from './markdown';
 import { EmailDigestButton, QuietHoursButton } from './notificationPreferences';
 import { protectedRequest } from './scope';
@@ -27,6 +28,7 @@ interface ActivitySource {
   messageId?: string | null;
   seq?: number | null;
   targetLink?: string | null;
+  calendarEventId?: string;
 }
 
 function activityLabel(kind: string): string {
@@ -37,14 +39,19 @@ function activityLabel(kind: string): string {
     case 'activity.message': return 'New chat message';
     case 'activity.post': return 'New post';
     case 'activity.comment': return 'New comment';
+    case 'calendar.invitation': return 'Calendar invitation';
+    case 'calendar.updated': return 'Calendar event updated';
+    case 'calendar.canceled': return 'Calendar event canceled';
+    case 'calendar.reminder': return 'Calendar reminder';
     default: return 'Announcement reminder';
   }
 }
 
-export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink, onRead }: {
+export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink, onOpenCalendar, onRead }: {
   onOpenChat: (conversationId: string) => void;
   onOpenChannel: (conversationId: string) => void;
   onOpenContentLink: (token: string) => void;
+  onOpenCalendar: (target: CalendarEventTarget) => void;
   onRead: () => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -194,7 +201,7 @@ export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink
         {!loading && !error && items.length === 0 && (
           <EmptyState
             title={unreadOnly ? 'No unread activity' : 'No activity yet'}
-            description={unreadOnly ? 'Clear the filter to see earlier activity.' : 'Mentions and announcement reminders will appear here.'}
+            description={unreadOnly ? 'Clear the filter to see earlier activity.' : 'Mentions, reminders, and calendar invitations will appear here.'}
           />
         )}
         {items.map(item => (
@@ -211,7 +218,15 @@ export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink
             {openId === item.id && (source ? (
               <>
                 {source.title && <h3>{source.title}</h3>}
-                <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(source.body) }} />
+                {source.calendarEventId ? <p className="nx-msg-body">{source.body}</p>
+                  : <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(source.body) }} />}
+                {source.calendarEventId && (
+                  <Button size="sm" onClick={() => onOpenCalendar({
+                    eventId: source.calendarEventId!, organizationId: item.organizationId
+                  })}>
+                    Open calendar event
+                  </Button>
+                )}
                 {(item.kind === 'mention.message' || item.kind === 'activity.message') && !item.organizationId && (
                   <Button
                     size="sm"
@@ -220,7 +235,7 @@ export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink
                     Open chat
                   </Button>
                 )}
-                {item.kind !== 'mention.message' && item.kind !== 'activity.message' && (
+                {!source.calendarEventId && item.kind !== 'mention.message' && item.kind !== 'activity.message' && (
                   <Button
                     size="sm"
                     onClick={() => source.targetLink ? onOpenContentLink(source.targetLink) : onOpenChannel(item.conversationId)}

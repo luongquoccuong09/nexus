@@ -129,6 +129,18 @@ public sealed class AuthorizationMatrixTests
         yield return ["Owner denied posting in archived channel", VerifiedMember, ResourceAction.MessageSend, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Owner, IsArchived: true), false];
         yield return ["Owner denied uploading files in archived channel", VerifiedMember, ResourceAction.FileUpload, new ResourceContext(ResourceKind.CommunityChannel, OrgA, ResourceRole.Owner, IsArchived: true), false];
 
+        // --- Calendar invitations and membership (M6.11) ---
+        yield return ["An active Personal account can create an event", personalUser, ResourceAction.CalendarCreate, new ResourceContext(ResourceKind.CalendarEvent, Guid.Empty, ResourceRole.Owner), true];
+        yield return ["An organizer can edit a visible event", VerifiedMember, ResourceAction.CalendarEdit, new ResourceContext(ResourceKind.CalendarEvent, OrgA, ResourceRole.Member, TargetIsOwner: true), true];
+        yield return ["An invited attendee can RSVP", VerifiedMember, ResourceAction.CalendarRespond, new ResourceContext(ResourceKind.CalendarEvent, OrgA, ResourceRole.Member, TargetIsSelf: true), true];
+        yield return ["A member without an invitation cannot RSVP", VerifiedMember, ResourceAction.CalendarRespond, new ResourceContext(ResourceKind.CalendarEvent, OrgA, ResourceRole.Member), false];
+        yield return ["An Organization administrator without event access cannot read", VerifiedSystemAdmin, ResourceAction.CalendarRead, new ResourceContext(ResourceKind.CalendarEvent, OrgA), false];
+        yield return ["A removed Community organizer cannot edit", VerifiedMember, ResourceAction.CalendarEdit, new ResourceContext(ResourceKind.CalendarEvent, OrgA, TargetIsOwner: true), false];
+        yield return ["An Unverified member cannot read an Official Community event", UnverifiedMember, ResourceAction.CalendarRead, new ResourceContext(ResourceKind.CalendarEvent, OrgA, ResourceRole.Member, IsOfficial: true), false];
+        yield return ["A disabled attendee cannot RSVP", DisabledVerified, ResourceAction.CalendarRespond, new ResourceContext(ResourceKind.CalendarEvent, OrgA, ResourceRole.Member, TargetIsSelf: true), false];
+        yield return ["A different Organization cannot read an event", VerifiedMember, ResourceAction.CalendarRead, new ResourceContext(ResourceKind.CalendarEvent, OrgB, ResourceRole.Member), false];
+        yield return ["An Organization context cannot authorize a Personal event", VerifiedMember, ResourceAction.CalendarRead, new ResourceContext(ResourceKind.CalendarEvent, Guid.Empty, ResourceRole.Member), false];
+
         // --- Default deny on unmapped / mismatched combinations ---
         yield return ["Default deny: unknown action enum value", VerifiedSystemAdmin, (ResourceAction)9999, new ResourceContext(ResourceKind.Organization, OrgA), false];
         yield return ["Default deny: AdminImportDirectory against Dm resource", VerifiedHrAdmin, ResourceAction.AdminImportDirectory, new ResourceContext(ResourceKind.Dm, OrgA, ResourceRole.Owner), false];

@@ -10,6 +10,7 @@ using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Monitor;
 using Nexus.Web.Modules.Notifications;
+using Nexus.Web.Modules.Calendar;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 using Serilog.Core;
@@ -44,6 +45,10 @@ public static class NexusHost
         builder.Services.AddKeyedScoped<IOutboxHandler, MentionOutboxHandler>(MentionOutbox.CommentActivity);
         builder.Services.AddKeyedScoped<IOutboxHandler, PushOutboxHandler>(PushOutboxHandler.Kind);
         builder.Services.AddKeyedScoped<IOutboxHandler, EmailDigestHandler>(EmailDigestHandler.Kind);
+        builder.Services.AddKeyedScoped<IOutboxHandler, CalendarOutbox>(CalendarOutbox.Invitation);
+        builder.Services.AddKeyedScoped<IOutboxHandler, CalendarOutbox>(CalendarOutbox.Updated);
+        builder.Services.AddKeyedScoped<IOutboxHandler, CalendarOutbox>(CalendarOutbox.Canceled);
+        builder.Services.AddKeyedScoped<IOutboxHandler, CalendarOutbox>(CalendarOutbox.Reminder);
         builder.Services.AddHostedService<OutboxBackgroundService>();
         builder.Services.AddSingleton<WebPushTransport>();
         builder.Services.AddSingleton<IEmailDigestTransport, EmailDigestTransport>();
@@ -83,6 +88,8 @@ public static class NexusHost
         app.MapIdentityEndpoints();
         app.MapContentLinkEndpoints();
         app.MapNotificationEndpoints();
+        app.MapCalendar(OrganizationScope.Api);
+        app.MapCalendar(OrganizationScope.PersonalApi);
         app.MapOrganizations();
         app.MapPersonalConnections();
         app.MapOrgEndpoints();

@@ -9,6 +9,7 @@ using Nexus.Web.Modules.Files;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Notifications;
+using Nexus.Web.Modules.Calendar;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 
@@ -93,6 +94,8 @@ public sealed class NexusDbContext
     public DbSet<AttachmentEntity> Attachments => Set<AttachmentEntity>();
     public DbSet<SharedLinkEntity> SharedLinks => Set<SharedLinkEntity>();
     public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();
+    public DbSet<CalendarEventEntity> CalendarEvents => Set<CalendarEventEntity>();
+    public DbSet<CalendarAttendeeEntity> CalendarAttendees => Set<CalendarAttendeeEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<ConversationNotificationPreference> ConversationNotificationPreferences => Set<ConversationNotificationPreference>();
     public DbSet<NotificationQuietHours> NotificationQuietHours => Set<NotificationQuietHours>();

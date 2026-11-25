@@ -114,6 +114,20 @@
 - A successful command returns `201`. An authorized retry of the same `clientMsgId`, source, and destination returns `200` with the original destination link. A reused ID for different content or a different destination returns `409`. A recalled or unreadable source returns `404 forward_source_unavailable`. Archived destinations return `409 channel_archived`. A copy that exceeds storage quota returns `413`.
 - The destination item exposes `isForwarded` and has its own attachment IDs. Text, files, and a post title are copied. Source identifiers, reactions, thread history, polls, and announcement state stay with the original. Copied mentions do not issue notifications.
 
+### Calendar and RSVP (`M6.11`)
+
+| Method and path under `/api/personal/calendar/events` or `/api/organizations/{organizationId}/calendar/events` | Contract |
+|---|---|
+| `GET /` | Lists visible events overlapping `fromUtc` through `toUtc` (exclusive), returning `{ items, nextCursor }`. Supply optional `communityId` for a Community calendar and `cursor` to continue a page with `limit` up to 50. The range is capped at 62 days. |
+| `POST /` | Creates an event with `title`, optional `description`, `startUtc`, `endUtc`, `timeZone`, optional `communityId`, `attendeeIds`, and optional `reminderMinutes`. Requires `Idempotency-Key`. Authorized replay reads the existing event and returns `Idempotency-Replayed: true`. A different request with the same key returns `409`. |
+| `GET /{id}` | Returns the event with its scope, organizer, UTC instants, time zone, reminder, cancellation, revision, and the caller's `myRsvp`, `canRsvp`, and `canEdit` fields. |
+| `PUT /{id}` | Updates the event using the create fields and the observed `version`. Only the organizer can update it. |
+| `POST /{id}/cancel` | Cancels the event using its observed `version`. Only the organizer can cancel it. |
+| `PUT /{id}/rsvp` | Sets the caller's RSVP from `{ status }` using `Going`, `Tentative`, or `Declined`. Requires a current invitation and an active event. |
+| `GET /{id}/attendees` | Lists current eligible attendees with display name and RSVP. Supports `cursor` and `limit` up to 50. |
+
+Mutations require antiforgery. A stale event version returns `409`. Clients submit UTC instants and an IANA or Windows time-zone ID. The server converts recognized Windows IDs to their IANA equivalents for display and later recurrence evaluation. Calendar endpoints check the named Personal, Organization, or Community scope and current account status. Activity recognizes `calendar.invitation`, `calendar.updated`, `calendar.canceled`, and `calendar.reminder`. An authorized source response includes `calendarEventId` and `organizationId`. Delivery and source reads both recheck eligibility.
+
 ### Sidebar organization and previews (`M6.26`)
 
 - `GET /api/sidebar?surface=chat|communities` returns `{ surface, sections, items }` (`Cache-Control: no-store`), capped at 50 sections per surface, joining items against current active conversation/community/organization memberships (plus `SEC-20b` Verified status for Official communities).

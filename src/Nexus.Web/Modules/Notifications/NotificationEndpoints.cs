@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Calendar;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Org;
 
@@ -113,6 +114,22 @@ internal static class NotificationEndpoints
         if (kind is null)
         {
             return Results.NotFound();
+        }
+
+        if (CalendarOutbox.IsCalendarKind(kind))
+        {
+            ctx.Response.Headers.CacheControl = "no-store";
+            var calendar = await (from notification in visible
+                join eventItem in db.CalendarEvents.AsNoTracking() on notification.ResourceId equals eventItem.Id
+                select new
+                {
+                    CalendarEventId = eventItem.Id,
+                    eventItem.OrganizationId,
+                    eventItem.Title,
+                    Body = eventItem.Description ?? string.Empty,
+                    TargetLink = (string?)null
+                }).SingleOrDefaultAsync(ct);
+            return calendar is null ? Results.NotFound() : Results.Ok(calendar);
         }
 
         var source = kind switch

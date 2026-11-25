@@ -2,7 +2,7 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, Briefcase, Command, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
+import { Activity, Bell, Briefcase, CalendarDays, Command, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
@@ -14,6 +14,7 @@ import {
 } from './contentLinks';
 import type { CommunityFeedDelta } from './chat/types';
 import type { DmReadReceiptPreference } from './chat/dmReadReceipts';
+import type { CalendarEventTarget } from './calendar/calendarApi';
 import type { OrganizationMessageTarget } from './OrganizationMessageContext';
 import QuickSwitcher, { type QuickSwitchTarget } from './QuickSwitcher';
 import { isQuickSwitcherShortcut } from './quickSwitcherKeys';
@@ -45,6 +46,7 @@ const ActivityWorkspace = lazy(() =>
 );
 const CommunitiesWorkspace = lazy(() => import('./communities'));
 const ChatWorkspace = lazy(() => import('./chat').then(module => ({ default: module.ChatWorkspace })));
+const CalendarWorkspace = lazy(() => import('./calendar/CalendarWorkspace'));
 const MessageSearchDialog = lazy(() => import('./MessageSearchDialog'));
 const ForwardContentDialog = lazy(() => import('./ForwardContentDialog'));
 const OrganizationMessageContext = lazy(() => import('./OrganizationMessageContext'));
@@ -227,11 +229,11 @@ function App() {
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
   const loginUsernameRef = useRef<HTMLInputElement | null>(null);
 
-  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'communities' | 'directory' | 'security' | 'hr' | 'monitor'>(() => {
+  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'calendar' | 'communities' | 'directory' | 'security' | 'hr' | 'monitor'>(() => {
     if (personalContactLink) return 'directory';
     if (initialOrganizationId) return 'communities';
     const view = new URLSearchParams(window.location.search).get('view');
-    return view === 'security' || view === 'activity' ? view : 'chat';
+    return view === 'security' || view === 'activity' || view === 'calendar' ? view : 'chat';
   });
   const hideMonitor = useCallback(() => {
     setUser(current => current ? { ...current, canViewMonitor: false } : current);
@@ -244,6 +246,7 @@ function App() {
   const [pendingLinkToken, setPendingLinkToken] = useState<string | null>(() => readInitialContentLink());
   const [chatJumpTarget, setChatJumpTarget] = useState<ChatJumpTarget | null>(null);
   const [communityJumpTarget, setCommunityJumpTarget] = useState<CommunityJumpTarget | null>(null);
+  const [calendarEventTarget, setCalendarEventTarget] = useState<CalendarEventTarget | null>(null);
   const jumpNonceRef = useRef(0);
   const linkRequestRef = useRef<AbortController | null>(null);
   const [focusBlockedUsers, setFocusBlockedUsers] = useState(false);
@@ -588,6 +591,7 @@ function App() {
     setForwardSource(null);
     setSearchRecalledIds(new Set());
     setOrganizationMessage(current => current?.organizationId === revokedOrgId ? null : current);
+    setCalendarEventTarget(current => current?.organizationId === revokedOrgId ? null : current);
     setOrganizations(prev => {
       const next = prev.filter(o => o.id !== revokedOrgId);
       if (peopleFilter === revokedOrgId) {
@@ -1172,6 +1176,7 @@ function App() {
   const pageTitle =
     workspaceTab === 'activity' ? 'Activity' :
     workspaceTab === 'chat' ? 'Chat' :
+    workspaceTab === 'calendar' ? 'Calendar' :
     workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'People' :
     workspaceTab === 'security' ? 'Profile & security' :
@@ -1209,6 +1214,19 @@ function App() {
                 {unreadTotal > 99 ? '99+' : unreadTotal}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            className={`nx-rail-btn ${workspaceTab === 'calendar' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'calendar' ? 'page' : undefined}
+            onClick={() => {
+              setCalendarEventTarget(null);
+              setWorkspaceTab('calendar');
+            }}
+          >
+            <CalendarDays size={20} aria-hidden="true" />
+            <span>Calendar</span>
           </button>
 
           <button
@@ -1371,8 +1389,18 @@ function App() {
                   setWorkspaceTab('communities');
                 }}
                 onOpenContentLink={token => void openContentLink(token)}
+                onOpenCalendar={target => {
+                  setCalendarEventTarget(target);
+                  setWorkspaceTab('calendar');
+                }}
                 onRead={() => refreshMentionCountRef.current?.()}
               />
+            </Suspense>
+          )}
+          {workspaceTab === 'calendar' && (
+            <Suspense fallback={<div className="nx-empty-side" role="status">Loading Calendar…</div>}>
+              <CalendarWorkspace key={user.id} organizations={organizations} userId={user.id}
+                initialEvent={calendarEventTarget} accessRevision={candidateRevision} />
             </Suspense>
           )}
           <div className={`nx-tab-keepalive ${workspaceTab === 'chat' ? '' : 'hidden'}`}>

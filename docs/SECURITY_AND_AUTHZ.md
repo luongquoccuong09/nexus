@@ -84,6 +84,17 @@ Per updated [`P0-D04`](decisions/2026-11-23-p0-d04-community-channel-hierarchy.m
 
 The user policy checks deployment grants independently of Organization membership. The Monitor DTOs contain aggregate measurements, configured profile values, and allowlisted lifecycle events. The machine endpoints use a dedicated runner credential over TLS, with a Development loopback exception. The machine principal receives one sandbox lease and may report only against its matching generation. The worker provisions isolated localhost Docker projects. `Nexus.Web` has no Docker access or shell execution endpoint.
 
+### 2.6 Calendar (`ResourceKind.CalendarEvent`)
+
+| Actor | Read event and attendees | Edit or cancel | RSVP |
+|---|---|---|---|
+| Active organizer in the event scope | Allow | Allow | Deny |
+| Current eligible invitee | Allow | Deny | Allow on an active event |
+| Eligible member of the event's Community | Allow | Deny | Requires an invitation |
+| Account outside the event scope, or with revoked access | Deny | Deny | Deny |
+
+Personal events use current Personal chat eligibility for invitations and invitee access. Organization events require active membership in the matching Organization. Community events inherit current Community membership, including the Verified requirement for Official Communities. Creating a Community event requires access to that Community. The calendar independently checks status and access for lists, detail, attendee pages, mutations, and replay of a create request. Calendar outbox delivery and subsequent Activity access recheck the same eligibility rules.
+
 ## 3. Domain Authorization Contract (`M0.4`)
 
 Implemented in `src/Nexus.Web/Infrastructure/Security/`:

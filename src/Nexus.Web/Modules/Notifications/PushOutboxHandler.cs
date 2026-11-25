@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Calendar;
 using Nexus.Web.Modules.Identity;
 
 namespace Nexus.Web.Modules.Notifications;
@@ -42,6 +43,8 @@ internal sealed class PushOutboxHandler(NexusDbContext db, WebPushTransport tran
         var notification = await NotificationQueries.Unread(db, visible, subscription.UserId)
             .SingleOrDefaultAsync(item => item.Id == message.ResourceId, ct);
         if (notification is null) return;
+        if (notification.Kind == CalendarOutbox.Reminder && !await db.CalendarEvents.AnyAsync(
+                item => item.Id == notification.ResourceId && item.EndUtc > now, ct)) return;
 
         var mode = await NotificationPreferences.GetModeAsync(db, notification.ConversationId, subscription.UserId, ct);
         if (mode == ConversationNotificationMode.Muted ||
@@ -57,7 +60,8 @@ internal sealed class PushOutboxHandler(NexusDbContext db, WebPushTransport tran
             return;
         }
 
-        var result = await transport.SendAsync(endpoint!, notification.ConversationId, ct);
+        var topic = CalendarOutbox.IsCalendarKind(notification.Kind) ? notification.ResourceId : notification.ConversationId;
+        var result = await transport.SendAsync(endpoint!, topic, ct);
         if (result == WebPushResult.Expired)
         {
             await db.PushSubscriptions.Where(item => item.Id == subscription.Id && item.SessionId == subscription.SessionId &&

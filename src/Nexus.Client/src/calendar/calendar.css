@@ -1,0 +1,278 @@
+.nx-calendar-page {
+  min-width: 0;
+}
+
+.nx-calendar {
+  max-width: 1280px;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.nx-calendar-controls,
+.nx-calendar-toolbar,
+.nx-calendar-period,
+.nx-calendar-views,
+.nx-calendar-footer,
+.nx-calendar-rsvp,
+.nx-calendar-modal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.nx-calendar-controls {
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.nx-calendar-controls .nx-field {
+  flex: 0 1 250px;
+  min-width: 0;
+}
+
+.nx-calendar-new,
+.nx-calendar-views {
+  margin-inline-start: auto;
+}
+
+.nx-calendar-frame {
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.nx-calendar-toolbar {
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.nx-calendar-toolbar h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.nx-calendar-grid {
+  --fc-monarch-background: var(--bg-surface);
+  --fc-monarch-foreground: var(--text-primary);
+  --fc-monarch-faint: var(--bg-subtle);
+  --fc-monarch-faint-foreground: var(--text-secondary);
+  --fc-monarch-muted: var(--bg-hover);
+  --fc-monarch-muted-foreground: var(--text-muted);
+  --fc-monarch-strong: var(--bg-active);
+  --fc-monarch-strong-foreground: var(--text-primary);
+  --fc-monarch-stronger: var(--bg-active);
+  --fc-monarch-strongest: var(--bg-active);
+  --fc-monarch-border: var(--border);
+  --fc-monarch-strong-border: var(--border);
+  --fc-monarch-outline: var(--border-focus);
+  --fc-monarch-ring-color: var(--border-focus);
+  --fc-monarch-primary: var(--brand-600);
+  --fc-monarch-primary-foreground: var(--text-on-brand);
+  --fc-monarch-primary-over: var(--brand-700);
+  --fc-monarch-primary-down: var(--brand-800);
+  --fc-monarch-secondary: var(--bg-subtle);
+  --fc-monarch-secondary-foreground: var(--text-primary);
+  --fc-monarch-secondary-over: var(--bg-hover);
+  --fc-monarch-secondary-down: var(--bg-active);
+  --fc-monarch-tertiary: var(--bg-subtle);
+  --fc-monarch-tertiary-foreground: var(--text-primary);
+  --fc-monarch-tertiary-over: var(--bg-hover);
+  --fc-monarch-tertiary-down: var(--bg-active);
+  --fc-monarch-selected: var(--bg-active);
+  --fc-monarch-selected-foreground: var(--text-primary);
+  --fc-monarch-selected-over: var(--bg-hover);
+  --fc-monarch-selected-down: var(--bg-subtle);
+  --fc-monarch-popover: var(--bg-elevated);
+  --fc-monarch-popover-foreground: var(--text-primary);
+  --fc-monarch-event: var(--brand-600);
+  --fc-monarch-event-contrast: var(--text-on-brand);
+  --fc-monarch-now: var(--brand-600);
+  --fc-monarch-highlight: var(--bg-active);
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
+.nx-calendar-grid :is(button, [role="button"], a):focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.nx-calendar-canceled {
+  text-decoration: line-through;
+}
+
+.nx-calendar-views [aria-pressed="true"],
+.nx-calendar-rsvp [aria-pressed="true"] {
+  background: var(--bg-active);
+  border-color: var(--border-focus);
+  font-weight: 600;
+}
+
+.nx-calendar-footer {
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-4);
+}
+
+.nx-calendar-footer p {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.nx-calendar-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.nx-calendar-form-row select,
+.nx-calendar-form-row input {
+  min-width: 0;
+}
+
+.nx-calendar-invite-field {
+  min-width: 0;
+  margin: var(--space-2) 0 var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.nx-calendar-invite-field legend {
+  padding-inline: var(--space-1);
+  font-weight: 600;
+}
+
+.nx-calendar-invite-field p,
+.nx-calendar-attendees p {
+  margin-block: var(--space-2);
+}
+
+.nx-calendar-candidates,
+.nx-calendar-invited,
+.nx-calendar-attendees ul {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+
+.nx-calendar-invited {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.nx-calendar-invited button {
+  overflow-wrap: anywhere;
+}
+
+.nx-calendar-candidates {
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.nx-calendar-candidates label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  min-height: 36px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.nx-calendar-candidates label:hover,
+.nx-calendar-candidates label:focus-within {
+  background: var(--bg-hover);
+}
+
+.nx-calendar-candidates small {
+  display: block;
+  color: var(--text-secondary);
+}
+
+.nx-calendar-event-facts {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.nx-calendar-event-facts dt,
+.nx-calendar-attendees h4 {
+  font-weight: 600;
+}
+
+.nx-calendar-event-facts dd {
+  margin: var(--space-1) 0 0;
+}
+
+.nx-calendar-event-zone {
+  display: block;
+}
+
+.nx-calendar-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.nx-calendar-attendees h4 {
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.nx-calendar-attendees li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.nx-calendar-modal-actions {
+  justify-content: flex-end;
+  margin-block-start: var(--space-4);
+}
+
+.nx-calendar-modal-actions p {
+  margin: 0 auto 0 0;
+}
+
+@media (max-width: 520px) {
+  .nx-calendar-page {
+    padding-inline: var(--space-2);
+  }
+
+  .nx-calendar-controls {
+    align-items: stretch;
+  }
+
+  .nx-calendar-controls .nx-field {
+    flex-basis: 100%;
+  }
+
+  .nx-calendar-new,
+  .nx-calendar-views {
+    margin-inline-start: 0;
+  }
+
+  .nx-calendar-toolbar {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .nx-calendar-toolbar h2 {
+    flex-basis: 100%;
+    font-size: 1rem;
+  }
+
+  .nx-calendar-grid {
+    font-size: 0.75rem;
+  }
+
+  .nx-calendar-form-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

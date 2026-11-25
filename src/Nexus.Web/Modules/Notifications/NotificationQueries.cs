@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Calendar;
 using Nexus.Web.Modules.Conversations;
 
 namespace Nexus.Web.Modules.Notifications;
@@ -8,6 +9,9 @@ namespace Nexus.Web.Modules.Notifications;
 internal static class NotificationQueries
 {
     public static IQueryable<NotificationEntity> VisibleTo(NexusDbContext db, Guid recipientId) =>
+        VisibleConversationNotifications(db, recipientId).Concat(VisibleCalendarNotifications(db, recipientId));
+
+    private static IQueryable<NotificationEntity> VisibleConversationNotifications(NexusDbContext db, Guid recipientId) =>
         from notification in db.Notifications.AsNoTracking()
         join conversation in db.Conversations.AsNoTracking() on notification.ConversationId equals conversation.Id
         where notification.RecipientId == recipientId && notification.OrganizationId == conversation.OrganizationId &&
@@ -35,6 +39,23 @@ internal static class NotificationQueries
                       db.ChannelPosts.Any(post => post.Id == comment.PostId && post.ConversationId == conversation.Id && post.DeletedAt == null))
                   : db.ChannelPosts.Any(post => post.Id == notification.ResourceId && post.ConversationId == conversation.Id && post.DeletedAt == null))
         select notification;
+
+    private static IQueryable<NotificationEntity> VisibleCalendarNotifications(NexusDbContext db, Guid recipientId)
+    {
+        var events = CalendarAccess.VisibleTo(db, recipientId);
+        return
+            from notification in db.Notifications.AsNoTracking()
+            join eventItem in events on notification.ResourceId equals eventItem.Id
+            where notification.RecipientId == recipientId && notification.OrganizationId == eventItem.OrganizationId &&
+                (notification.Kind == CalendarOutbox.Invitation || notification.Kind == CalendarOutbox.Updated ||
+                 notification.Kind == CalendarOutbox.Canceled || notification.Kind == CalendarOutbox.Reminder)
+            where (eventItem.CanceledAt != null) == (notification.Kind == CalendarOutbox.Canceled) &&
+                (notification.Kind != CalendarOutbox.Reminder || eventItem.ReminderOutboxId == notification.OutboxMessageId)
+            where eventItem.OrganizerId == recipientId || db.CalendarAttendees.Any(attendee =>
+                attendee.EventId == eventItem.Id && attendee.UserId == recipientId &&
+                (notification.Kind != CalendarOutbox.Reminder || attendee.Status != CalendarRsvp.Declined))
+            select notification;
+    }
 
     public static IQueryable<NotificationEntity> Unread(
         NexusDbContext db, IQueryable<NotificationEntity> visible, Guid recipientId) =>

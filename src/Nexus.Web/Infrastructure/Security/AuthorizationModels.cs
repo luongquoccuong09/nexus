@@ -38,7 +38,8 @@ public enum ResourceKind
     SelfChat,
     Community,
     CommunityChannel,
-    Monitor
+    Monitor,
+    CalendarEvent
 }
 
 public enum Visibility
@@ -89,7 +90,11 @@ public enum ResourceAction
     ManageOwnDmReadReceipts,
     MonitorRead,
     MonitorExecute,
-    MessagePin
+    MessagePin,
+    CalendarRead,
+    CalendarCreate,
+    CalendarEdit,
+    CalendarRespond
 }
 
 public sealed record ActorContext(
