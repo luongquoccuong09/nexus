@@ -55,7 +55,7 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
                 member.Account.Status == AccountStatus.Active, ct);
 
     internal async Task<ResolvedConversationAccess?> FindConversationAsync(
-        Guid conversationId, OrganizationMembership actor, bool starting, CancellationToken ct)
+        Guid conversationId, OrganizationMembership actor, bool starting, CancellationToken ct, bool allowBlockedRead = false)
     {
         var scope = actor.OrganizationId == Guid.Empty ? (Guid?)null : actor.OrganizationId;
         var item = await db.Conversations.AsNoTracking()
@@ -63,7 +63,8 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
         if (item is null || item.Kind == ConversationKind.Self) return null;
 
         var access = await CommunityAccessHelper.ResolveAsync(db, actor, item, ct);
-        return access is not null && !access.Resource.IsBlocked && !access.Resource.IsArchived &&
+        return access is not null && !access.Resource.IsArchived &&
+            (!access.Resource.IsBlocked || allowBlockedRead && !starting && item.Kind == ConversationKind.Dm) &&
             authz.Can(actor.ToActorContext(), starting ? ResourceAction.MessageSend : ResourceAction.ConversationRead, access.Resource)
             ? access
             : null;

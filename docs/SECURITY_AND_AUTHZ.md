@@ -101,6 +101,8 @@ Occurrence reads and `.ics` export check the current authorization of the series
 
 Joining or starting a meeting requires an active account and current access to the originating Calendar event or conversation. Meet now also checks whether the account can write to the conversation. Community channels inherit Community access and their posting rules. DM blocks and archived channels deny media access. Only the host can end a room or remove an account.
 
+Meeting discovery returns a neutral unavailable state for a blocked DM that the caller can still read. Other DM media operations still enforce the block. Unknown and inaccessible conversation IDs return `404`.
+
 Nexus issues a 60-second room credential bound to one grant. The signaling gateway validates the signature, grant, BFF session, and current resource access before every connection and reconnect, including provider-refreshed credentials. A host removal blocks the account for that room and revokes its device grants. Source access changes and event cancellation revoke admission and evict affected provider participants. The durable reconciliation worker retries incomplete provider cleanup. Provider signaling and administration are private, and the gateway forwards credentials in an authorization header over the private connection.
 
 Recurring meeting admission resolves the original occurrence and checks its current availability. Canceling an occurrence revokes its room grants. Canceling the series revokes all rooms under the event.

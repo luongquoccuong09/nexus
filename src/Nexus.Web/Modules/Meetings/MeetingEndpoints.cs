@@ -64,8 +64,9 @@ internal static class MeetingEndpoints
         MeetingsAccess access, IMeetingProvider provider, CancellationToken ct)
     {
         var actor = db.OrganizationActor!;
-        if (await access.FindConversationAsync(conversationId, actor, false, ct) is null) return Results.NotFound();
-        if (!provider.Enabled)
+        var conversation = await access.FindConversationAsync(conversationId, actor, false, ct, allowBlockedRead: true);
+        if (conversation is null) return Results.NotFound();
+        if (!provider.Enabled || conversation.Resource.IsBlocked)
         {
             http.Response.Headers["Nexus-Meetings-Available"] = "false";
             return Results.NoContent();

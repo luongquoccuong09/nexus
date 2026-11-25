@@ -32,6 +32,8 @@ Update this table whenever a migration adds or changes a table.
 | **Admin** | `audit_logs` | Append-only administrative audit trail (registration, login, verification, renames, disablements, password changes/resets, MFA) | M1.6 (**Done**), M7.1, M7.5 |
 | **Monitor** | `monitor_runs`, `monitor_audit_events` | Single active slot enforced by a partial unique index. `xmin` protects transitions. The request UUID identifies an idempotent start, the lease generation scopes runner updates, and run and lifecycle changes commit together. Payloads hold typed configuration and aggregate summaries. | M8.2, M8.5 |
 
+M6.15 verifies room isolation, grant revocation, and reconnect against the Calendar, Meetings, and Calls schema.
+
 ## 3. Search and indexing notes
 
 - **Vietnamese directory search (M1.10).** The Organization membership Directory uses PostgreSQL `public.immutable_unaccent` and GIN `pg_trgm` indexes on `organization_memberships(display_name)` and `organization_memberships(username)` and requires active account and membership rows.

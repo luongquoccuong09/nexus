@@ -149,7 +149,7 @@ Calendar create and update accept optional `isOnlineMeeting`. The Calendar event
 |---|---|
 | `POST /calendar/events/{id}/meeting/join` | Joins an eligible online event and creates its room on first use. A recurring event requires `occurrenceStartUtc` in the query and assigns a distinct room to that original occurrence. |
 | `POST /conversations/{id}/meetings` | Starts or reuses the active Meet now room. Returns `{ meetingId, organizationId, title }`. |
-| `GET /conversations/{id}/meetings/current` | Returns the accessible active room summary or `204`. When meetings are unavailable to the caller, `204` includes `Nexus-Meetings-Available: false`. |
+| `GET /conversations/{id}/meetings/current` | Returns the accessible active room summary or `204`. A disabled provider or a blocked DM the caller can still read returns `204` with `Nexus-Meetings-Available: false`. This response contains no room or grant details. |
 | `POST /meetings/{id}/join` | Joins an existing room after rechecking source access. Both join endpoints return `{ meetingId, organizationId, title, grantId, canManage, signalPath, token }` with `Cache-Control: no-store`. |
 | `POST /meetings/{id}/leave` | Revokes the caller's own session-bound `{ grantId }` and returns `204`. |
 | `POST /meetings/{id}/end` | Ends the room for everyone and revokes every active grant. The host controls this command. |

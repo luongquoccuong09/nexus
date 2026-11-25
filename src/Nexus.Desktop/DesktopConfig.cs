@@ -20,20 +20,45 @@ public static class DesktopConfigStore
 {
     private const string RunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "ProjectNexus";
+    private const string DataRootVariable = "NEXUS_DESKTOP_DATA_ROOT";
+    private static readonly Lazy<string?> ConfiguredDataRoot = new(FindConfiguredDataRoot);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
     };
 
-    public static string UserDataRoot =>
+    private static string DefaultDataRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ProjectNexus");
+
+    internal static string? IsolatedDataRoot => ConfiguredDataRoot.Value;
+
+    public static string UserDataRoot => IsolatedDataRoot ?? DefaultDataRoot;
 
     public static string WebView2DataDir => Path.Combine(UserDataRoot, "WebView2");
 
     public static string UserConfigPath => Path.Combine(UserDataRoot, "config.json");
 
     public static string BundledConfigPath => Path.Combine(AppContext.BaseDirectory, "desktop-config.json");
+
+    private static string? FindConfiguredDataRoot()
+    {
+        if (Environment.GetEnvironmentVariable(DataRootVariable) is not { } requested)
+        {
+            return null;
+        }
+        if (!Path.IsPathFullyQualified(requested))
+        {
+            throw new ArgumentException($"{DataRootVariable} requires an absolute directory path.");
+        }
+
+        var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(requested));
+        if (string.Equals(path, DefaultDataRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"{DataRootVariable} requires a separate profile directory.");
+        }
+        return path;
+    }
 
     public static DesktopUserConfig Load()
     {
@@ -141,6 +166,7 @@ public static class DesktopConfigStore
 
     public static bool IsStartWithWindowsEnabled()
     {
+        if (IsolatedDataRoot is not null) return false;
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunRegistryPath, writable: false);
@@ -155,6 +181,9 @@ public static class DesktopConfigStore
 
     public static void SetStartWithWindows(bool enabled)
     {
+        if (IsolatedDataRoot is not null)
+            throw new InvalidOperationException("Start with Windows is unavailable for an isolated profile.");
+
         using var key = Registry.CurrentUser.CreateSubKey(RunRegistryPath);
         if (enabled)
         {

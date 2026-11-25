@@ -176,6 +176,12 @@ public sealed class MeetingsM612Tests(PostgresContainerFixture postgres) : IClas
         await ValidateSignalAsync(attendee, rejoined, HttpStatusCode.OK);
 
         await organizer.SendAsync(HttpMethod.Put, $"{PersonalApi}/people/blocks/{attendeeId}", expected: HttpStatusCode.NoContent);
+        foreach (var peer in new[] { organizer, attendee })
+        {
+            using var unavailable = await peer.Http.GetAsync($"{personalStart}/current");
+            Assert.Equal(HttpStatusCode.NoContent, unavailable.StatusCode);
+            Assert.Equal("false", Assert.Single(unavailable.Headers.GetValues("Nexus-Meetings-Available")));
+        }
         await ValidateSignalAsync(attendee, rejoined, HttpStatusCode.Unauthorized);
         await upstream.WaitForRemovedAsync(ReadClaims(rejoined).Room, rejoined.GrantId);
         await attendee.SendAsync(HttpMethod.Post, $"{personalRoom}/join", expected: HttpStatusCode.NotFound);

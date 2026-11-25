@@ -153,7 +153,8 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 - [x] **M6.12** Add scheduled meetings and Meet now. Reuse the provider for group audio/video and screen sharing. Verify joining from an event or conversation and leaving or ending the meeting. → M6.10, M6.11
 - [x] **M6.13** Add direct voice and video calls from eligible Personal and Organization chats. Handle ringing, accept, decline, cancel, missed, and end states across signed-in devices. Reuse meeting media and screen sharing. → M2.14, M6.12
 - [x] **M6.14** Add recurring events, single-occurrence exceptions and cancellations, and authorized `.ics` export. Verify local meeting times across daylight-saving transitions. → M6.10, M6.11
-- [ ] **M6.15** Verify the complete calendar and calling flows in supported browsers and the Windows Desktop client. Exercise permission denial, reconnect, concurrent devices, and authorization changes. Measure media capacity in the target deployment. → M6.12–M6.14, M8.2
+- [x] **M6.15** Verify the calendar and calling flows locally in supported browsers and the Windows Desktop client. Exercise permission denial, reconnect, concurrent devices, room isolation, and authorization changes. → M6.12–M6.14
+- [ ] **M6.15 staging** Verify external UDP and corporate TURN/TLS fallback. Measure media capacity in the target deployment and attach the results to the M8 review. → M6.15, M8.2
 
 ### Existing workflows and UI gaps
 

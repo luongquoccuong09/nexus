@@ -304,11 +304,11 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
   }
 
   async function closeRoom() {
+    if (actionRef.current) return;
     if (intent.kind !== 'directCall') {
       onClose();
       return;
     }
-    if (actionRef.current) return;
     const controller = new AbortController();
     actionRef.current = controller;
     setBusy(true);

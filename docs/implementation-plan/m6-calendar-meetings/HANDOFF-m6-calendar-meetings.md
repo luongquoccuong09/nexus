@@ -250,3 +250,89 @@ pwsh -File "$recurrenceQa\start-host.ps1" *> "$recurrenceQa\web.log"
 # In another shell, with the host running
 node "$recurrenceQa\recurrence-qa.mjs"
 ```
+
+## M6.15 Release verification
+
+Local verification completed November 26, 2026. The full pipeline passed 214 PostgreSQL 17 integration tests, 65 client unit tests, the security and UI audits, and Web and Desktop Release builds. One opt-in Monitor test was skipped. The roadmap retains a staging checkbox for the target deployment gate below.
+
+The local validation uses the built SPA, the normal Nexus.Web application, PostgreSQL 17, and a single-node LiveKit provider behind the private signaling gateway. The browser matrix uses two accounts in independent Edge contexts at `1440×900`, `390×844`, and `320×700` in Light and Dark. The two-account Desktop runs use the Release `ProjectNexus` executable and WebView2 on a private Windows desktop with an isolated profile.
+
+The browser matrix covered Calendar and RSVP, recurring events, scheduled meetings, Chat and Community Meet now, and direct calls across concurrent devices. The scheduled meeting fixture held the confirmed end request, pressed Escape, and verified that the command completed and closed the room. The direct call fixture verified microphone denial and retry, video, synthetic tab sharing, and ring dismissal on both accounts' other sessions.
+
+The Desktop matrix exercised Calendar and Activity, recurrence and `.ics`, scheduled and immediate meetings, and direct calls with a separate Edge participant. The actual WebView2 runtime was `158.0.4370.33`. A private test profile denied and recovered camera and microphone permissions using synthetic hardware. Edge decoded the screen share of the generated window on the private desktop. Desktop also restored bidirectional RTP on the original page 2,205 ms after a signaling interruption. A block from a second login closed sockets and tracks in 482 ms. The isolation, permission, and final network runs recorded zero unexpected diagnostics.
+
+The Windows verification uses the process-scoped `NEXUS_DESKTOP_DATA_ROOT` option with a fresh absolute profile path. That option scopes the WebView2 history, configuration, and singleton for the test process. The launcher creates a private Windows desktop and a generated screen-sharing window. It verifies that the foreground desktop stays active throughout the test.
+
+The final isolated Desktop build measured 982 ms for voice and 614 ms for video from the answer click to bidirectional inbound audio. The four-device Edge matrix measured 610 and 613 ms on the later samples and 1,673 ms on the first sample while the Desktop matrix was also running. An authorized incoming ring now starts loading the deferred media module. The browser confirmed the chunk was absent from startup and that the ringing tab held zero media peer connections before acceptance.
+
+The network fixture on Edge `158.0.4370.33` joined two unrelated private scheduled rooms. Each participant roster contained one account and neither room received a remote track. An unrelated account's join returned `404`, and presenting a grant from the wrong BFF session returned `401`. The fixture interrupted one active media signaling socket. Nexus displayed Reconnecting and returned to Connected without a reload in 2,321 ms, with bidirectional audio continuing. Blocking the other account from a second signed-in session closed both peers' sockets and capture in 793 ms. Both prior grants returned `401`, replacement admission returned `404`, and meeting discovery returned the neutral unavailable response. The final run had zero unexpected diagnostics.
+
+The local capacity probe used headless Edge `158.0.4370.33`, LiveKit `1.13.11`, and Docker Desktop `29.9.3` on an Intel Core i7-8700 host with 12 logical CPUs. Each provider container had a two-CPU, 512 MiB limit. Samples used synthetic 640×360 video at 12 fps with simulcast disabled. Docker CPU percentages use one CPU as the 100% reference. Interface counters supply the receive and send rates.
+
+| Selected transport and topology | Sustained inbound tracks | Time to media for all clients | Resource and traffic sample |
+|---|---:|---:|---|
+| UDP video, three rooms with 4 + 2 + 2 accounts | 16 audio and 16 video | 2.190 s | Median CPU 25.08%, peak 27.68%. RAM 84.65–85.57 MiB. Receive 2.032 Mb/s, send 3.924 Mb/s over 19.41 s. |
+| UDP voice, four concurrent two-account calls | 8 audio | 1.777 s | Median CPU 15.14%, peak 17.03%. RAM 72.03–72.88 MiB. Receive 0.847 Mb/s, send 0.831 Mb/s over 15.30 s. |
+| Direct ICE/TCP video, two accounts with UDP disabled in the test provider | 2 audio and 2 video | 1.111 s | Median CPU 5.76%, peak 6.25%. RAM 60.68–61.52 MiB. Receive 0.546 Mb/s, send 0.537 Mb/s over 11.58 s. |
+
+The largest exercised room held four participants. Four one-to-one voice calls ran concurrently. These measurements establish a local lower bound. Staging should use the expected participant mix, network paths, and soak duration.
+
+```powershell
+$networkQa = 'D:/develop/.nexus-m610-eval/m615-network'
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj -c Release --no-restore --filter FullyQualifiedName~PersonalAndCommunityMeetNowFollowLiveConversationMembership
+dotnet publish src/Nexus.Web/Nexus.Web.csproj -c Release --no-restore -p:SkipClientPublish=true -o "$networkQa/web"
+npm.cmd --prefix src/Nexus.Client run build
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$networkQa/web/wwwroot" -Recurse -Force
+pwsh -NoProfile -File "$networkQa/start-host.ps1" -WebRoot "$networkQa/web"
+# In a separate shell while the host runs
+node "$networkQa/network-qa.mjs"
+
+$capacityQa = 'D:/develop/.nexus-m610-eval/m615-capacity'
+pwsh -NoProfile -File "$capacityQa/Start-ProbeProviders.ps1"
+node "$capacityQa/capacity.mjs" video-udp
+node "$capacityQa/capacity.mjs" voice-udp
+node "$capacityQa/capacity.mjs" video-tcp
+```
+
+```powershell
+$releaseQa = 'D:/develop/.nexus-m610-eval/m615'
+dotnet publish src/Nexus.Web -c Release --artifacts-path "$releaseQa/artifacts" -p:SkipClientPublish=true -o "$releaseQa/web"
+npm.cmd --prefix src/Nexus.Client run build -- --outDir "$releaseQa/client"
+New-Item -ItemType Directory -Force "$releaseQa/web/wwwroot" | Out-Null
+Copy-Item -Path "$releaseQa/client/*" -Destination "$releaseQa/web/wwwroot" -Recurse -Force
+pwsh -File "$releaseQa/start-host.ps1" *> "$releaseQa/web.log"
+# In a separate shell while the host runs
+node "$releaseQa/calendar-qa.mjs"
+node "$releaseQa/recurrence-qa.mjs"
+node "$releaseQa/scheduled-meetings-qa.mjs"
+node "$releaseQa/calls-qa.mjs"
+```
+
+```powershell
+$desktopQa = 'D:/develop/.nexus-m610-eval/m615-desktop'
+$desktopExe = 'D:/develop/nexus-workplace/src/Nexus.Desktop/bin/Release/net10.0-windows/ProjectNexus.exe'
+dotnet build src/Nexus.Desktop/Nexus.Desktop.csproj -c Release
+dotnet build "$desktopQa/DesktopQaLauncher.csproj" -c Release -o "$desktopQa/launcher-native"
+pwsh -File 'D:/develop/.nexus-m610-eval/m614/start-host.ps1' -WebRoot "$releaseQa/web" *> "$releaseQa/web-desktop.log"
+# Use a fresh profile for each independent group. Run the launcher in a separate shell.
+& "$desktopQa/launcher-native/DesktopQaLauncher.exe" $desktopExe "$desktopQa/private-media" 18753 --native-permissions
+& "$desktopQa/launcher-native/DesktopQaLauncher.exe" $desktopExe "$desktopQa/private-calendar" 18754
+node "$desktopQa/permissions-cdp.mjs"
+node "$desktopQa/scheduled-meetings-qa.mjs"
+node "$desktopQa/network-qa.mjs"
+node "$desktopQa/calendar-qa.mjs"
+node "$desktopQa/recurrence-qa.mjs"
+node "$desktopQa/calls-qa.mjs"
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+### Target deployment gate
+
+Local measurements cover the loopback Docker and browser configuration. Complete the staging gate when the target deployment and a second test network are accessible.
+
+1. Deploy the approved single-node LiveKit version in the pilot region with a TLS-valid private signaling and administration origin. Verify that the external network reaches the configured ICE endpoints and Nexus media gateway.
+2. Join with two test accounts on different network paths. Capture selected ICE candidate types and protocols for the direct UDP path. Repeat from a managed VPN or UDP-restricted corporate path and verify the selected TURN/TLS relay.
+3. Exercise scheduled meetings, Meet now, direct voice and video, and screen sharing in the browser and Windows Desktop. Test reconnect and revoke room access while media is active. Verify denial of both fresh admission and previously issued credentials after revocation.
+4. Measure stable room size and concurrent-call capacity for the target participant mix. Record answer latency, RTP loss and jitter, CPU, memory, and network and relay egress. Use the M8.2 metrics and agreed pilot thresholds to identify the supported limits.
+5. Attach staging results and deployment settings to the M8 review package before enabling meetings or calls for the pilot.

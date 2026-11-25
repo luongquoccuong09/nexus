@@ -181,6 +181,10 @@ export default function DirectCallProvider({ children, userId, connectionState, 
   const outgoing = ringing.find(call => call.callerId === userId && wantedHere.current.has(call.id)) ??
     ringing.find(call => call.callerId === userId);
   const ring = incoming ?? outgoing;
+  const hasIncoming = incoming !== undefined;
+  useEffect(() => {
+    if (hasIncoming) preloadMeetingRoom();
+  }, [hasIncoming]);
   useRingtone(incoming?.conversationId ?? null, suppressChime || Boolean(incoming && busyCalls.includes(incoming.id)));
 
   const canStart = available && !sending && !ring && !mediaActive;

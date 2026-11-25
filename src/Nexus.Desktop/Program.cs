@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Nexus.Desktop;
 
 internal static class Program
@@ -15,9 +18,20 @@ internal static class Program
         }
 
         var startMinimized = args.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase));
+        string suffix;
+        try
+        {
+            suffix = DesktopConfigStore.IsolatedDataRoot is { } profile
+                ? "." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(profile.ToUpperInvariant())))
+                : string.Empty;
+        }
+        catch (ArgumentException)
+        {
+            return 2;
+        }
 
-        using var mutex = new Mutex(initiallyOwned: true, MutexName, out var createdNew);
-        using var activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+        using var mutex = new Mutex(initiallyOwned: true, MutexName + suffix, out var createdNew);
+        using var activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName + suffix);
 
         if (!createdNew)
         {
