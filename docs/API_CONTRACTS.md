@@ -168,6 +168,8 @@ The browser connects to `/api/media/rtc` or `/api/media/rtc/v1` on the same orig
 
 Call state is `ringing`, `accepted`, `declined`, `canceled`, `missed`, or `ended`. Ringing expires after 30 seconds. An accepted call has a linked meeting ID. Current call reads expose the initiating and receiving accounts, scope, relevant timestamps, and a monotonic version. Only the initiating session and the session that accepted the call can request media admission. An authorized Organization message link also returns `conversationKind` so its chat context can show the call controls for a DM.
 
+`GET /api/calls/history` lists the signed-in account's terminal calls across accessible Personal and Organization DMs (`M6.35`). The `filter` values are `all` (default), `incoming`, `outgoing`, and `missed`. Missed shows unanswered inbound calls. The response is `{ items, nextCursor }`, ordered by newest creation instant and then call ID, with at most 50 entries per page. Each entry includes `id`, `organizationId`, `conversationId`, `counterpartId`, `counterpartName`, lowercase `kind`, `state`, and `direction`, `createdAt`, `acceptedAt`, `endedAt`, and `durationSeconds` when the call connected. `canCallBack` reflects current provider and DM eligibility. Call back submits to the normal direct-call start endpoint, which rechecks permissions and the start quota.
+
 ### Sidebar organization and previews (`M6.26`)
 
 - `GET /api/sidebar?surface=chat|communities` returns `{ surface, sections, items }` (`Cache-Control: no-store`), capped at 50 sections per surface, joining items against current active conversation/community/organization memberships (plus `SEC-20b` Verified status for Official communities).

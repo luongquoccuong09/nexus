@@ -17,6 +17,7 @@ internal static class DirectCallEndpoints
     internal static IEndpointRouteBuilder MapDirectCalls(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/calls/active", ListActiveAsync);
+        app.MapGet("/api/calls/history", DirectCallHistory.ListAsync);
         foreach (var scope in new[] { OrganizationScope.PersonalApi, OrganizationScope.Api })
         {
             var routes = app.MapGroup(scope);

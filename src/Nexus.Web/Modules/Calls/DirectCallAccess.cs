@@ -8,6 +8,9 @@ namespace Nexus.Web.Modules.Calls;
 internal static class DirectCallAccess
 {
     internal static IQueryable<DirectCallEntity> Eligible(NexusDbContext db) =>
+        Unblocked(db, Readable(db));
+
+    internal static IQueryable<DirectCallEntity> Readable(NexusDbContext db) =>
         db.DirectCalls.AsNoTracking().Where(call =>
             db.Users.Any(account => account.Id == call.CallerId && account.Status == AccountStatus.Active) &&
             db.Users.Any(account => account.Id == call.CalleeId && account.Status == AccountStatus.Active) &&
@@ -21,8 +24,10 @@ internal static class DirectCallAccess
             db.ConversationMembers.Any(member => member.ConversationId == call.ConversationId &&
                 member.UserId == call.CallerId && member.LeftAt == null) &&
             db.ConversationMembers.Any(member => member.ConversationId == call.ConversationId &&
-                member.UserId == call.CalleeId && member.LeftAt == null) &&
-            !db.UserBlocks.Any(block => block.OrganizationId == (call.OrganizationId ?? Guid.Empty) &&
+                member.UserId == call.CalleeId && member.LeftAt == null));
+
+    internal static IQueryable<DirectCallEntity> Unblocked(NexusDbContext db, IQueryable<DirectCallEntity> calls) =>
+        calls.Where(call => !db.UserBlocks.Any(block => block.OrganizationId == (call.OrganizationId ?? Guid.Empty) &&
                 (block.BlockerUserId == call.CallerId && block.BlockedUserId == call.CalleeId ||
                  block.BlockerUserId == call.CalleeId && block.BlockedUserId == call.CallerId)));
 

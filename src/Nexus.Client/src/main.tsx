@@ -2,7 +2,7 @@ import { chatFetch as fetch, initialOrganizationId, orgFetch, personalContactLin
 import { ContactControls, listOrganizations, OrganizationItem, WorkspaceModals, WorkspaceModalState } from './organizationControls';
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, Briefcase, CalendarDays, Command, LayoutGrid, LogOut, MessageSquare, Moon, Search, Shield, Sun, Tag, Users } from 'lucide-react';
+import { Activity, Bell, Briefcase, CalendarDays, Command, LayoutGrid, LogOut, MessageSquare, Moon, Phone, Search, Shield, Sun, Tag, Users } from 'lucide-react';
 import {
   ChatJumpTarget,
   clearContentLinkFromUrl,
@@ -49,6 +49,7 @@ const ActivityWorkspace = lazy(() =>
 const CommunitiesWorkspace = lazy(() => import('./communities'));
 const ChatWorkspace = lazy(() => import('./chat').then(module => ({ default: module.ChatWorkspace })));
 const CalendarWorkspace = lazy(() => import('./calendar/CalendarWorkspace'));
+const CallsHistoryWorkspace = lazy(() => import('./calls/CallsHistoryWorkspace'));
 const MessageSearchDialog = lazy(() => import('./MessageSearchDialog'));
 const ForwardContentDialog = lazy(() => import('./ForwardContentDialog'));
 const OrganizationMessageContext = lazy(() => import('./OrganizationMessageContext'));
@@ -231,11 +232,11 @@ function App() {
   const registerTabRef = useRef<HTMLButtonElement | null>(null);
   const loginUsernameRef = useRef<HTMLInputElement | null>(null);
 
-  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'calendar' | 'communities' | 'directory' | 'security' | 'hr' | 'monitor'>(() => {
+  const [workspaceTab, setWorkspaceTab] = useState<'activity' | 'chat' | 'calls' | 'calendar' | 'communities' | 'directory' | 'security' | 'hr' | 'monitor'>(() => {
     if (personalContactLink) return 'directory';
     if (initialOrganizationId) return 'communities';
     const view = new URLSearchParams(window.location.search).get('view');
-    return view === 'security' || view === 'activity' || view === 'calendar' ? view : 'chat';
+    return view === 'security' || view === 'activity' || view === 'calendar' || view === 'calls' ? view : 'chat';
   });
   const hideMonitor = useCallback(() => {
     setUser(current => current ? { ...current, canViewMonitor: false } : current);
@@ -1178,6 +1179,7 @@ function App() {
   const pageTitle =
     workspaceTab === 'activity' ? 'Activity' :
     workspaceTab === 'chat' ? 'Chat' :
+    workspaceTab === 'calls' ? 'Calls' :
     workspaceTab === 'calendar' ? 'Calendar' :
     workspaceTab === 'communities' ? 'Communities' :
     workspaceTab === 'directory' ? 'People' :
@@ -1219,6 +1221,16 @@ function App() {
                 {unreadTotal > 99 ? '99+' : unreadTotal}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            className={`nx-rail-btn ${workspaceTab === 'calls' ? 'active' : ''}`}
+            aria-current={workspaceTab === 'calls' ? 'page' : undefined}
+            onClick={() => setWorkspaceTab('calls')}
+          >
+            <Phone size={20} aria-hidden="true" />
+            <span>Calls</span>
           </button>
 
           <button
@@ -1400,6 +1412,11 @@ function App() {
                 }}
                 onRead={() => refreshMentionCountRef.current?.()}
               />
+            </Suspense>
+          )}
+          {workspaceTab === 'calls' && (
+            <Suspense fallback={<div className="nx-empty-side" role="status">Loading Calls…</div>}>
+              <CallsHistoryWorkspace userId={user.id} organizations={organizations} accessRevision={candidateRevision} />
             </Suspense>
           )}
           {workspaceTab === 'calendar' && (

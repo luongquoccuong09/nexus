@@ -113,6 +113,8 @@ An eligible Personal or Organization DM must have two active participants and no
 
 The initiating and winning recipient BFF sessions may join call media. Other signed-in sessions receive call state changes so they can stop ringing and dismiss the prompt. State change fanout carries identifiers, state, and version. Session binding and media credentials use separate request-time authorization.
 
+Call history checks the current account, DM participation, and Organization membership before showing a record or a counterpart. The history of a readable blocked DM can be viewed with Call back unavailable. Every call-back request uses the direct-call start authorization, including the current block and rate limit.
+
 ## 3. Domain Authorization Contract (`M0.4`)
 
 Implemented in `src/Nexus.Web/Infrastructure/Security/`:

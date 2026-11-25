@@ -336,3 +336,30 @@ Local measurements cover the loopback Docker and browser configuration. Complete
 3. Exercise scheduled meetings, Meet now, direct voice and video, and screen sharing in the browser and Windows Desktop. Test reconnect and revoke room access while media is active. Verify denial of both fresh admission and previously issued credentials after revocation.
 4. Measure stable room size and concurrent-call capacity for the target participant mix. Record answer latency, RTP loss and jitter, CPU, memory, and network and relay egress. Use the M8.2 metrics and agreed pilot thresholds to identify the supported limits.
 5. Attach staging results and deployment settings to the M8 review package before enabling meetings or calls for the pilot.
+
+## M6.35 Calls history
+
+Verified November 26, 2026. The full pipeline passed 216 PostgreSQL 17 integration tests, 68 client unit tests, security and UI audits, and the Web and Desktop Release builds. One opt-in Monitor test was skipped.
+
+Calls lists accessible completed Personal and Organization calls. All, Incoming, Outgoing, and Missed use the same 50-entry cursor limit. Rows show the current counterpart, call type and direction, local time, outcome, and duration for connected calls. Call back keeps the original type and scope and reuses the direct-call authorization and rate limit. A DM block leaves its accessible history visible with Call back unavailable. Removing Organization access hides the affected records.
+
+The PostgreSQL 17 fixtures verify a 50-item boundary containing tied timestamps, identical pages from independent BFF sessions, inbound missed filtering, scope and disabled account checks, and denial after blocking. The history uses the existing caller and recipient indexes and terminal call records. The rail destination loads a separate client module and leaves the media bundle deferred until a call uses it.
+
+```powershell
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj --configuration Release --artifacts-path 'D:/develop-nexus-m610-jitsi/m635-test-release-artifacts' --filter 'FullyQualifiedName~CallHistoryM635Tests|FullyQualifiedName~DirectCallsM613Tests' --logger 'console;verbosity=minimal' --nologo
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The two-account Edge fixture passed at `1440×900`, `390×844`, and `320×700` in Light and Dark with zero unexpected browser or network errors. Both accounts paged through 57 history rows and used the filters with the keyboard. The fixture placed a call back from a narrow-screen row, verified that a blocked DM's existing rows remained available with Call back disabled, and confirmed Organization rows disappeared after revocation. The startup and history trace excluded the deferred media bundle. The fixture and logs are in `D:\develop\.nexus-m610-eval\m635`. It uses isolated PostgreSQL history fixtures and the normal application routes for profiles, contacts, call back, block, and revocation.
+
+```powershell
+$historyQa = 'D:/develop/.nexus-m610-eval/m635'
+dotnet publish src/Nexus.Web -c Release --artifacts-path "$historyQa/artifacts" -p:SkipClientPublish=true -o "$historyQa/web"
+npm.cmd --prefix src/Nexus.Client run build
+New-Item -ItemType Directory -Force "$historyQa/web/wwwroot" | Out-Null
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$historyQa/web/wwwroot" -Recurse -Force
+pwsh -File "$historyQa/start-host.ps1" *> "$historyQa/web.log"
+# In a separate shell while the host runs
+node "$historyQa/history-qa.mjs"
+```

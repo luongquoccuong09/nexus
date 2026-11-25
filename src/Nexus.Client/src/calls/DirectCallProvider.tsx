@@ -15,6 +15,7 @@ interface DirectCallContextValue {
   receive: (change: DirectCallChange) => void;
   available: boolean;
   canStart: boolean;
+  historyRevision: number;
 }
 
 const DirectCallContext = createContext<DirectCallContextValue | null>(null);
@@ -43,6 +44,7 @@ export default function DirectCallProvider({ children, userId, connectionState, 
   const retry = useRef<{ key: string; id: string } | null>(null);
   const [rows, setRows] = useState<CallRecord[]>([]);
   const [available, setAvailable] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [sending, setSending] = useState<string | null>(null);
   const [busyCalls, setBusyCalls] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
@@ -67,6 +69,7 @@ export default function DirectCallProvider({ children, userId, connectionState, 
     if (next === previous) return false;
     records.current.set(change.id, next);
     if (!isCallActive(change.state)) {
+      if (!previous || previous.change.version < change.version) setHistoryRevision(current => current + 1);
       wantedHere.current.delete(change.id);
       openedHere.current.delete(change.id);
       closeCall(change.id);
@@ -263,7 +266,8 @@ export default function DirectCallProvider({ children, userId, connectionState, 
 
   const resume = !mediaActive && !ring && rows.find(record =>
     !openedHere.current.has(record.change.id) && shouldJoinCallMedia(record, true)) || null;
-  const value = useMemo(() => ({ start, receive, available, canStart }), [start, receive, available, canStart]);
+  const value = useMemo(() => ({ start, receive, available, canStart, historyRevision }),
+    [start, receive, available, canStart, historyRevision]);
   const title = incoming ? `Incoming ${incoming.kind.toLowerCase()} call` : outgoing || sending
     ? `Calling ${outgoing?.calleeName ?? sending}` : 'Call in progress';
 
