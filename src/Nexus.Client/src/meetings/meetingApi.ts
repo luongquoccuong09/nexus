@@ -8,7 +8,7 @@ interface MeetingCredentials extends MeetingSession { signalPath: string; token:
 export interface MeetingConversation extends MeetingScope { conversationId: string }
 
 export type MeetingIntent =
-  | { kind: 'calendar'; organizationId: string | null; eventId: string; title: string }
+  | { kind: 'calendar'; organizationId: string | null; eventId: string; title: string; occurrenceStartUtc?: string | null }
   | ({ kind: 'conversation'; title: string } & MeetingConversation)
   | ({ kind: 'meeting' } & MeetingSummary)
   | ({ kind: 'directCall'; callId: string; callKind: DirectCallKind; onEnded: (call: DirectCall) => void } & MeetingSummary);
@@ -44,7 +44,8 @@ export async function currentMeeting(conversation: MeetingConversation, signal: 
 
 export async function joinMeeting(intent: MeetingIntent, signal: AbortSignal): Promise<MeetingCredentials> {
   if (intent.kind === 'calendar') {
-    const response = await meetingRequest(scoped(intent, `/calendar/events/${intent.eventId}/meeting/join`), 'POST', undefined, signal);
+    const query = intent.occurrenceStartUtc ? `?${new URLSearchParams({ occurrenceStartUtc: intent.occurrenceStartUtc })}` : '';
+    const response = await meetingRequest(scoped(intent, `/calendar/events/${intent.eventId}/meeting/join${query}`), 'POST', undefined, signal);
     return await response.json();
   }
   let meeting: MeetingSummary;

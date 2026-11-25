@@ -219,3 +219,34 @@ node "$callsQa\calls-qa.mjs"
 # Restart the loopback host and keep its output in web.log before running this matrix.
 node "$callsQa\scheduled-meetings-qa.mjs"
 ```
+
+## M6.14 Recurrence and iCalendar export
+
+Verified November 25, 2026. The full pipeline passed 214 PostgreSQL 17 integration tests, 65 client unit tests, the security and UI audits, and Web and Desktop Release builds. One opt-in Monitor test was skipped. The EF model matched the last migration.
+
+Calendar supports daily, weekly, and monthly series, with an optional inclusive end date in the event's time zone. The organizer can change or cancel a single occurrence or the series. The original occurrence instant identifies a moved event in the Calendar, in `.ics`, and in meeting admission. Each occurrence of an online series gets its own room. Series-level editing and RSVP retain the existing organizer and attendee access rules.
+
+The additive `20261125152704_CalendarRecurrence` migration records the series rule, indexed occurrence exceptions, occurrence reminder metadata, and a separate identity for scheduled occurrence rooms. The list cursor keeps actual start, event ID, and original occurrence in order, and the date window stays capped at 62 days. The outbox stages the next eligible occurrence reminder as it processes the current one. An unchanged reminder is deduplicated, while Activity can open the occurrence that triggered it. The Supabase Postgres Best Practices skill was reviewed before the migration.
+
+iCal.NET `5.2.4` serializes the series with a stable UID, the scheduling time zone, exclusions for canceled occurrences, and detached overrides for edits. The focused DST probe verified skipped spring-gap occurrences, the later physical instant in the fall overlap, and preservation of a one-hour duration through export and import. The PostgreSQL 17 suite covered Personal and two Organizations, Community revocation, 51 occurrences across a tied page boundary, concurrency, revoked credentials, and reminder replay.
+
+```powershell
+dotnet run --project D:/develop/nexus-m614-recurrence-probe/Probe.csproj --artifacts-path D:/develop/nexus-m614-recurrence-probe/artifacts
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj --configuration Release --artifacts-path 'D:/develop-nexus-m610-jitsi/m614-test-release-artifacts' --filter 'FullyQualifiedName~RecurringCalendarM614Tests|FullyQualifiedName~CalendarM611Tests|FullyQualifiedName~MeetingsM612Tests' --logger 'console;verbosity=normal' --nologo
+dotnet ef migrations has-pending-model-changes --project src/Nexus.Web/Nexus.Web.csproj --startup-project src/Nexus.Web/Nexus.Web.csproj --context NexusDbContext --configuration Release --no-build
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+Separate Edge contexts in `America/New_York` and `Europe/London` passed at `1440×900`, `390×844`, and `320×700` in Light and Dark. Both accounts saw five daily occurrences at the correct UTC offsets across the New York DST boundary. The organizer moved and canceled individual occurrences and canceled the series. The attendee downloaded `.ics` with matching UID, recurrence ID, and exclusion. Keyboard operation, one-off event creation, and clearing the recurrence rule also passed. The final run reported zero unexpected browser or network errors. Scratch files and logs are in `D:\develop\.nexus-m610-eval\m614`.
+
+```powershell
+$recurrenceQa = 'D:\develop\.nexus-m610-eval\m614'
+dotnet publish src/Nexus.Web -c Release --artifacts-path "$recurrenceQa\artifacts" -p:SkipClientPublish=true -o "$recurrenceQa\web"
+npm.cmd --prefix src/Nexus.Client run build
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$recurrenceQa\web\wwwroot" -Recurse -Force
+pwsh -File "$recurrenceQa\start-host.ps1" -Migrate
+pwsh -File "$recurrenceQa\start-host.ps1" *> "$recurrenceQa\web.log"
+# In another shell, with the host running
+node "$recurrenceQa\recurrence-qa.mjs"
+```

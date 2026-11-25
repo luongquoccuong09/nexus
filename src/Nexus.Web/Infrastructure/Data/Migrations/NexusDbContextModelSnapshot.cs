@@ -443,6 +443,23 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("organizer_id");
 
+                    b.Property<string>("RecurrenceFrequency")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("recurrence_frequency");
+
+                    b.Property<int?>("RecurrenceInterval")
+                        .HasColumnType("integer")
+                        .HasColumnName("recurrence_interval");
+
+                    b.Property<DateOnly?>("RecurrenceUntilLocalDate")
+                        .HasColumnType("date")
+                        .HasColumnName("recurrence_until_local_date");
+
+                    b.Property<Guid?>("ReminderGenerationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reminder_generation_id");
+
                     b.Property<int?>("ReminderMinutes")
                         .HasColumnType("integer")
                         .HasColumnName("reminder_minutes");
@@ -493,10 +510,94 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         {
                             t.HasCheckConstraint("ck_calendar_events_community_scope", "community_id IS NULL OR organization_id IS NOT NULL");
 
+                            t.HasCheckConstraint("ck_calendar_events_recurrence", "(recurrence_frequency IS NULL AND recurrence_interval IS NULL AND recurrence_until_local_date IS NULL) OR (recurrence_frequency IN ('Daily', 'Weekly', 'Monthly') AND recurrence_frequency IS NOT NULL AND recurrence_interval IS NOT NULL AND recurrence_interval BETWEEN 1 AND 365)");
+
                             t.HasCheckConstraint("ck_calendar_events_reminder", "reminder_minutes BETWEEN 0 AND 10080");
 
                             t.HasCheckConstraint("ck_calendar_events_time_range", "start_utc < end_utc");
                         });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarOccurrenceOverride", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<DateTimeOffset>("OriginalStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("original_start_utc");
+
+                    b.Property<DateTimeOffset?>("CanceledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("canceled_at");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("description");
+
+                    b.Property<DateTimeOffset?>("EndUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("end_utc");
+
+                    b.Property<DateTimeOffset?>("StartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("start_utc");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("title");
+
+                    b.HasKey("EventId", "OriginalStartUtc");
+
+                    b.HasIndex("EventId", "StartUtc", "EndUtc")
+                        .HasDatabaseName("ix_calendar_occurrence_overrides_moved")
+                        .HasFilter("start_utc IS NOT NULL AND canceled_at IS NULL");
+
+                    b.ToTable("calendar_occurrence_overrides", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_calendar_occurrence_overrides_shape", "(start_utc IS NULL AND end_utc IS NULL AND title IS NULL AND canceled_at IS NOT NULL) OR (start_utc IS NOT NULL AND end_utc IS NOT NULL AND title IS NOT NULL AND start_utc < end_utc)");
+                        });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarOccurrenceReminderEntity", b =>
+                {
+                    b.Property<Guid>("OutboxMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("outbox_message_id");
+
+                    b.Property<DateTimeOffset>("EffectiveStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("effective_start_utc");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("generation_id");
+
+                    b.Property<DateTimeOffset>("OriginalStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("original_start_utc");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.Property<int>("ReminderMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("reminder_minutes");
+
+                    b.HasKey("OutboxMessageId");
+
+                    b.HasIndex("EventId", "OriginalStartUtc", "EffectiveStartUtc")
+                        .HasDatabaseName("ix_calendar_occurrence_reminders_time");
+
+                    b.ToTable("calendar_occurrence_reminders", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Calls.DirectCallEntity", b =>
@@ -1390,6 +1491,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("calendar_event_id");
 
+                    b.Property<DateTimeOffset?>("CalendarOccurrenceUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("calendar_occurrence_utc");
+
                     b.Property<Guid?>("ConversationId")
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");
@@ -1426,10 +1531,6 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CalendarEventId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_meetings_calendar_event");
-
                     b.HasIndex("ConversationId");
 
                     b.HasIndex("DirectCallId")
@@ -1439,6 +1540,13 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                     b.HasIndex("HostId");
 
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("CalendarEventId", "CalendarOccurrenceUtc")
+                        .IsUnique()
+                        .HasDatabaseName("ux_meetings_calendar_occurrence")
+                        .HasFilter("calendar_event_id IS NOT NULL");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("CalendarEventId", "CalendarOccurrenceUtc"), false);
 
                     b.HasIndex("ConversationId", "EndedAt")
                         .IsUnique()
@@ -1453,6 +1561,8 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                     b.ToTable("meetings", null, t =>
                         {
+                            t.HasCheckConstraint("ck_meetings_occurrence_source", "calendar_occurrence_utc IS NULL OR calendar_event_id IS NOT NULL");
+
                             t.HasCheckConstraint("ck_meetings_single_source", "num_nonnulls(calendar_event_id, conversation_id, direct_call_id) = 1");
                         });
                 });
@@ -2962,6 +3072,30 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasForeignKey("OrganizationId", "CommunityId")
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarOccurrenceOverride", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Calendar.CalendarEventEntity", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Calendar.CalendarOccurrenceReminderEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Calendar.CalendarEventEntity", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Notifications.OutboxMessageEntity", null)
+                        .WithOne()
+                        .HasForeignKey("Nexus.Web.Modules.Calendar.CalendarOccurrenceReminderEntity", "OutboxMessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Calls.DirectCallEntity", b =>

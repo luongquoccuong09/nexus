@@ -11,7 +11,7 @@ import { Button, Field, ToastBar } from '../ui';
 import CalendarEventDialog from './CalendarEventDialog';
 import {
   type CalendarCommunity, type CalendarDateRange, type CalendarEvent, type CalendarEventTarget,
-  calendarEventId, listCalendarCommunities, listCalendarEvents
+  calendarEventId, calendarEventTarget, listCalendarCommunities, listCalendarEvents
 } from './calendarApi';
 import { localCalendarZone } from './calendarTime';
 import '@fullcalendar/react/skeleton.css';
@@ -20,7 +20,7 @@ import './calendar.css';
 
 const calendarPlugins = [monarch, dayGrid, timeGrid, list];
 const views = [['Month', 'dayGridMonth'], ['Week', 'timeGridWeek'], ['Agenda', 'listWeek']] as const;
-function eventKey(event: CalendarEvent) { return event.id; }
+function eventKey(event: CalendarEvent) { return calendarEventId(calendarEventTarget(event)); }
 function communityKey(community: CalendarCommunity) { return community.id; }
 
 export default function CalendarWorkspace({ organizations, userId, initialEvent, accessRevision }: {
@@ -50,12 +50,12 @@ export default function CalendarWorkspace({ organizations, userId, initialEvent,
   const events = useCursorList(queryKey,
     (cursor, signal) => listCalendarEvents(organizationId, communityId, range!, cursor, signal), eventKey);
   const calendarEvents = useMemo<EventInput[]>(() => events.items.map(event => ({
-    id: event.id,
+    id: eventKey(event),
     title: event.canceledAt ? `Canceled · ${event.title}` : event.title,
     start: event.startUtc,
     end: event.endUtc,
     allDay: false,
-    extendedProps: { canceled: event.canceledAt !== null }
+    extendedProps: { canceled: event.canceledAt !== null, target: calendarEventTarget(event) }
   })), [events.items]);
 
   useEffect(() => {
@@ -161,7 +161,7 @@ export default function CalendarWorkspace({ organizations, userId, initialEvent,
               dayHeaderFormat={{ weekday: 'short' }} dayMaxEvents={3}
               height={viewType === 'timeGridWeek' ? 560 : 'auto'}
               eventInteractive eventClass={({ event }) => event.extendedProps.canceled ? 'nx-calendar-canceled' : ''}
-              eventClick={({ event }) => setDialog({ organizationId, eventId: event.id })}
+              eventClick={({ event }) => setDialog(event.extendedProps.target as CalendarEventTarget)}
               eventTimeFormat={{ hour: 'numeric', minute: '2-digit' }}
               noEventsContent={events.loading ? 'Loading events…' : 'No events in this period.'}
               events={calendarEvents} />

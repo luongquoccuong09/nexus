@@ -4,8 +4,9 @@ import { personKey } from '../peopleDirectory';
 import { Button, Field } from '../ui';
 import {
   type CalendarAttendee, type CalendarCommunity, type CalendarEvent, type CalendarEventInput, type CalendarPerson,
-  listCalendarCandidates, saveCalendarEvent
+  calendarEventTarget, listCalendarCandidates, saveCalendarEvent, saveCalendarOccurrence
 } from './calendarApi';
+import { maxRecurrenceInterval, recurrenceFrequencies, type RecurrenceFrequency, recurrenceInput, recurrenceUnits } from './calendarRecurrence';
 import { calendarZones, defaultEventTimes, toEventInstant, toEventLocalTime } from './calendarTime';
 
 const reminderOptions = [
@@ -13,9 +14,10 @@ const reminderOptions = [
   [60, '1 hour before'], [1440, '1 day before'], [10080, '1 week before']
 ] as const;
 
-export default function CalendarEventForm({ event, invited, organizationId, initialCommunityId, communities, userId,
+export default function CalendarEventForm({ event, editingOccurrence = false, invited, organizationId, initialCommunityId, communities, userId,
   localZone, onSaved, onBack }: {
   event?: CalendarEvent;
+  editingOccurrence?: boolean;
   invited: CalendarAttendee[];
   organizationId: string | null;
   initialCommunityId: string;
@@ -35,6 +37,9 @@ export default function CalendarEventForm({ event, invited, organizationId, init
   const [communityId, setCommunityId] = useState(event?.communityId ?? initialCommunityId);
   const [reminder, setReminder] = useState(event?.reminderMinutes?.toString() ?? '');
   const [isOnlineMeeting, setIsOnlineMeeting] = useState(event?.isOnlineMeeting ?? false);
+  const [frequency, setFrequency] = useState<RecurrenceFrequency | 'None'>(event?.recurrence?.frequency ?? 'None');
+  const [interval, setInterval] = useState(event?.recurrence?.interval.toString() ?? '1');
+  const [untilLocalDate, setUntilLocalDate] = useState(event?.recurrence?.untilLocalDate ?? '');
   const [selectedPeople, setSelectedPeople] = useState<CalendarPerson[]>(() =>
     invited.map(person => ({ id: person.userId, displayName: person.displayName })));
   const [query, setQuery] = useState('');
@@ -46,7 +51,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
   useEffect(() => () => request.current?.abort(), []);
 
   const candidateQuery = query.trim().replace(/^@/, '');
-  const searchKey = JSON.stringify([organizationId, communityId, communityId ? '' : candidateQuery]);
+  const searchKey = editingOccurrence ? null : JSON.stringify([organizationId, communityId, communityId ? '' : candidateQuery]);
   const candidates = useCursorList(searchKey,
     (cursor, signal) => listCalendarCandidates(organizationId, communityId, candidateQuery, cursor, signal),
     personKey, !communityId && candidateQuery ? 180 : 0);
@@ -96,10 +101,17 @@ export default function CalendarEventForm({ event, invited, organizationId, init
     request.current = controller;
     setBusy(true);
     try {
+      const occurrence = { title: title.trim(), description: description.trim(), startUtc, endUtc };
+      if (editingOccurrence && event) {
+        const saved = await saveCalendarOccurrence(calendarEventTarget(event), event.version, occurrence, controller.signal);
+        if (!controller.signal.aborted) onSaved(saved);
+        return;
+      }
       const input: CalendarEventInput = {
-        title: title.trim(), description: description.trim(), startUtc, endUtc, timeZone,
+        ...occurrence, timeZone,
         communityId: communityId || null, attendeeIds: selectedPeople.map(person => person.id).sort(),
-        reminderMinutes: reminder === '' ? null : Number(reminder), isOnlineMeeting, version: event?.version
+        reminderMinutes: reminder === '' ? null : Number(reminder), isOnlineMeeting, version: event?.version,
+        recurrence: recurrenceInput(frequency, interval, untilLocalDate, times.startLocal)
       };
       if (!event) {
         const payload = JSON.stringify(input);
@@ -123,6 +135,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
       <Field label="Description" htmlFor="calendar-event-description">
         <textarea id="calendar-event-description" rows={3} maxLength={4000} value={description} onChange={e => setDescription(e.target.value)} />
       </Field>
+      {editingOccurrence && <p className="nx-muted">Times in {timeZone}.</p>}
       <div className="nx-calendar-form-row">
         <Field label="Starts" htmlFor="calendar-event-start">
           <input id="calendar-event-start" type="datetime-local" step="1" required value={times.startLocal}
@@ -138,7 +151,32 @@ export default function CalendarEventForm({ event, invited, organizationId, init
       {timeError && <p className="nx-error" id="calendar-time-error" role="alert">
         Choose an unambiguous {timeError === 'start' ? 'start' : 'end'} time outside the daylight-saving transition.
       </p>}
-      <div className="nx-calendar-form-row">
+      {!editingOccurrence && (
+        <>
+          <Field label="Repeat" htmlFor="calendar-event-repeat">
+            <select id="calendar-event-repeat" value={frequency}
+              onChange={e => setFrequency(e.target.value as RecurrenceFrequency | 'None')}>
+              <option value="None">Does not repeat</option>
+              {recurrenceFrequencies.map(value => <option key={value}>{value}</option>)}
+            </select>
+          </Field>
+          {frequency !== 'None' && (
+            <div className="nx-calendar-form-row">
+              <Field label="Repeat every" htmlFor="calendar-event-repeat-interval">
+                <input id="calendar-event-repeat-interval" type="number" min={1} max={maxRecurrenceInterval} step={1}
+                  required value={interval} onChange={e => setInterval(e.target.value)} aria-describedby="calendar-repeat-unit" />
+                <small id="calendar-repeat-unit" className="nx-muted">{recurrenceUnits[frequency]}s between occurrences</small>
+              </Field>
+              <Field label="Repeat until" htmlFor="calendar-event-repeat-until">
+                <input id="calendar-event-repeat-until" type="date" min={times.startLocal.split('T')[0]}
+                  value={untilLocalDate} onChange={e => setUntilLocalDate(e.target.value)} aria-describedby="calendar-repeat-until-hint" />
+                <small id="calendar-repeat-until-hint" className="nx-muted">Leave blank for no end date.</small>
+              </Field>
+            </div>
+          )}
+        </>
+      )}
+      {!editingOccurrence && <div className="nx-calendar-form-row">
         <Field label="Time zone" htmlFor="calendar-event-time-zone">
           <select id="calendar-event-time-zone" value={timeZone} onChange={e => { setTimeZone(e.target.value); setTimeError(''); }}>
             {!zones.includes(timeZone) && <option value={timeZone}>{timeZone}</option>}
@@ -153,7 +191,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
             {reminderOptions.map(([minutes, label]) => <option key={minutes} value={minutes}>{label}</option>)}
           </select>
         </Field>
-      </div>
+      </div>}
       {!event && organizationId && (
         <Field label="Event community" htmlFor="calendar-event-community">
           <select id="calendar-event-community" value={communityId} onChange={e => {
@@ -166,13 +204,13 @@ export default function CalendarEventForm({ event, invited, organizationId, init
           </select>
         </Field>
       )}
-      <div className="nx-field">
+      {!editingOccurrence && <div className="nx-field">
         <label className="nx-terms-label">
           <input type="checkbox" checked={isOnlineMeeting} onChange={e => setIsOnlineMeeting(e.currentTarget.checked)} />
           <span>Online meeting</span>
         </label>
-      </div>
-      <fieldset className="nx-calendar-invite-field">
+      </div>}
+      {!editingOccurrence && <fieldset className="nx-calendar-invite-field">
         <legend>Invite attendees</legend>
         <Field label="Search people" htmlFor="calendar-event-people">
           <input id="calendar-event-people" type="search" value={query} onChange={e => setQuery(e.target.value)}
@@ -208,7 +246,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
           <p className="nx-muted" role="status">{candidates.next ? 'No matches on the loaded pages.' : 'No matching people.'}</p>}
         <ListPaging loading={candidates.loading} error={candidates.error} hasMore={candidates.next !== null}
           onMore={candidates.loadMore} onRetry={candidates.retry} moreLabel="Load more people" />
-      </fieldset>
+      </fieldset>}
       {error && <p className="nx-error" role="alert">{error}</p>}
       <div className="nx-calendar-modal-actions">
         <Button onClick={onBack}>Back</Button>

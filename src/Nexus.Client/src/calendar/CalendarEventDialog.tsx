@@ -5,12 +5,14 @@ import { useMeeting } from '../meetings/MeetingProvider';
 import CalendarEventForm from './CalendarEventForm';
 import {
   type CalendarAttendee, type CalendarCommunity, type CalendarEvent, type CalendarEventTarget,
-  calendarEventId, cancelCalendarEvent, getCalendarEvent, listCalendarAttendees, respondToCalendarEvent,
-  rsvpStatuses
+  calendarEventId, cancelCalendarEvent, cancelCalendarOccurrence, downloadCalendarEvent, getCalendarEvent,
+  listCalendarAttendees, respondToCalendarEvent, type RsvpStatus, rsvpStatuses
 } from './calendarApi';
+import { describeRecurrence } from './calendarRecurrence';
 import { formatCalendarTimes } from './calendarTime';
 
 function attendeeKey(attendee: CalendarAttendee) { return attendee.userId; }
+type EventScope = 'event' | 'series' | 'occurrence';
 
 export default function CalendarEventDialog({ target, organizationId, scopeName, communityId, communities,
   userId, localZone, onClose, onChange, onEventLoaded, accessRevision }: {
@@ -28,9 +30,8 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
 }) {
   const [event, setEvent] = useState<CalendarEvent | null>(null);
   const meeting = useMeeting();
-  const [editing, setEditing] = useState(false);
-  const [editAttendees, setEditAttendees] = useState<CalendarAttendee[]>([]);
-  const [confirming, setConfirming] = useState(false);
+  const [editor, setEditor] = useState<{ event: CalendarEvent; scope: EventScope; invited: CalendarAttendee[] } | null>(null);
+  const [confirming, setConfirming] = useState<EventScope | null>(null);
   const [loading, setLoading] = useState(target !== null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -71,47 +72,14 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
   }, [accessRevision, refresh, target]);
   useEffect(() => () => actionRequest.current?.abort(), []);
 
-  async function openEditor() {
-    if (!target || actionRequest.current) return;
+  async function runAction(run: (signal: AbortSignal) => Promise<void>) {
+    if (actionRequest.current) return;
     const controller = new AbortController();
     actionRequest.current = controller;
     setBusy(true);
     setError('');
     try {
-      const invited = new Map(attendees.items.map(item => [item.userId, item]));
-      let next = attendees.next;
-      while (next) {
-        const page = await listCalendarAttendees(target, next, controller.signal);
-        for (const item of page.items) invited.set(item.userId, item);
-        next = page.next;
-      }
-      if (controller.signal.aborted) return;
-      setEditAttendees([...invited.values()]);
-      setEditing(true);
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Unable to load attendees.');
-    } finally {
-      if (actionRequest.current === controller) actionRequest.current = null;
-      if (!controller.signal.aborted) setBusy(false);
-    }
-  }
-
-  async function update(
-    run: (event: CalendarEvent, signal: AbortSignal) => Promise<CalendarEvent>,
-    message: string
-  ) {
-    if (!event || actionRequest.current) return;
-    const controller = new AbortController();
-    actionRequest.current = controller;
-    setBusy(true);
-    setError('');
-    try {
-      const updated = await run(event, controller.signal);
-      if (controller.signal.aborted) return;
-      setEvent(updated);
-      setConfirming(false);
-      void attendees.refresh();
-      onChange(updated, message);
+      await run(controller.signal);
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Unable to update this event.');
     } finally {
@@ -120,29 +88,87 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
     }
   }
 
+  async function openEditor(scope: EventScope) {
+    if (!target || !event || actionRequest.current) return;
+    if (scope === 'occurrence') {
+      setEditor({ event, scope, invited: [] });
+      return;
+    }
+    await runAction(async signal => {
+      async function readInvitations() {
+        const invited = new Map(attendees.items.map(item => [item.userId, item]));
+        let next = attendees.next;
+        while (next) {
+          const page = await listCalendarAttendees(target!, next, signal);
+          for (const item of page.items) invited.set(item.userId, item);
+          next = page.next;
+        }
+        return [...invited.values()];
+      }
+      const master = target.occurrenceStartUtc
+        ? getCalendarEvent({ organizationId: target.organizationId, eventId: target.eventId }, signal)
+        : event;
+      const [item, invited] = await Promise.all([master, readInvitations()]);
+      if (signal.aborted) return;
+      if (!item.canEdit || item.canceledAt) throw new Error('This event can no longer be edited.');
+      setEditor({ event: item, scope, invited });
+    });
+  }
+
+  async function cancelEvent() {
+    if (!target || !event || !confirming) return;
+    await runAction(async signal => {
+      const updated = confirming === 'occurrence'
+        ? await cancelCalendarOccurrence(target, event.version, signal)
+        : await cancelCalendarEvent(target, event.version, signal);
+      if (signal.aborted) return;
+      setConfirming(null);
+      if (target.occurrenceStartUtc && confirming === 'series') onClose();
+      else setEvent(updated);
+      onChange(updated, confirming === 'event' ? 'Event canceled.' : confirming === 'series' ? 'Series canceled.' : 'Occurrence canceled.');
+    });
+  }
+
+  async function respond(status: RsvpStatus) {
+    if (!target) return;
+    await runAction(async signal => {
+      const updated = await respondToCalendarEvent(target, status, signal);
+      if (signal.aborted) return;
+      setEvent(current => current && { ...current, myRsvp: updated.myRsvp, version: updated.version });
+      void attendees.refresh();
+      onChange(updated, 'Response saved.');
+    });
+  }
+
+  function onSaved(saved: CalendarEvent) {
+    if (!target) {
+      onChange(saved, 'Event created.');
+      onClose();
+      return;
+    }
+    if (editor?.scope === 'series' && target.occurrenceStartUtc) onClose();
+    else setEvent(saved);
+    setEditor(null);
+    void attendees.refresh();
+    const updated = editor?.scope === 'occurrence' ? 'Occurrence updated.' : editor?.scope === 'series' ? 'Series updated.' : 'Event updated.';
+    onChange(saved, updated);
+  }
+
   const editable = Boolean(event?.canEdit && !event.canceledAt);
-  const showForm = !target || (editing && editable);
+  const occurrence = Boolean(event?.occurrenceStartUtc);
+  const series = event?.recurrence ? 'series' : 'event';
+  const showForm = !target || (editor && editable);
   const matchingCommunity = event?.communityId ? communities.find(community => community.id === event.communityId) : null;
 
   return (
     <Modal open onOpenChange={open => { if (!open) onClose(); }} size="xl"
-      title={showForm ? event ? 'Edit event' : 'New event' : event?.title ?? 'Calendar event'}
+      title={showForm ? editor ? `Edit ${editor.scope}` : 'New event' : event?.title ?? 'Calendar event'}
       description={matchingCommunity ? `${scopeName} · ${matchingCommunity.name}` : scopeName}>
       {showForm ? (
-        <CalendarEventForm event={event ?? undefined} invited={editAttendees} organizationId={organizationId}
+        <CalendarEventForm event={editor?.event} editingOccurrence={editor?.scope === 'occurrence'}
+          invited={editor?.invited ?? []} organizationId={organizationId}
           initialCommunityId={communityId} communities={communities} userId={userId} localZone={localZone}
-          onSaved={saved => {
-            if (!event) {
-              onChange(saved, 'Event created.');
-              onClose();
-              return;
-            }
-            setEvent(saved);
-            setEditing(false);
-            void attendees.refresh();
-            onChange(saved, 'Event updated.');
-          }}
-          onBack={() => event ? setEditing(false) : onClose()} />
+          onSaved={onSaved} onBack={() => target ? setEditor(null) : onClose()} />
       ) : (
         <>
           {loading && !event && <p role="status">Loading event…</p>}
@@ -162,9 +188,10 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
                   </dd>
                 </div>
                 <div><dt>Organizer</dt><dd>{event.organizerName}</dd></div>
+                {event.recurrence && <div><dt>Repeat</dt><dd>{describeRecurrence(event.recurrence)}</dd></div>}
               </dl>
               {event.description && <p className="nx-calendar-description">{event.description}</p>}
-              {event.isOnlineMeeting && !event.canceledAt && target && (
+              {event.isOnlineMeeting && !event.canceledAt && target && (!event.recurrence || occurrence) && (
                 <Button variant="primary" disabled={meeting.active || loading} onClick={() => {
                   meeting.open({ kind: 'calendar', ...target, title: event.title });
                   onClose();
@@ -174,7 +201,7 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
                 <div className="nx-calendar-rsvp" role="group" aria-label="RSVP">
                   {rsvpStatuses.map(status => (
                     <Button key={status} aria-pressed={event.myRsvp === status} disabled={busy || loading}
-                      onClick={() => void update((_, signal) => respondToCalendarEvent(target, status, signal), 'Response saved.')}>
+                      onClick={() => void respond(status)}>
                       {status}
                     </Button>
                   ))}
@@ -195,22 +222,30 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
                 <ListPaging loading={attendees.loading} error={attendees.error} hasMore={attendees.next !== null}
                   onMore={attendees.loadMore} onRetry={attendees.retry} moreLabel="Load more attendees" />
               </section>
-              {editable && target && (
+              {target && (
                 <div className="nx-calendar-modal-actions">
                   {confirming ? (
                     <>
-                      <p>Cancel this event and notify its attendees?</p>
-                      <Button onClick={() => setConfirming(false)} disabled={busy}>Keep event</Button>
-                      <Button variant="danger" disabled={busy || loading}
-                        onClick={() => void update((current, signal) => cancelCalendarEvent(target, current.version, signal), 'Event canceled.')}>
-                        Confirm cancellation
+                      <p>{confirming === 'event' ? 'Cancel this event and notify its attendees?' : `Cancel this ${confirming}?`}</p>
+                      <Button onClick={() => setConfirming(null)} disabled={busy}>Keep {confirming}</Button>
+                      <Button variant="danger" disabled={busy || loading} onClick={() => void cancelEvent()}>
+                        {confirming === 'event' ? 'Confirm cancellation' : `Confirm ${confirming} cancellation`}
                       </Button>
                     </>
                   ) : (
                     <>
-                      <Button onClick={() => void openEditor()}
-                        disabled={busy || loading || attendees.loading || Boolean(attendees.error)}>Edit event</Button>
-                      <Button variant="danger" disabled={busy || loading} onClick={() => setConfirming(true)}>Cancel event</Button>
+                      <Button disabled={busy || loading} onClick={() => void runAction(signal => downloadCalendarEvent(target, signal))}>
+                        Download .ics
+                      </Button>
+                      {editable && (
+                        <>
+                          {occurrence && <Button disabled={busy || loading} onClick={() => void openEditor('occurrence')}>Edit occurrence</Button>}
+                          <Button onClick={() => void openEditor(series)}
+                            disabled={busy || loading || attendees.loading || Boolean(attendees.error)}>Edit {series}</Button>
+                          {occurrence && <Button variant="danger" disabled={busy || loading} onClick={() => setConfirming('occurrence')}>Cancel occurrence</Button>}
+                          <Button variant="danger" disabled={busy || loading} onClick={() => setConfirming(series)}>Cancel {series}</Button>
+                        </>
+                      )}
                     </>
                   )}
                 </div>

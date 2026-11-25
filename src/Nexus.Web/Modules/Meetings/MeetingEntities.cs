@@ -14,6 +14,7 @@ public sealed class MeetingEntity
     public Guid Id { get; set; }
     public Guid? OrganizationId { get; set; }
     public Guid? CalendarEventId { get; set; }
+    public DateTimeOffset? CalendarOccurrenceUtc { get; set; }
     public Guid? ConversationId { get; set; }
     public Guid? DirectCallId { get; set; }
     public Guid HostId { get; set; }
@@ -49,12 +50,16 @@ internal sealed class MeetingConfiguration : IEntityTypeConfiguration<MeetingEnt
 {
     public void Configure(EntityTypeBuilder<MeetingEntity> builder)
     {
-        builder.ToTable("meetings", table => table.HasCheckConstraint(
-            "ck_meetings_single_source", "num_nonnulls(calendar_event_id, conversation_id, direct_call_id) = 1"));
+        builder.ToTable("meetings", table =>
+        {
+            table.HasCheckConstraint("ck_meetings_single_source", "num_nonnulls(calendar_event_id, conversation_id, direct_call_id) = 1");
+            table.HasCheckConstraint("ck_meetings_occurrence_source", "calendar_occurrence_utc IS NULL OR calendar_event_id IS NOT NULL");
+        });
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("id");
         builder.Property(x => x.OrganizationId).HasColumnName("organization_id");
         builder.Property(x => x.CalendarEventId).HasColumnName("calendar_event_id");
+        builder.Property(x => x.CalendarOccurrenceUtc).HasColumnName("calendar_occurrence_utc");
         builder.Property(x => x.ConversationId).HasColumnName("conversation_id");
         builder.Property(x => x.DirectCallId).HasColumnName("direct_call_id");
         builder.Property(x => x.HostId).HasColumnName("host_id");
@@ -68,7 +73,8 @@ internal sealed class MeetingConfiguration : IEntityTypeConfiguration<MeetingEnt
         builder.HasOne<ConversationEntity>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<DirectCallEntity>().WithMany().HasForeignKey(x => x.DirectCallId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<NexusUser>().WithMany().HasForeignKey(x => x.HostId).OnDelete(DeleteBehavior.Restrict);
-        builder.HasIndex(x => x.CalendarEventId).IsUnique().HasDatabaseName("ux_meetings_calendar_event");
+        builder.HasIndex(x => new { x.CalendarEventId, x.CalendarOccurrenceUtc }).IsUnique().AreNullsDistinct(false)
+            .HasFilter("calendar_event_id IS NOT NULL").HasDatabaseName("ux_meetings_calendar_occurrence");
         builder.HasIndex(x => x.DirectCallId).IsUnique().HasDatabaseName("ux_meetings_direct_call");
         builder.HasIndex(x => x.ConversationId);
         builder.HasIndex(x => new { x.ConversationId, x.EndedAt }).IsUnique().AreNullsDistinct(false)

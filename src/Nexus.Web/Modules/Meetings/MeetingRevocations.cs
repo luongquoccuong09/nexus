@@ -38,9 +38,22 @@ internal sealed class MeetingRevocations(
             await RecheckAsync(candidate, ct);
     }
 
-    internal async Task<Guid?> EndCalendarAsync(Guid eventId, DateTimeOffset now, CancellationToken ct)
+    internal async Task<IReadOnlyList<Guid>> EndCalendarAsync(Guid eventId, DateTimeOffset now, CancellationToken ct)
     {
-        var meetingId = await db.Meetings.Where(room => room.CalendarEventId == eventId && room.EndedAt == null)
+        var activeRooms = db.Meetings.Where(room => room.CalendarEventId == eventId && room.EndedAt == null);
+        var immediate = await activeRooms.OrderBy(room => room.CreatedAt).ThenBy(room => room.Id)
+            .Select(room => room.Id).Take(PaginationGuard.MaxPageSize).ToListAsync(ct);
+        if (immediate.Count == 0) return immediate;
+
+        await db.MeetingGrants.Where(grant => grant.RevokedAt == null && activeRooms.Any(room => room.Id == grant.MeetingId))
+            .ExecuteUpdateAsync(update => update.SetProperty(grant => grant.RevokedAt, now), ct);
+        await activeRooms.ExecuteUpdateAsync(update => update.SetProperty(room => room.EndedAt, now), ct);
+        return immediate;
+    }
+
+    internal async Task<Guid?> EndCalendarOccurrenceAsync(Guid eventId, DateTimeOffset occurrenceUtc, DateTimeOffset now, CancellationToken ct)
+    {
+        var meetingId = await db.Meetings.Where(room => room.CalendarEventId == eventId && room.CalendarOccurrenceUtc == occurrenceUtc && room.EndedAt == null)
             .Select(room => (Guid?)room.Id).SingleOrDefaultAsync(ct);
         if (meetingId is not null) await MarkEndedAsync(meetingId.Value, now, ct);
         return meetingId;

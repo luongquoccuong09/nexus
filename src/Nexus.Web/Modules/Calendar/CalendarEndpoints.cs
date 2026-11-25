@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
@@ -12,7 +13,7 @@ using Npgsql;
 
 namespace Nexus.Web.Modules.Calendar;
 
-internal static class CalendarEndpoints
+internal static partial class CalendarEndpoints
 {
     internal static IEndpointRouteBuilder MapCalendar(this IEndpointRouteBuilder app, string scope)
     {
@@ -25,10 +26,15 @@ internal static class CalendarEndpoints
         group.MapGet("", ListAsync);
         group.MapGet("/{eventId:guid}", GetAsync);
         group.MapGet("/{eventId:guid}/attendees", ListAttendeesAsync);
+        group.MapGet("/{eventId:guid}/ics", ExportAsync);
         group.MapPost("", CreateAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         group.MapPut("/{eventId:guid}", UpdateAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         group.MapPost("/{eventId:guid}/cancel", CancelAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         group.MapPut("/{eventId:guid}/rsvp", RespondAsync).AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
+        group.MapPut("/{eventId:guid}/occurrences", UpdateOccurrenceAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
+        group.MapPost("/{eventId:guid}/occurrences/cancel", CancelOccurrenceAsync)
+            .AddEndpointFilter(OrganizationManagementEndpoints.ValidateCsrfAsync);
         return app;
     }
 
@@ -51,32 +57,39 @@ internal static class CalendarEndpoints
 
         var from = fromUtc.ToUniversalTime();
         var to = toUtc.ToUniversalTime();
-        var query = VisibleInScope(db).Where(item => item.StartUtc < to && item.EndUtc > from);
-        if (communityId.HasValue) query = query.Where(item => item.CommunityId == communityId);
+        var scope = VisibleInScope(db);
+        if (communityId.HasValue) scope = scope.Where(item => item.CommunityId == communityId);
+        var query = scope.Where(item => item.RecurrenceFrequency == null && item.StartUtc < to && item.EndUtc > from);
         if (after is not null)
         {
             var start = after.StartUtc.ToUniversalTime();
             query = query.Where(item => item.StartUtc > start || item.StartUtc == start && item.Id.CompareTo(after.Id) > 0);
         }
 
-        var rows = await Project(db, query.OrderBy(item => item.StartUtc).ThenBy(item => item.Id).Take(size + 1))
+        var standalone = await Project(db, query.OrderBy(item => item.StartUtc).ThenBy(item => item.Id).Take(size + 1))
             .ToListAsync(ct);
-        var hasMore = rows.Count > size;
-        if (hasMore) rows.RemoveAt(size);
+        var entries = new SortedSet<EventListItem>(Comparer<EventListItem>.Create(
+            static (left, right) => CompareCursor(left.Cursor, right.Cursor)));
+        foreach (var row in standalone) entries.Add(new EventListItem(row, null));
+        await IncludeRecurringAsync(db, scope, entries, from, to, after, size + 1, ct);
+        var hasMore = entries.Count > size;
+        if (hasMore) entries.Remove(entries.Max!);
         return Results.Ok(new
         {
-            items = rows.Select(row => row.ToDto(actor.Id)),
-            nextCursor = hasMore ? PaginationGuard.EncodeCursor(new EventCursor(rows[^1].Item.StartUtc, rows[^1].Item.Id)) : null
+            items = entries.Select(entry => entry.Row.ToDto(actor.Id, entry.Occurrence)),
+            nextCursor = hasMore ? PaginationGuard.EncodeCursor(entries.Max!.Cursor) : null
         });
     }
 
     private static async Task<IResult> GetAsync(
-        Guid eventId, [FromServices] NexusDbContext db, IAuthorizationService authz, CancellationToken ct)
+        Guid eventId, DateTimeOffset? occurrenceStartUtc, [FromServices] NexusDbContext db,
+        IAuthorizationService authz, CancellationToken ct)
     {
         var row = await FindAsync(db, eventId, ct);
-        return row is not null && await CanReadAsync(db, authz, row.Item, ct)
-            ? Results.Ok(row.ToDto(db.OrganizationActor!.Id))
-            : Results.NotFound();
+        if (row is null || !await CanReadAsync(db, authz, row.Item, ct)) return Results.NotFound();
+        if (occurrenceStartUtc is not { } original) return Results.Ok(row.ToDto(db.OrganizationActor!.Id));
+        var occurrence = await CalendarRecurrences.FindAsync(db, row.Item, original, ct);
+        return occurrence is null ? Results.NotFound() : Results.Ok(row.ToDto(db.OrganizationActor!.Id, occurrence));
     }
 
     private static async Task<IResult> ListAttendeesAsync(
@@ -129,9 +142,11 @@ internal static class CalendarEndpoints
                 AttendeeIds = fields.AttendeeIds.Order().ToArray()
             }
         };
-        var serialized = fields.IsOnlineMeeting == true
-            ? JsonSerializer.SerializeToUtf8Bytes(new { Event = requestFields, IsOnlineMeeting = true })
-            : JsonSerializer.SerializeToUtf8Bytes(requestFields);
+        var serialized = fields.Recurrence?.Frequency is not null
+            ? JsonSerializer.SerializeToUtf8Bytes(new { Event = requestFields, IsOnlineMeeting = fields.IsOnlineMeeting == true, fields.Recurrence })
+            : fields.IsOnlineMeeting == true
+                ? JsonSerializer.SerializeToUtf8Bytes(new { Event = requestFields, IsOnlineMeeting = true })
+                : JsonSerializer.SerializeToUtf8Bytes(requestFields);
         var requestHash = Convert.ToHexStringLower(SHA256.HashData(serialized));
         var replay = await ReplayCreateAsync(http, db, authz, keyHash, requestHash, ct);
         if (replay is not null) return replay;
@@ -150,7 +165,7 @@ internal static class CalendarEndpoints
         db.CalendarEvents.Add(item);
         db.CalendarAttendees.AddRange(fields.AttendeeIds.Select(userId => new CalendarAttendeeEntity { EventId = item.Id, UserId = userId }));
         CalendarOutbox.Enqueue(db, item, CalendarOutbox.Invitation, fields.AttendeeIds, now);
-        CalendarOutbox.ScheduleReminder(db, item, now);
+        await CalendarOutbox.ScheduleReminderAsync(db, item, now, ct);
         try
         {
             await db.SaveChangesAsync(ct);
@@ -199,6 +214,9 @@ internal static class CalendarEndpoints
         if (item.Version != request.Version || item.CanceledAt is not null) return Conflict();
         if (item.CommunityId != request.CommunityId)
             return Invalid("calendar_scope_immutable", "The event's Community cannot be changed.");
+        if (fields.Recurrence is null && item.RecurrenceUntilLocalDate is { } retainedUntil &&
+            retainedUntil < LocalDate(fields.StartUtc, fields.TimeZone))
+            return Invalid("invalid_calendar_recurrence", "The repeat end date must be on or after the series start.");
         if (!await CanInviteAsync(db, item, fields.AttendeeIds, ct)) return IneligibleInvitees();
 
         var roster = await db.CalendarAttendees.Where(row => row.EventId == item.Id).ToListAsync(ct);
@@ -210,7 +228,12 @@ internal static class CalendarEndpoints
         db.CalendarAttendees.AddRange(invited.Select(userId => new CalendarAttendeeEntity { EventId = item.Id, UserId = userId }));
 
         var now = DateTimeOffset.UtcNow;
-        var reminderChanged = item.StartUtc != fields.StartUtc || item.ReminderMinutes != fields.ReminderMinutes;
+        var wasRecurring = CalendarRecurrences.IsRecurring(item);
+        var ruleChanged = fields.Recurrence is { } repeat && (item.RecurrenceFrequency != repeat.Frequency ||
+            item.RecurrenceInterval != repeat.Interval || item.RecurrenceUntilLocalDate != repeat.UntilLocalDate);
+        var recurrenceChanged = ruleChanged || wasRecurring && (item.StartUtc != fields.StartUtc || item.TimeZone != fields.TimeZone);
+        var reminderChanged = item.StartUtc != fields.StartUtc || item.EndUtc != fields.EndUtc ||
+            item.ReminderMinutes != fields.ReminderMinutes || recurrenceChanged;
         var onlineChanged = fields.IsOnlineMeeting is { } online && online != item.IsOnlineMeeting;
         var detailsChanged = reminderChanged || item.EndUtc != fields.EndUtc || item.Title != fields.Title ||
             item.Description != fields.Description || item.TimeZone != fields.TimeZone || onlineChanged;
@@ -221,12 +244,22 @@ internal static class CalendarEndpoints
         item.Version++;
         CalendarOutbox.Enqueue(db, item, CalendarOutbox.Invitation, invited, now);
         if (detailsChanged) CalendarOutbox.Enqueue(db, item, CalendarOutbox.Updated, retained, now);
-        if (reminderChanged) CalendarOutbox.ScheduleReminder(db, item, now);
+        if (recurrenceChanged)
+        {
+            var overrides = await db.CalendarOccurrenceOverrides.Where(entry => entry.EventId == eventId).ToListAsync(ct);
+            db.CalendarOccurrenceOverrides.RemoveRange(overrides.Where(entry => !CalendarRecurrences.ContainsOriginal(item, entry.OriginalStartUtc)));
+        }
         await db.SaveChangesAsync(ct);
-        var roomClosed = onlineChanged && !item.IsOnlineMeeting ? await meetings.EndCalendarAsync(eventId, now, ct) : null;
+        if (reminderChanged)
+        {
+            await CalendarOutbox.ScheduleReminderAsync(db, item, now, ct);
+            await db.SaveChangesAsync(ct);
+        }
+        var closingAll = onlineChanged && !item.IsOnlineMeeting || wasRecurring != CalendarRecurrences.IsRecurring(item);
+        var endedRooms = closingAll ? await meetings.EndCalendarAsync(eventId, now, ct) : [];
         await transaction.CommitAsync(ct);
-        if (roomClosed is { } closedId) await meetings.CloseProviderRoomAsync(closedId, ct);
-        else if (oldIds.Except(newIds).Any()) await meetings.RecheckCalendarAsync(eventId, ct);
+        foreach (var roomId in endedRooms) await meetings.CloseProviderRoomAsync(roomId, ct);
+        if (!closingAll && (recurrenceChanged || oldIds.Except(newIds).Any())) await meetings.RecheckCalendarAsync(eventId, ct);
         return await ReadUpdatedAsync(db, eventId, ct);
     }
 
@@ -249,13 +282,14 @@ internal static class CalendarEndpoints
         item.CanceledAt = now;
         item.UpdatedAt = now;
         item.ReminderOutboxId = null;
+        item.ReminderGenerationId = null;
         item.Version++;
         var attendeeIds = await db.CalendarAttendees.Where(row => row.EventId == item.Id).Select(row => row.UserId).ToArrayAsync(ct);
         CalendarOutbox.Enqueue(db, item, CalendarOutbox.Canceled, attendeeIds, now);
         await db.SaveChangesAsync(ct);
-        var roomClosed = await meetings.EndCalendarAsync(eventId, now, ct);
+        var endedRooms = await meetings.EndCalendarAsync(eventId, now, ct);
         await transaction.CommitAsync(ct);
-        if (roomClosed is { } closedId) await meetings.CloseProviderRoomAsync(closedId, ct);
+        foreach (var roomId in endedRooms) await meetings.CloseProviderRoomAsync(roomId, ct);
         return await ReadUpdatedAsync(db, eventId, ct);
     }
 
@@ -351,10 +385,43 @@ internal static class CalendarEndpoints
         }
 
         if (zone.Id != "UTC" && TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var ianaId)) zoneId = ianaId;
+        if (!TryReadRecurrence(request.Recurrence, start, zoneId, out var recurrence)) return false;
         fields = new(title, string.IsNullOrEmpty(description) ? null : description,
-            start.ToUniversalTime(), end.ToUniversalTime(), zoneId, request.ReminderMinutes, request.IsOnlineMeeting, ids);
+            start.ToUniversalTime(), end.ToUniversalTime(), zoneId, request.ReminderMinutes, request.IsOnlineMeeting, ids, recurrence);
         return true;
     }
+
+    private static bool TryReadRecurrence(RecurrenceRequest? request, DateTimeOffset startUtc, string zone, out RuleFields? rule)
+    {
+        rule = null;
+        if (request is null) return true;
+        if (request.Frequency == "None" && request.Interval is null && request.UntilLocalDate is null)
+        {
+            rule = new RuleFields(null, null, null);
+            return true;
+        }
+
+        var frequency = request.Frequency switch
+        {
+            nameof(CalendarRecurrenceFrequency.Daily) => CalendarRecurrenceFrequency.Daily,
+            nameof(CalendarRecurrenceFrequency.Weekly) => CalendarRecurrenceFrequency.Weekly,
+            nameof(CalendarRecurrenceFrequency.Monthly) => CalendarRecurrenceFrequency.Monthly,
+            _ => (CalendarRecurrenceFrequency?)null
+        };
+        if (frequency is null || request.Interval is null or < 1 or > 365) return false;
+        var until = (DateOnly?)null;
+        if (request.UntilLocalDate is { } text)
+        {
+            if (!DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ||
+                date < LocalDate(startUtc, zone)) return false;
+            until = date;
+        }
+        rule = new RuleFields(frequency, request.Interval, until);
+        return true;
+    }
+
+    private static DateOnly LocalDate(DateTimeOffset start, string zone) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(start, TimeZoneInfo.FindSystemTimeZoneById(zone)).DateTime);
 
     private static void ApplyFields(CalendarEventEntity item, EventFields fields, DateTimeOffset now)
     {
@@ -365,12 +432,18 @@ internal static class CalendarEndpoints
         item.TimeZone = fields.TimeZone;
         item.ReminderMinutes = fields.ReminderMinutes;
         item.IsOnlineMeeting = fields.IsOnlineMeeting ?? item.IsOnlineMeeting;
+        if (fields.Recurrence is { } repeat)
+        {
+            item.RecurrenceFrequency = repeat.Frequency;
+            item.RecurrenceInterval = repeat.Interval;
+            item.RecurrenceUntilLocalDate = repeat.UntilLocalDate;
+        }
         item.UpdatedAt = now;
     }
 
     private static IResult Invalid(string code, string message) => Results.BadRequest(new { code, message });
     private static IResult InvalidFields() => Invalid("invalid_calendar_event",
-        "Check the title, time zone, start and end times, reminder, and attendee list.");
+        "Check the title, time zone, start and end times, reminder, attendee list, and repeat settings.");
     private static IResult IneligibleInvitees() => Results.Json(
         new { code = "calendar_ineligible_attendees", message = "One or more invitees no longer have access." },
         statusCode: StatusCodes.Status403Forbidden);
@@ -378,21 +451,35 @@ internal static class CalendarEndpoints
         new { code = "calendar_conflict", message = "The event changed or was canceled. Refresh the event and try again." });
 
     private sealed record EventRequest(string? Title, string? Description, DateTimeOffset? StartUtc, DateTimeOffset? EndUtc,
-        string? TimeZone, Guid? CommunityId, Guid[]? AttendeeIds, int? ReminderMinutes, int? Version, bool? IsOnlineMeeting);
+        string? TimeZone, Guid? CommunityId, Guid[]? AttendeeIds, int? ReminderMinutes, int? Version, bool? IsOnlineMeeting,
+        RecurrenceRequest? Recurrence);
+    private sealed record RecurrenceRequest(string? Frequency, int? Interval, string? UntilLocalDate);
     private sealed record CancelRequest(int Version);
     private sealed record RsvpRequest(string? Status);
-    private sealed record EventCursor(DateTimeOffset StartUtc, Guid Id);
+    private sealed record EventCursor(DateTimeOffset StartUtc, Guid Id, DateTimeOffset? OccurrenceStartUtc = null);
     private sealed record AttendeeCursor(Guid UserId);
     private sealed record EventFields(string Title, string? Description, DateTimeOffset StartUtc, DateTimeOffset EndUtc,
-        string TimeZone, int? ReminderMinutes, bool? IsOnlineMeeting, Guid[] AttendeeIds);
+        string TimeZone, int? ReminderMinutes, bool? IsOnlineMeeting, Guid[] AttendeeIds, RuleFields? Recurrence);
+    private sealed record RuleFields(CalendarRecurrenceFrequency? Frequency, int? Interval, DateOnly? UntilLocalDate);
     private sealed record EventRow(CalendarEventEntity Item, string OrganizerName, bool IsAttendee, CalendarRsvp? Rsvp)
     {
-        public object ToDto(Guid actorId) => new
+        public object ToDto(Guid actorId, CalendarOccurrence? occurrence = null)
         {
-            Item.Id, Item.OrganizationId, Item.CommunityId, Item.OrganizerId, OrganizerName, Item.Title, Item.Description,
-            Item.StartUtc, Item.EndUtc, Item.TimeZone, Item.ReminderMinutes, Item.IsOnlineMeeting, Item.CanceledAt, Item.Version,
-            MyRsvp = Rsvp?.ToString(), CanEdit = Item.OrganizerId == actorId && Item.CanceledAt == null,
-            CanRsvp = IsAttendee && Item.CanceledAt == null
-        };
+            var canceledAt = occurrence?.CanceledAt ?? Item.CanceledAt;
+            return new
+            {
+                Item.Id, Item.OrganizationId, Item.CommunityId, Item.OrganizerId, OrganizerName,
+                Title = occurrence?.Title ?? Item.Title, Description = occurrence is null ? Item.Description : occurrence.Description,
+                StartUtc = occurrence?.StartUtc ?? Item.StartUtc, EndUtc = occurrence?.EndUtc ?? Item.EndUtc,
+                Item.TimeZone, Item.ReminderMinutes, Item.IsOnlineMeeting, CanceledAt = canceledAt, Item.Version,
+                OccurrenceStartUtc = occurrence?.OriginalStartUtc,
+                Recurrence = Item.RecurrenceFrequency is { } frequency ? new
+                {
+                    Frequency = frequency.ToString(), Interval = Item.RecurrenceInterval, UntilLocalDate = Item.RecurrenceUntilLocalDate
+                } : null,
+                MyRsvp = Rsvp?.ToString(), CanEdit = Item.OrganizerId == actorId && canceledAt == null,
+                CanRsvp = IsAttendee && canceledAt == null
+            };
+        }
     }
 }

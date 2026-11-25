@@ -123,13 +123,25 @@ internal static class NotificationEndpoints
                 join eventItem in db.CalendarEvents.AsNoTracking() on notification.ResourceId equals eventItem.Id
                 select new
                 {
-                    CalendarEventId = eventItem.Id,
-                    eventItem.OrganizationId,
-                    eventItem.Title,
-                    Body = eventItem.Description ?? string.Empty,
-                    TargetLink = (string?)null
+                    Event = eventItem,
+                    OriginalStartUtc = db.CalendarOccurrenceReminders.Where(reminder => reminder.OutboxMessageId == notification.OutboxMessageId)
+                        .Select(reminder => (DateTimeOffset?)reminder.OriginalStartUtc).SingleOrDefault()
                 }).SingleOrDefaultAsync(ct);
-            return calendar is null ? Results.NotFound() : Results.Ok(calendar);
+            if (calendar is null) return Results.NotFound();
+
+            var occurrence = calendar.OriginalStartUtc is { } original
+                ? await CalendarRecurrences.FindAsync(db, calendar.Event, original, ct)
+                : null;
+            if (calendar.OriginalStartUtc.HasValue && occurrence is not { CanceledAt: null }) return Results.NotFound();
+            return Results.Ok(new
+            {
+                CalendarEventId = calendar.Event.Id,
+                calendar.Event.OrganizationId,
+                OccurrenceStartUtc = calendar.OriginalStartUtc,
+                Title = occurrence?.Title ?? calendar.Event.Title,
+                Body = (occurrence is null ? calendar.Event.Description : occurrence.Description) ?? string.Empty,
+                TargetLink = (string?)null
+            });
         }
 
         var source = kind switch

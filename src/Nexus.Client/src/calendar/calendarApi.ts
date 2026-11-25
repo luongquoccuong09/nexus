@@ -1,6 +1,10 @@
 import { readCursorPage } from '../cursorList';
 import { searchChatCandidates, searchPeopleScope } from '../peopleDirectory';
 import { orgApiPath, personalApiPath, protectedRequest } from '../scope';
+import type { CalendarEventTarget, CalendarRecurrence, CalendarRecurrenceInput } from './calendarRecurrence';
+
+export type { CalendarEventTarget } from './calendarRecurrence';
+export { calendarEventId } from './calendarRecurrence';
 
 export type RsvpStatus = 'Going' | 'Tentative' | 'Declined';
 export const rsvpStatuses: readonly RsvpStatus[] = ['Going', 'Tentative', 'Declined'];
@@ -18,6 +22,8 @@ export interface CalendarEvent {
   timeZone: string;
   reminderMinutes: number | null;
   isOnlineMeeting: boolean;
+  recurrence: CalendarRecurrence | null;
+  occurrenceStartUtc: string | null;
   canceledAt: string | null;
   version: number;
   myRsvp: RsvpStatus | null;
@@ -35,6 +41,7 @@ export interface CalendarEventInput {
   attendeeIds: string[];
   reminderMinutes: number | null;
   isOnlineMeeting?: boolean;
+  recurrence?: CalendarRecurrenceInput;
   version?: number;
 }
 
@@ -42,10 +49,8 @@ export interface CalendarCommunity { id: string; name: string }
 export interface CalendarPerson { id: string; displayName: string; username?: string }
 export interface CalendarAttendee { userId: string; displayName: string; status: RsvpStatus | null }
 export interface CalendarDateRange { fromUtc: string; toUtc: string }
-export interface CalendarEventTarget { organizationId: string | null; eventId: string }
-
-export function calendarEventId(target: CalendarEventTarget) {
-  return `${target.organizationId ?? 'personal'}:${target.eventId}`;
+export function calendarEventTarget(event: CalendarEvent): CalendarEventTarget {
+  return { organizationId: event.organizationId, eventId: event.id, occurrenceStartUtc: event.occurrenceStartUtc };
 }
 
 function eventsPath(organizationId: string | null) {
@@ -93,8 +98,9 @@ export async function listCalendarCandidates(organizationId: string | null, comm
   };
 }
 
-export async function getCalendarEvent({ organizationId, eventId }: CalendarEventTarget, signal: AbortSignal) {
-  const response = await fetch(`${eventsPath(organizationId)}/${eventId}`, { signal });
+export async function getCalendarEvent({ organizationId, eventId, occurrenceStartUtc }: CalendarEventTarget, signal: AbortSignal) {
+  const query = occurrenceStartUtc ? `?${new URLSearchParams({ occurrenceStartUtc })}` : '';
+  const response = await fetch(`${eventsPath(organizationId)}/${eventId}${query}`, { signal });
   if (!response.ok) throw new Error('This event is unavailable.');
   return await response.json() as CalendarEvent;
 }
@@ -123,6 +129,33 @@ export function saveCalendarEvent(organizationId: string | null, eventId: string
 
 export function cancelCalendarEvent({ organizationId, eventId }: CalendarEventTarget, version: number, signal: AbortSignal) {
   return writeEvent(`${eventsPath(organizationId)}/${eventId}/cancel`, 'POST', { version }, signal);
+}
+
+export function saveCalendarOccurrence({ organizationId, eventId, occurrenceStartUtc }: CalendarEventTarget,
+  version: number, input: Pick<CalendarEventInput, 'title' | 'description' | 'startUtc' | 'endUtc'>, signal: AbortSignal) {
+  return writeEvent(`${eventsPath(organizationId)}/${eventId}/occurrences`, 'PUT',
+    { ...input, version, occurrenceStartUtc }, signal);
+}
+
+export function cancelCalendarOccurrence({ organizationId, eventId, occurrenceStartUtc }: CalendarEventTarget,
+  version: number, signal: AbortSignal) {
+  return writeEvent(`${eventsPath(organizationId)}/${eventId}/occurrences/cancel`, 'POST',
+    { version, occurrenceStartUtc }, signal);
+}
+
+export async function downloadCalendarEvent({ organizationId, eventId }: CalendarEventTarget, signal: AbortSignal) {
+  const response = await fetch(`${eventsPath(organizationId)}/${eventId}/ics`, { signal });
+  if (!response.ok) throw new Error('Unable to download this event.');
+  const file = await response.blob();
+  if (signal.aborted) return;
+  const objectUrl = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = `nexus-event-${eventId}.ics`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
 export function respondToCalendarEvent({ organizationId, eventId }: CalendarEventTarget, status: RsvpStatus, signal: AbortSignal) {

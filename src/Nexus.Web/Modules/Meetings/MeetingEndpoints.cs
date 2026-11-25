@@ -77,7 +77,7 @@ internal static class MeetingEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> JoinScheduledAsync(Guid eventId, HttpContext http, [FromServices] NexusDbContext db,
+    private static async Task<IResult> JoinScheduledAsync(Guid eventId, DateTimeOffset? occurrenceStartUtc, HttpContext http, [FromServices] NexusDbContext db,
         MeetingsAccess access, IMeetingProvider provider, CancellationToken ct)
     {
         var actor = db.OrganizationActor!;
@@ -93,7 +93,18 @@ internal static class MeetingEndpoints
             """).AsNoTracking().SingleOrDefaultAsync(ct);
         if (item is null || !await allowed.AnyAsync(ct)) return Results.NotFound();
 
-        var room = await db.Meetings.AsNoTracking().SingleOrDefaultAsync(entry => entry.CalendarEventId == eventId, ct);
+        var originalStart = occurrenceStartUtc?.ToUniversalTime();
+        if (CalendarRecurrences.IsRecurring(item) != originalStart.HasValue) return Results.NotFound();
+        var title = item.Title;
+        if (originalStart is { } original)
+        {
+            if (await CalendarRecurrences.FindAsync(db, item, original, ct) is not { CanceledAt: null } occurrence)
+                return Results.NotFound();
+            title = occurrence.Title;
+        }
+
+        var room = await db.Meetings.AsNoTracking().SingleOrDefaultAsync(entry =>
+            entry.CalendarEventId == eventId && entry.CalendarOccurrenceUtc == originalStart, ct);
         if (room is not null)
         {
             room = await LockAsync(db, room.Id, ct);
@@ -104,7 +115,7 @@ internal static class MeetingEndpoints
             room = new MeetingEntity
             {
                 Id = Guid.CreateVersion7(), OrganizationId = item.OrganizationId, CalendarEventId = item.Id,
-                HostId = item.OrganizerId, Title = item.Title, CreatedAt = DateTimeOffset.UtcNow
+                CalendarOccurrenceUtc = originalStart, HostId = item.OrganizerId, Title = title, CreatedAt = DateTimeOffset.UtcNow
             };
             db.Meetings.Add(room);
         }
@@ -113,7 +124,7 @@ internal static class MeetingEndpoints
         if (admission is null) return Results.NotFound();
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return Credentials(http, provider, access, room, admission, item.Title);
+        return Credentials(http, provider, access, room, admission, title);
     }
 
     private static async Task<IResult> JoinAsync(Guid meetingId, HttpContext http, [FromServices] NexusDbContext db,

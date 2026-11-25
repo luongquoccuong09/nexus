@@ -19,7 +19,11 @@ public sealed class CalendarEventEntity
     public required string TimeZone { get; set; }
     public int? ReminderMinutes { get; set; }
     public bool IsOnlineMeeting { get; set; }
+    public CalendarRecurrenceFrequency? RecurrenceFrequency { get; set; }
+    public int? RecurrenceInterval { get; set; }
+    public DateOnly? RecurrenceUntilLocalDate { get; set; }
     public Guid? ReminderOutboxId { get; set; }
+    public Guid? ReminderGenerationId { get; set; }
     public DateTimeOffset? CanceledAt { get; set; }
     public int Version { get; set; } = 1;
     public required string CreationKeyHash { get; set; }
@@ -33,6 +37,24 @@ public enum CalendarRsvp
     Going,
     Tentative,
     Declined
+}
+
+public enum CalendarRecurrenceFrequency
+{
+    Daily,
+    Weekly,
+    Monthly
+}
+
+public sealed class CalendarOccurrenceOverride
+{
+    public Guid EventId { get; set; }
+    public DateTimeOffset OriginalStartUtc { get; set; }
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public DateTimeOffset? StartUtc { get; set; }
+    public DateTimeOffset? EndUtc { get; set; }
+    public DateTimeOffset? CanceledAt { get; set; }
 }
 
 public sealed class CalendarAttendeeEntity
@@ -53,6 +75,10 @@ internal sealed class CalendarEventConfiguration : IEntityTypeConfiguration<Cale
             table.HasCheckConstraint("ck_calendar_events_time_range", "start_utc < end_utc");
             table.HasCheckConstraint("ck_calendar_events_community_scope", "community_id IS NULL OR organization_id IS NOT NULL");
             table.HasCheckConstraint("ck_calendar_events_reminder", "reminder_minutes BETWEEN 0 AND 10080");
+            table.HasCheckConstraint("ck_calendar_events_recurrence",
+                "(recurrence_frequency IS NULL AND recurrence_interval IS NULL AND recurrence_until_local_date IS NULL) OR " +
+                "(recurrence_frequency IN ('Daily', 'Weekly', 'Monthly') AND recurrence_frequency IS NOT NULL " +
+                "AND recurrence_interval IS NOT NULL AND recurrence_interval BETWEEN 1 AND 365)");
         });
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("id");
@@ -66,7 +92,11 @@ internal sealed class CalendarEventConfiguration : IEntityTypeConfiguration<Cale
         builder.Property(x => x.TimeZone).HasColumnName("time_zone").HasMaxLength(128);
         builder.Property(x => x.ReminderMinutes).HasColumnName("reminder_minutes");
         builder.Property(x => x.IsOnlineMeeting).HasColumnName("is_online_meeting");
+        builder.Property(x => x.RecurrenceFrequency).HasColumnName("recurrence_frequency").HasConversion<string>().HasMaxLength(12);
+        builder.Property(x => x.RecurrenceInterval).HasColumnName("recurrence_interval");
+        builder.Property(x => x.RecurrenceUntilLocalDate).HasColumnName("recurrence_until_local_date");
         builder.Property(x => x.ReminderOutboxId).HasColumnName("reminder_outbox_id");
+        builder.Property(x => x.ReminderGenerationId).HasColumnName("reminder_generation_id");
         builder.Property(x => x.CanceledAt).HasColumnName("canceled_at");
         builder.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
         builder.Property(x => x.CreationKeyHash).HasColumnName("creation_key_hash").HasMaxLength(64);
@@ -82,6 +112,29 @@ internal sealed class CalendarEventConfiguration : IEntityTypeConfiguration<Cale
             .HasDatabaseName("ix_calendar_events_scope_range");
         builder.HasIndex(x => new { x.OrganizerId, x.OrganizationId, x.CreationKeyHash })
             .IsUnique().AreNullsDistinct(false).HasDatabaseName(CreationKeyIndex);
+    }
+}
+
+internal sealed class CalendarOccurrenceOverrideConfiguration : IEntityTypeConfiguration<CalendarOccurrenceOverride>
+{
+    public void Configure(EntityTypeBuilder<CalendarOccurrenceOverride> builder)
+    {
+        builder.ToTable("calendar_occurrence_overrides", table =>
+            table.HasCheckConstraint("ck_calendar_occurrence_overrides_shape",
+                "(start_utc IS NULL AND end_utc IS NULL AND title IS NULL AND canceled_at IS NOT NULL) OR " +
+                "(start_utc IS NOT NULL AND end_utc IS NOT NULL AND title IS NOT NULL AND start_utc < end_utc)"));
+        builder.HasKey(x => new { x.EventId, x.OriginalStartUtc });
+        builder.Property(x => x.EventId).HasColumnName("event_id");
+        builder.Property(x => x.OriginalStartUtc).HasColumnName("original_start_utc");
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(160);
+        builder.Property(x => x.Description).HasColumnName("description").HasMaxLength(4000);
+        builder.Property(x => x.StartUtc).HasColumnName("start_utc");
+        builder.Property(x => x.EndUtc).HasColumnName("end_utc");
+        builder.Property(x => x.CanceledAt).HasColumnName("canceled_at");
+        builder.HasOne<CalendarEventEntity>().WithMany().HasForeignKey(x => x.EventId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => new { x.EventId, x.StartUtc, x.EndUtc })
+            .HasFilter("start_utc IS NOT NULL AND canceled_at IS NULL")
+            .HasDatabaseName("ix_calendar_occurrence_overrides_moved");
     }
 }
 

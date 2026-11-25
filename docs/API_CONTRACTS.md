@@ -128,13 +128,26 @@
 
 Mutations require antiforgery. A stale event version returns `409`. Clients submit UTC instants and an IANA or Windows time-zone ID. The server converts recognized Windows IDs to their IANA equivalents for display and later recurrence evaluation. Calendar endpoints check the named Personal, Organization, or Community scope and current account status. Activity recognizes `calendar.invitation`, `calendar.updated`, `calendar.canceled`, and `calendar.reminder`. An authorized source response includes `calendarEventId` and `organizationId`. Delivery and source reads both recheck eligibility.
 
+### Recurring events and iCalendar export (`M6.14`)
+
+Calendar create and update accept `recurrence` with `frequency` (`Daily`, `Weekly`, or `Monthly`), `interval` from 1 through 365, and an optional inclusive `untilLocalDate` in the event time zone. `frequency: "None"` clears the series. An update that omits `recurrence` retains the current rule. The server evaluates recurrence in local time and returns UTC instants. List results retain the master `id` and add `occurrenceStartUtc` for the original occurrence, even when its displayed time changes. Pages are ordered by actual start, master ID, and original occurrence start. The event list expands only the requested date window, with overlapping events included and canceled occurrences omitted.
+
+| Method and path under the Calendar events scope | Contract |
+|---|---|
+| `GET /{id}?occurrenceStartUtc={original}` | Returns the selected occurrence, including its current cancellation status. Omit the query to read the master. |
+| `PUT /{id}/occurrences` | Updates one occurrence with `version`, `occurrenceStartUtc`, `title`, `description`, `startUtc`, and `endUtc`. |
+| `POST /{id}/occurrences/cancel` | Cancels one occurrence with `version` and `occurrenceStartUtc`. |
+| `GET /{id}/ics` | Downloads the authorized event or whole series as `text/calendar` with one stable UID and its exceptions. |
+
+Attendees and RSVP remain on the master event. Activity reminder sources include an original `occurrenceStartUtc` so the client can open the relevant occurrence.
+
 ### Scheduled meetings and Meet now (`M6.12`)
 
 Calendar create and update accept optional `isOnlineMeeting`. The Calendar event DTO returns that flag. Scope each meeting action to `/api/personal` or `/api/organizations/{organizationId}`. Mutation requests require antiforgery.
 
 | Method and path | Contract |
 |---|---|
-| `POST /calendar/events/{id}/meeting/join` | Joins an eligible online event and creates its room on first use. |
+| `POST /calendar/events/{id}/meeting/join` | Joins an eligible online event and creates its room on first use. A recurring event requires `occurrenceStartUtc` in the query and assigns a distinct room to that original occurrence. |
 | `POST /conversations/{id}/meetings` | Starts or reuses the active Meet now room. Returns `{ meetingId, organizationId, title }`. |
 | `GET /conversations/{id}/meetings/current` | Returns the accessible active room summary or `204`. When meetings are unavailable to the caller, `204` includes `Nexus-Meetings-Available: false`. |
 | `POST /meetings/{id}/join` | Joins an existing room after rechecking source access. Both join endpoints return `{ meetingId, organizationId, title, grantId, canManage, signalPath, token }` with `Cache-Control: no-store`. |

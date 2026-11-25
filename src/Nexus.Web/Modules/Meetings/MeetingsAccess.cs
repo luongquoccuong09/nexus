@@ -77,8 +77,14 @@ public sealed class MeetingsAccess(NexusDbContext db, IAuthorizationService auth
             return false;
 
         if (room.CalendarEventId is { } eventId)
-            return await CalendarAccess.VisibleTo(db, actor.Id).AnyAsync(item => item.Id == eventId &&
-                item.OrganizationId == room.OrganizationId && item.IsOnlineMeeting && item.CanceledAt == null, ct);
+        {
+            var item = await CalendarAccess.VisibleTo(db, actor.Id).SingleOrDefaultAsync(entry => entry.Id == eventId &&
+                entry.OrganizationId == room.OrganizationId && entry.IsOnlineMeeting && entry.CanceledAt == null, ct);
+            if (item is null) return false;
+            return room.CalendarOccurrenceUtc is { } original
+                ? await CalendarRecurrences.FindAsync(db, item, original, ct) is { CanceledAt: null }
+                : !CalendarRecurrences.IsRecurring(item);
+        }
 
         if (room.DirectCallId is { } callId)
         {

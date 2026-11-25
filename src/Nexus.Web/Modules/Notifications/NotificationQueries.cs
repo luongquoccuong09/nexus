@@ -50,7 +50,12 @@ internal static class NotificationQueries
                 (notification.Kind == CalendarOutbox.Invitation || notification.Kind == CalendarOutbox.Updated ||
                  notification.Kind == CalendarOutbox.Canceled || notification.Kind == CalendarOutbox.Reminder)
             where (eventItem.CanceledAt != null) == (notification.Kind == CalendarOutbox.Canceled) &&
-                (notification.Kind != CalendarOutbox.Reminder || eventItem.ReminderOutboxId == notification.OutboxMessageId)
+                (notification.Kind != CalendarOutbox.Reminder || eventItem.ReminderOutboxId == notification.OutboxMessageId ||
+                    db.CalendarOccurrenceReminders.Any(reminder => reminder.OutboxMessageId == notification.OutboxMessageId &&
+                        reminder.EventId == eventItem.Id && reminder.GenerationId == eventItem.ReminderGenerationId &&
+                        !db.CalendarOccurrenceOverrides.Any(change => change.EventId == eventItem.Id &&
+                            change.OriginalStartUtc == reminder.OriginalStartUtc &&
+                            (change.CanceledAt != null || change.StartUtc != null && change.StartUtc != reminder.EffectiveStartUtc))))
             where eventItem.OrganizerId == recipientId || db.CalendarAttendees.Any(attendee =>
                 attendee.EventId == eventItem.Id && attendee.UserId == recipientId &&
                 (notification.Kind != CalendarOutbox.Reminder || attendee.Status != CalendarRsvp.Declined))

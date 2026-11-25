@@ -98,6 +98,8 @@ public sealed class NexusDbContext
     public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();
     public DbSet<CalendarEventEntity> CalendarEvents => Set<CalendarEventEntity>();
     public DbSet<CalendarAttendeeEntity> CalendarAttendees => Set<CalendarAttendeeEntity>();
+    public DbSet<CalendarOccurrenceOverride> CalendarOccurrenceOverrides => Set<CalendarOccurrenceOverride>();
+    public DbSet<CalendarOccurrenceReminderEntity> CalendarOccurrenceReminders => Set<CalendarOccurrenceReminderEntity>();
     public DbSet<MeetingEntity> Meetings => Set<MeetingEntity>();
     public DbSet<MeetingGrantEntity> MeetingGrants => Set<MeetingGrantEntity>();
     public DbSet<MeetingBanEntity> MeetingBans => Set<MeetingBanEntity>();

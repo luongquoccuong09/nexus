@@ -29,6 +29,7 @@ interface ActivitySource {
   seq?: number | null;
   targetLink?: string | null;
   calendarEventId?: string;
+  occurrenceStartUtc?: string | null;
 }
 
 function activityLabel(kind: string): string {
@@ -222,7 +223,7 @@ export function ActivityWorkspace({ onOpenChat, onOpenChannel, onOpenContentLink
                   : <div className="nx-msg-body" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(source.body) }} />}
                 {source.calendarEventId && (
                   <Button size="sm" onClick={() => onOpenCalendar({
-                    eventId: source.calendarEventId!, organizationId: item.organizationId
+                    eventId: source.calendarEventId!, organizationId: item.organizationId, occurrenceStartUtc: source.occurrenceStartUtc
                   })}>
                     Open calendar event
                   </Button>
