@@ -39,7 +39,8 @@ public enum ResourceKind
     Community,
     CommunityChannel,
     Monitor,
-    CalendarEvent
+    CalendarEvent,
+    Meeting
 }
 
 public enum Visibility
@@ -94,7 +95,9 @@ public enum ResourceAction
     CalendarRead,
     CalendarCreate,
     CalendarEdit,
-    CalendarRespond
+    CalendarRespond,
+    MeetingJoin,
+    MeetingManage
 }
 
 public sealed record ActorContext(

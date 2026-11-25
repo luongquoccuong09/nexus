@@ -128,6 +128,22 @@
 
 Mutations require antiforgery. A stale event version returns `409`. Clients submit UTC instants and an IANA or Windows time-zone ID. The server converts recognized Windows IDs to their IANA equivalents for display and later recurrence evaluation. Calendar endpoints check the named Personal, Organization, or Community scope and current account status. Activity recognizes `calendar.invitation`, `calendar.updated`, `calendar.canceled`, and `calendar.reminder`. An authorized source response includes `calendarEventId` and `organizationId`. Delivery and source reads both recheck eligibility.
 
+### Scheduled meetings and Meet now (`M6.12`)
+
+Calendar create and update accept optional `isOnlineMeeting`. The Calendar event DTO returns that flag. Scope each meeting action to `/api/personal` or `/api/organizations/{organizationId}`. Mutation requests require antiforgery.
+
+| Method and path | Contract |
+|---|---|
+| `POST /calendar/events/{id}/meeting/join` | Joins an eligible online event and creates its room on first use. |
+| `POST /conversations/{id}/meetings` | Starts or reuses the active Meet now room. Returns `{ meetingId, organizationId, title }`. |
+| `GET /conversations/{id}/meetings/current` | Returns the accessible active room summary or `204`. When meetings are unavailable to the caller, `204` includes `Nexus-Meetings-Available: false`. |
+| `POST /meetings/{id}/join` | Joins an existing room after rechecking source access. Both join endpoints return `{ meetingId, organizationId, title, grantId, canManage, signalPath, token }` with `Cache-Control: no-store`. |
+| `POST /meetings/{id}/leave` | Revokes the caller's own session-bound `{ grantId }` and returns `204`. |
+| `POST /meetings/{id}/end` | Ends the room for everyone and revokes every active grant. The host controls this command. |
+| `DELETE /meetings/{id}/participants/{grantId}` | The host removes the indicated participant, revokes that account's grants, and prevents it from returning to the same room. |
+
+The browser connects to `/api/media/rtc` or `/api/media/rtc/v1` on the same origin. Both WebSocket upgrades and the corresponding `/validate` routes require a current BFF session and a signed room grant. Nexus owns admission on each reconnect. Provider signaling and administrative calls use a configured private server origin.
+
 ### Sidebar organization and previews (`M6.26`)
 
 - `GET /api/sidebar?surface=chat|communities` returns `{ surface, sections, items }` (`Cache-Control: no-store`), capped at 50 sections per surface, joining items against current active conversation/community/organization memberships (plus `SEC-20b` Verified status for Official communities).

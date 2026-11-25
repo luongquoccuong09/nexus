@@ -8,6 +8,7 @@ using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
+using Nexus.Web.Modules.Meetings;
 
 namespace Nexus.Web.Modules.Conversations;
 
@@ -253,6 +254,7 @@ public static partial class CommunityEndpoints
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckConversationAsync(channel.Id, ct);
         await fanout.NotifyCommunityFeedChangedAsync(
             communityId,
             channel.Id,

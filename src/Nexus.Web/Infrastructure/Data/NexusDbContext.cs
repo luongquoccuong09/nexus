@@ -10,6 +10,7 @@ using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 using Nexus.Web.Modules.Notifications;
 using Nexus.Web.Modules.Calendar;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Org;
 using Nexus.Web.Modules.People;
 
@@ -96,6 +97,9 @@ public sealed class NexusDbContext
     public DbSet<OutboxMessageEntity> OutboxMessages => Set<OutboxMessageEntity>();
     public DbSet<CalendarEventEntity> CalendarEvents => Set<CalendarEventEntity>();
     public DbSet<CalendarAttendeeEntity> CalendarAttendees => Set<CalendarAttendeeEntity>();
+    public DbSet<MeetingEntity> Meetings => Set<MeetingEntity>();
+    public DbSet<MeetingGrantEntity> MeetingGrants => Set<MeetingGrantEntity>();
+    public DbSet<MeetingBanEntity> MeetingBans => Set<MeetingBanEntity>();
     public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
     public DbSet<ConversationNotificationPreference> ConversationNotificationPreferences => Set<ConversationNotificationPreference>();
     public DbSet<NotificationQuietHours> NotificationQuietHours => Set<NotificationQuietHours>();

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Idempotency;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
 
@@ -866,6 +867,7 @@ public static class ConversationEndpoints
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(targetUserId, ct);
         await fanout.NotifyConversationAccessRevokedAsync(targetUserId, conversationId, ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 
@@ -919,6 +921,7 @@ public static class ConversationEndpoints
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(actorId, ct);
         await fanout.NotifyConversationAccessRevokedAsync(actorId, conversationId, ct);
         await fanout.NotifyConversationChangedAsync(conversationId, conv.ChangeSeq, ct);
 

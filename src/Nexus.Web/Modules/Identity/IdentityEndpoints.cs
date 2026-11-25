@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Messaging;
 
@@ -382,6 +383,7 @@ public static class IdentityEndpoints
         await SignInSessionAsync(ctx, user, mfaVerified);
 
         await WriteAuditAsync(db, Guid.Empty, user.Id, "PASSWORD_CHANGED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(user.Id, ct);
         return Results.Ok(new { changed = true });
     }
 
@@ -437,6 +439,7 @@ public static class IdentityEndpoints
         await WriteAuditAsync(db, Guid.Empty, user.Id, "PASSWORD_RESET_REDEEMED", "UserAccount", user.Id.ToString(), "Allowed", null, ctx, ct);
         await transaction.CommitAsync(ct);
         connectionRegistry.AbortUserConnections(user.Id);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(user.Id, ct);
         return Results.Ok(new { reset = true });
     }
 
@@ -494,6 +497,8 @@ public static class IdentityEndpoints
             .Where(s => s.Id == sessionId && s.UserId == userId && s.RevokedAt == null)
             .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now), ct);
 
+        if (updated != 0)
+            await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckSessionAsync(sessionId, ct);
         return updated == 0 ? Results.NotFound() : Results.NoContent();
     }
 
@@ -514,6 +519,8 @@ public static class IdentityEndpoints
             .Where(s => s.UserId == userId && s.RevokedAt == null && s.Id != currentSessionId)
             .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.RevokedAt, now), ct);
 
+        if (count != 0)
+            await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(userId, ct);
         return Results.Ok(new { revokedCount = count });
     }
 
@@ -771,6 +778,7 @@ public static class IdentityEndpoints
         {
             var now = DateTimeOffset.UtcNow;
             connectionRegistry.AbortOrganizationConnections(target.OrganizationId, target.Id);
+            await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(target.Id, ct);
         }
 
         await WriteAuditAsync(

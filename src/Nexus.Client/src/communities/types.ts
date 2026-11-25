@@ -135,6 +135,7 @@ export interface DepartmentLite {
 }
 
 export interface CommunitiesWorkspaceProps {
+  visible: boolean;
   currentUserId: string;
   currentDisplayName: string;
   organizations: OrganizationItem[];

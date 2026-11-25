@@ -12,6 +12,7 @@ import { SidebarItemActions, SidebarSectionHeader } from './sidebarControls';
 import { ConversationNotificationButton } from './notificationPreferences';
 import { useChatDrafts } from './chatDrafts';
 import { useChatReading } from './chatReading';
+import ConversationMeetingButton from './meetings/ConversationMeetingButton';
 import { shouldSendOnEnter } from './composerKeys';
 import { ComposerToolbar, handleComposerFormattingKeyDown } from './ComposerToolbar';
 import {
@@ -2576,6 +2577,8 @@ export function ChatWorkspace({
               </div>
 
               <div className="nx-inline-actions nx-stage-actions">
+                {!isSelfConv && !blockedPeer && <ConversationMeetingButton key={`meeting:${activeConv.id}`} organizationId={null}
+                  conversationId={activeConv.id} title={activeConv.title} visible={visible} />}
                 {!isSelfConv && (
                   <ConversationNotificationButton key={activeConv.id} conversationId={activeConv.id} />
                 )}

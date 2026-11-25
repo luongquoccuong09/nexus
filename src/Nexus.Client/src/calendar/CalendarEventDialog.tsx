@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ListPaging, useCursorList } from '../cursorList';
 import { Badge, Button, Modal } from '../ui';
+import { useMeeting } from '../meetings/MeetingProvider';
 import CalendarEventForm from './CalendarEventForm';
 import {
   type CalendarAttendee, type CalendarCommunity, type CalendarEvent, type CalendarEventTarget,
@@ -26,6 +27,7 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
   accessRevision: number;
 }) {
   const [event, setEvent] = useState<CalendarEvent | null>(null);
+  const meeting = useMeeting();
   const [editing, setEditing] = useState(false);
   const [editAttendees, setEditAttendees] = useState<CalendarAttendee[]>([]);
   const [confirming, setConfirming] = useState(false);
@@ -162,6 +164,12 @@ export default function CalendarEventDialog({ target, organizationId, scopeName,
                 <div><dt>Organizer</dt><dd>{event.organizerName}</dd></div>
               </dl>
               {event.description && <p className="nx-calendar-description">{event.description}</p>}
+              {event.isOnlineMeeting && !event.canceledAt && target && (
+                <Button variant="primary" disabled={meeting.active || loading} onClick={() => {
+                  meeting.open({ kind: 'calendar', ...target, title: event.title });
+                  onClose();
+                }}>Join meeting</Button>
+              )}
               {event.canRsvp && !event.canceledAt && target && (
                 <div className="nx-calendar-rsvp" role="group" aria-label="RSVP">
                   {rsvpStatuses.map(status => (

@@ -7,6 +7,7 @@ using Nexus.Web.Infrastructure.Security;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
+using Nexus.Web.Modules.Meetings;
 
 namespace Nexus.Web.Modules.People;
 
@@ -137,7 +138,13 @@ public static class SafetyEndpoints
             await DmReadReceipts.BumpPrivacyVersionAsync(db, actorId, ct);
         }
         await transaction.CommitAsync(ct);
-        if (!exists) await fanout.NotifyDmReceiptPrivacyAsync(actorId, targetUserId, ct);
+        if (!exists)
+        {
+            var meetings = ctx.RequestServices.GetRequiredService<MeetingRevocations>();
+            await meetings.RecheckUserAsync(actorId, ct);
+            await meetings.RecheckUserAsync(targetUserId, ct);
+            await fanout.NotifyDmReceiptPrivacyAsync(actorId, targetUserId, ct);
+        }
 
         return Results.NoContent();
     }

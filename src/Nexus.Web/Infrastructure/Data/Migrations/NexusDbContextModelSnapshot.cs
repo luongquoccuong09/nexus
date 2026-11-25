@@ -431,6 +431,10 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("end_utc");
 
+                    b.Property<bool>("IsOnlineMeeting")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_online_meeting");
+
                     b.Property<Guid?>("OrganizationId")
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
@@ -1233,6 +1237,156 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
 
                             t.HasCheckConstraint("ck_users_availability_state", "availability_state IN ('Available', 'Busy', 'Away', 'DoNotDisturb')");
                         });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingBanEntity", b =>
+                {
+                    b.Property<Guid>("MeetingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("meeting_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("MeetingId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("meeting_bans", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("CalendarEventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("calendar_event_id");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("host_id");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset?>("ProviderEndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_ended_at");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalendarEventId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_meetings_calendar_event");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("HostId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ConversationId", "EndedAt")
+                        .IsUnique()
+                        .HasDatabaseName("ux_meetings_active_conversation")
+                        .HasFilter("conversation_id IS NOT NULL AND ended_at IS NULL");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("ConversationId", "EndedAt"), false);
+
+                    b.HasIndex("EndedAt", "Id")
+                        .HasDatabaseName("ix_meetings_pending_close")
+                        .HasFilter("ended_at IS NOT NULL AND provider_ended_at IS NULL");
+
+                    b.ToTable("meetings", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_meetings_single_source", "(calendar_event_id IS NULL) <> (conversation_id IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingGrantEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("checked_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("MeetingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("meeting_id");
+
+                    b.Property<DateTimeOffset?>("ProviderRemovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_removed_at");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("session_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.HasIndex("CheckedAt", "Id")
+                        .HasDatabaseName("ix_meeting_grants_access_check")
+                        .HasFilter("revoked_at IS NULL");
+
+                    b.HasIndex("MeetingId", "SessionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_meeting_grants_active_session")
+                        .HasFilter("revoked_at IS NULL AND session_id IS NOT NULL");
+
+                    b.HasIndex("RevokedAt", "Id")
+                        .HasDatabaseName("ix_meeting_grants_pending_removal")
+                        .HasFilter("revoked_at IS NOT NULL AND provider_removed_at IS NULL");
+
+                    b.HasIndex("UserId", "MeetingId")
+                        .HasDatabaseName("ix_meeting_grants_user_meeting");
+
+                    b.ToTable("meeting_grants", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Web.Modules.Messaging.AnnouncementAcknowledgmentEntity", b =>
@@ -2852,6 +3006,65 @@ namespace Nexus.Web.Infrastructure.Data.Migrations
                         .WithMany()
                         .HasForeignKey("TargetUserId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingBanEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Meetings.MeetingEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MeetingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Calendar.CalendarEventEntity", null)
+                        .WithMany()
+                        .HasForeignKey("CalendarEventId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Conversations.ConversationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("HostId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Modules.Org.OrganizationEntity", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Nexus.Web.Modules.Meetings.MeetingGrantEntity", b =>
+                {
+                    b.HasOne("Nexus.Web.Modules.Meetings.MeetingEntity", null)
+                        .WithMany()
+                        .HasForeignKey("MeetingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nexus.Web.Infrastructure.Data.AppSessionEntity", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nexus.Web.Modules.Identity.NexusUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

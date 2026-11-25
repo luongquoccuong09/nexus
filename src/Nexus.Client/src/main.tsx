@@ -15,6 +15,7 @@ import {
 import type { CommunityFeedDelta } from './chat/types';
 import type { DmReadReceiptPreference } from './chat/dmReadReceipts';
 import type { CalendarEventTarget } from './calendar/calendarApi';
+import MeetingProvider from './meetings/MeetingProvider';
 import type { OrganizationMessageTarget } from './OrganizationMessageContext';
 import QuickSwitcher, { type QuickSwitchTarget } from './QuickSwitcher';
 import { isQuickSwitcherShortcut } from './quickSwitcherKeys';
@@ -1184,6 +1185,7 @@ function App() {
     'HR import';
 
   return (
+    <MeetingProvider key={user.id}>
     <div className="nx-app" data-suppress-chime={mySuppressChime ? 'true' : 'false'}>
       {/* Left App Rail */}
       <nav className="nx-rail" aria-label="Main navigation">
@@ -1485,6 +1487,7 @@ function App() {
             <div className={`nx-tab-keepalive ${workspaceTab === 'communities' ? '' : 'hidden'}`}>
               <Suspense fallback={<div className="nx-empty-side" role="status">Loading Communities…</div>}>
                 <CommunitiesWorkspace
+                  visible={workspaceTab === 'communities'}
                   currentUserId={user.id}
                   currentDisplayName={user.displayName}
                   organizations={organizations}
@@ -1951,6 +1954,7 @@ function App() {
         />
       )}
     </div>
+    </MeetingProvider>
   );
 }
 

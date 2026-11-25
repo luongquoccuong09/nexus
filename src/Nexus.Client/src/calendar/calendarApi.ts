@@ -17,6 +17,7 @@ export interface CalendarEvent {
   endUtc: string;
   timeZone: string;
   reminderMinutes: number | null;
+  isOnlineMeeting: boolean;
   canceledAt: string | null;
   version: number;
   myRsvp: RsvpStatus | null;
@@ -33,6 +34,7 @@ export interface CalendarEventInput {
   communityId: string | null;
   attendeeIds: string[];
   reminderMinutes: number | null;
+  isOnlineMeeting?: boolean;
   version?: number;
 }
 

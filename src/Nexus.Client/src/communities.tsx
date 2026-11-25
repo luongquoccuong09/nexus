@@ -41,6 +41,7 @@ import { ConversationNotificationButton } from './notificationPreferences';
 import { OwnershipTransfer, TransferOwnershipDialog } from './transferOwnership';
 import { CursorPage, ListPaging, readCursorPage, useCursorList } from './cursorList';
 import { loadOrganizationDepartments, personKey, searchPeopleScope } from './peopleDirectory';
+import ConversationMeetingButton from './meetings/ConversationMeetingButton';
 import { Badge, Button, EmptyState, ToastBar } from './ui';
 import { CommunityMembersDrawer } from './communities/CommunityMembersDrawer';
 import { CommunityModals } from './communities/CommunityModals';
@@ -94,6 +95,7 @@ async function readCommunityPages(organizations: OrganizationItem[], discover: b
 export function CommunitiesWorkspace({
   currentUserId,
   currentDisplayName,
+  visible,
   organizations,
   requestedChannel,
   jumpTarget,
@@ -2424,6 +2426,9 @@ export function CommunitiesWorkspace({
               </div>
 
               <div className="nx-inline-actions">
+                {!activeIsArchived && <ConversationMeetingButton key={`meeting:${selectedConversationId}`}
+                  organizationId={selectedCommunity.organizationId} conversationId={selectedConversationId}
+                  title={selectedSubChannel?.name ?? selectedCommunity.name} visible={visible} />}
                 <ConversationNotificationButton key={selectedConversationId} conversationId={selectedConversationId} />
                 {canManage && !selectedSubChannel && (
                   <Button

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Idempotency;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Org;
 using Npgsql;
 
@@ -119,8 +120,19 @@ internal static class CalendarEndpoints
             return Results.Forbid();
 
         var keyHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(creationKey)));
-        var requestHash = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
-            new { request.CommunityId, Fields = fields with { AttendeeIds = fields.AttendeeIds.Order().ToArray() } })));
+        var requestFields = new
+        {
+            request.CommunityId,
+            Fields = new
+            {
+                fields.Title, fields.Description, fields.StartUtc, fields.EndUtc, fields.TimeZone, fields.ReminderMinutes,
+                AttendeeIds = fields.AttendeeIds.Order().ToArray()
+            }
+        };
+        var serialized = fields.IsOnlineMeeting == true
+            ? JsonSerializer.SerializeToUtf8Bytes(new { Event = requestFields, IsOnlineMeeting = true })
+            : JsonSerializer.SerializeToUtf8Bytes(requestFields);
+        var requestHash = Convert.ToHexStringLower(SHA256.HashData(serialized));
         var replay = await ReplayCreateAsync(http, db, authz, keyHash, requestHash, ct);
         if (replay is not null) return replay;
 
@@ -173,7 +185,8 @@ internal static class CalendarEndpoints
         Results.Created($"{OrganizationScope.ApiPath(row.Item.OrganizationId)}/calendar/events/{row.Item.Id}", row.ToDto(actorId));
 
     private static async Task<IResult> UpdateAsync(
-        Guid eventId, EventRequest request, [FromServices] NexusDbContext db, IAuthorizationService authz, CancellationToken ct)
+        Guid eventId, EventRequest request, [FromServices] NexusDbContext db, IAuthorizationService authz,
+        MeetingRevocations meetings, CancellationToken ct)
     {
         var actor = db.OrganizationActor!;
         if (request.Version is null or < 1 || !TryReadFields(request, actor.Id, out var fields)) return InvalidFields();
@@ -198,8 +211,9 @@ internal static class CalendarEndpoints
 
         var now = DateTimeOffset.UtcNow;
         var reminderChanged = item.StartUtc != fields.StartUtc || item.ReminderMinutes != fields.ReminderMinutes;
+        var onlineChanged = fields.IsOnlineMeeting is { } online && online != item.IsOnlineMeeting;
         var detailsChanged = reminderChanged || item.EndUtc != fields.EndUtc || item.Title != fields.Title ||
-            item.Description != fields.Description || item.TimeZone != fields.TimeZone;
+            item.Description != fields.Description || item.TimeZone != fields.TimeZone || onlineChanged;
         if (!detailsChanged && oldIds.SetEquals(newIds))
             return await ReadUpdatedAsync(db, eventId, ct);
 
@@ -209,12 +223,16 @@ internal static class CalendarEndpoints
         if (detailsChanged) CalendarOutbox.Enqueue(db, item, CalendarOutbox.Updated, retained, now);
         if (reminderChanged) CalendarOutbox.ScheduleReminder(db, item, now);
         await db.SaveChangesAsync(ct);
+        var roomClosed = onlineChanged && !item.IsOnlineMeeting ? await meetings.EndCalendarAsync(eventId, now, ct) : null;
         await transaction.CommitAsync(ct);
+        if (roomClosed is { } closedId) await meetings.CloseProviderRoomAsync(closedId, ct);
+        else if (oldIds.Except(newIds).Any()) await meetings.RecheckCalendarAsync(eventId, ct);
         return await ReadUpdatedAsync(db, eventId, ct);
     }
 
     private static async Task<IResult> CancelAsync(
-        Guid eventId, CancelRequest request, [FromServices] NexusDbContext db, IAuthorizationService authz, CancellationToken ct)
+        Guid eventId, CancelRequest request, [FromServices] NexusDbContext db, IAuthorizationService authz,
+        MeetingRevocations meetings, CancellationToken ct)
     {
         if (request.Version < 1) return Invalid("invalid_calendar_version", "Provide the event's current version.");
         var actor = db.OrganizationActor!;
@@ -235,7 +253,9 @@ internal static class CalendarEndpoints
         var attendeeIds = await db.CalendarAttendees.Where(row => row.EventId == item.Id).Select(row => row.UserId).ToArrayAsync(ct);
         CalendarOutbox.Enqueue(db, item, CalendarOutbox.Canceled, attendeeIds, now);
         await db.SaveChangesAsync(ct);
+        var roomClosed = await meetings.EndCalendarAsync(eventId, now, ct);
         await transaction.CommitAsync(ct);
+        if (roomClosed is { } closedId) await meetings.CloseProviderRoomAsync(closedId, ct);
         return await ReadUpdatedAsync(db, eventId, ct);
     }
 
@@ -332,7 +352,7 @@ internal static class CalendarEndpoints
 
         if (zone.Id != "UTC" && TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var ianaId)) zoneId = ianaId;
         fields = new(title, string.IsNullOrEmpty(description) ? null : description,
-            start.ToUniversalTime(), end.ToUniversalTime(), zoneId, request.ReminderMinutes, ids);
+            start.ToUniversalTime(), end.ToUniversalTime(), zoneId, request.ReminderMinutes, request.IsOnlineMeeting, ids);
         return true;
     }
 
@@ -344,6 +364,7 @@ internal static class CalendarEndpoints
         item.EndUtc = fields.EndUtc;
         item.TimeZone = fields.TimeZone;
         item.ReminderMinutes = fields.ReminderMinutes;
+        item.IsOnlineMeeting = fields.IsOnlineMeeting ?? item.IsOnlineMeeting;
         item.UpdatedAt = now;
     }
 
@@ -357,19 +378,19 @@ internal static class CalendarEndpoints
         new { code = "calendar_conflict", message = "The event changed or was canceled. Refresh the event and try again." });
 
     private sealed record EventRequest(string? Title, string? Description, DateTimeOffset? StartUtc, DateTimeOffset? EndUtc,
-        string? TimeZone, Guid? CommunityId, Guid[]? AttendeeIds, int? ReminderMinutes, int? Version);
+        string? TimeZone, Guid? CommunityId, Guid[]? AttendeeIds, int? ReminderMinutes, int? Version, bool? IsOnlineMeeting);
     private sealed record CancelRequest(int Version);
     private sealed record RsvpRequest(string? Status);
     private sealed record EventCursor(DateTimeOffset StartUtc, Guid Id);
     private sealed record AttendeeCursor(Guid UserId);
     private sealed record EventFields(string Title, string? Description, DateTimeOffset StartUtc, DateTimeOffset EndUtc,
-        string TimeZone, int? ReminderMinutes, Guid[] AttendeeIds);
+        string TimeZone, int? ReminderMinutes, bool? IsOnlineMeeting, Guid[] AttendeeIds);
     private sealed record EventRow(CalendarEventEntity Item, string OrganizerName, bool IsAttendee, CalendarRsvp? Rsvp)
     {
         public object ToDto(Guid actorId) => new
         {
             Item.Id, Item.OrganizationId, Item.CommunityId, Item.OrganizerId, OrganizerName, Item.Title, Item.Description,
-            Item.StartUtc, Item.EndUtc, Item.TimeZone, Item.ReminderMinutes, Item.CanceledAt, Item.Version,
+            Item.StartUtc, Item.EndUtc, Item.TimeZone, Item.ReminderMinutes, Item.IsOnlineMeeting, Item.CanceledAt, Item.Version,
             MyRsvp = Rsvp?.ToString(), CanEdit = Item.OrganizerId == actorId && Item.CanceledAt == null,
             CanRsvp = IsAttendee && Item.CanceledAt == null
         };

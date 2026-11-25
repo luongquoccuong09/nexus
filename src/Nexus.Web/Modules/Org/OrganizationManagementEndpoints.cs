@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Conversations;
 using Nexus.Web.Modules.Identity;
@@ -219,6 +220,7 @@ public static class OrganizationManagementEndpoints
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         connections.AbortOrganizationConnections(actor.OrganizationId, memberId);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(memberId, ct);
         var orgGroup = MessagingHub.UserGroupName(actor.OrganizationId, memberId);
         foreach (var connectionId in connections.GetUserConnectionIds(memberId))
         {

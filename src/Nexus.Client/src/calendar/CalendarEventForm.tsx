@@ -34,6 +34,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
   } : defaultEventTimes(localZone));
   const [communityId, setCommunityId] = useState(event?.communityId ?? initialCommunityId);
   const [reminder, setReminder] = useState(event?.reminderMinutes?.toString() ?? '');
+  const [isOnlineMeeting, setIsOnlineMeeting] = useState(event?.isOnlineMeeting ?? false);
   const [selectedPeople, setSelectedPeople] = useState<CalendarPerson[]>(() =>
     invited.map(person => ({ id: person.userId, displayName: person.displayName })));
   const [query, setQuery] = useState('');
@@ -98,7 +99,7 @@ export default function CalendarEventForm({ event, invited, organizationId, init
       const input: CalendarEventInput = {
         title: title.trim(), description: description.trim(), startUtc, endUtc, timeZone,
         communityId: communityId || null, attendeeIds: selectedPeople.map(person => person.id).sort(),
-        reminderMinutes: reminder === '' ? null : Number(reminder), version: event?.version
+        reminderMinutes: reminder === '' ? null : Number(reminder), isOnlineMeeting, version: event?.version
       };
       if (!event) {
         const payload = JSON.stringify(input);
@@ -165,6 +166,12 @@ export default function CalendarEventForm({ event, invited, organizationId, init
           </select>
         </Field>
       )}
+      <div className="nx-field">
+        <label className="nx-terms-label">
+          <input type="checkbox" checked={isOnlineMeeting} onChange={e => setIsOnlineMeeting(e.currentTarget.checked)} />
+          <span>Online meeting</span>
+        </label>
+      </div>
       <fieldset className="nx-calendar-invite-field">
         <legend>Invite attendees</legend>
         <Field label="Search people" htmlFor="calendar-event-people">

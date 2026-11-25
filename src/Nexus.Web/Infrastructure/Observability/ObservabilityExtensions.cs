@@ -5,6 +5,7 @@ using Serilog;
 using Serilog.Core;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Notifications;
 
 namespace Nexus.Web.Infrastructure.Observability;
@@ -45,7 +46,8 @@ public static class ObservabilityExtensions
                 {
                     options.Filter = ctx =>
                         !ctx.Request.Path.Equals("/healthz", StringComparison.OrdinalIgnoreCase) &&
-                        !ctx.Request.Path.Equals("/readyz", StringComparison.OrdinalIgnoreCase);
+                        !ctx.Request.Path.Equals("/readyz", StringComparison.OrdinalIgnoreCase) &&
+                        !ctx.Request.Path.StartsWithSegments(MediaSignalGateway.SignalPath, StringComparison.OrdinalIgnoreCase);
                 })
                 .AddHttpClientInstrumentation(options =>
                     options.FilterHttpRequestMessage = request => !request.Options.TryGetValue(WebPushTransport.PrivateEndpoint, out _)))

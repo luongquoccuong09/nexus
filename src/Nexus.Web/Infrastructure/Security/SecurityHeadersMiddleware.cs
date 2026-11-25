@@ -21,6 +21,7 @@ public sealed class SecurityHeadersMiddleware
             headers.TryAdd("X-Content-Type-Options", "nosniff");
             headers.TryAdd("X-Frame-Options", "DENY");
             headers.TryAdd("Referrer-Policy", "no-referrer");
+            headers.TryAdd("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self)");
             headers.TryAdd("X-Robots-Tag", "noindex, nofollow");
             return Task.CompletedTask;
         });

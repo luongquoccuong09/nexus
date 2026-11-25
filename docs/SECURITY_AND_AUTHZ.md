@@ -95,6 +95,12 @@ The user policy checks deployment grants independently of Organization membershi
 
 Personal events use current Personal chat eligibility for invitations and invitee access. Organization events require active membership in the matching Organization. Community events inherit current Community membership, including the Verified requirement for Official Communities. Creating a Community event requires access to that Community. The calendar independently checks status and access for lists, detail, attendee pages, mutations, and replay of a create request. Calendar outbox delivery and subsequent Activity access recheck the same eligibility rules.
 
+### 2.7 Meetings (`ResourceKind.Meeting`)
+
+Joining or starting a meeting requires an active account and current access to the originating Calendar event or conversation. Meet now also checks whether the account can write to the conversation. Community channels inherit Community access and their posting rules. DM blocks and archived channels deny media access. Only the host can end a room or remove an account.
+
+Nexus issues a 60-second room credential bound to one grant. The signaling gateway validates the signature, grant, BFF session, and current resource access before every connection and reconnect, including provider-refreshed credentials. A host removal blocks the account for that room and revokes its device grants. Source access changes and event cancellation revoke admission and evict affected provider participants. The durable reconciliation worker retries incomplete provider cleanup. Provider signaling and administration are private, and the gateway forwards credentials in an authorization header over the private connection.
+
 ## 3. Domain Authorization Contract (`M0.4`)
 
 Implemented in `src/Nexus.Web/Infrastructure/Security/`:

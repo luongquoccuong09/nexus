@@ -34,6 +34,10 @@ public sealed class NexusAuthorizationService : IAuthorizationService
                 CanAccessCalendar(actor, resource) && resource.TargetIsOwner,
             ResourceAction.CalendarRespond =>
                 CanAccessCalendar(actor, resource) && resource.TargetIsSelf,
+            ResourceAction.MeetingJoin =>
+                CanAccessMeeting(actor, resource),
+            ResourceAction.MeetingManage =>
+                CanAccessMeeting(actor, resource) && resource.TargetIsOwner,
 
             ResourceAction.DmOpen =>
                 resource.Kind == ResourceKind.Dm &&
@@ -215,6 +219,10 @@ public sealed class NexusAuthorizationService : IAuthorizationService
         resource.Kind == ResourceKind.CalendarEvent && resource.OrganizationId == actor.OrganizationId &&
         resource.MembershipRole is not null &&
         (!resource.IsOfficial || actor.TrustLevel == TrustLevel.Verified);
+
+    private static bool CanAccessMeeting(ActorContext actor, ResourceContext resource) =>
+        resource.Kind == ResourceKind.Meeting && resource.OrganizationId == actor.OrganizationId &&
+        resource.MembershipRole is not null;
 
     private static bool IsVerifiedRole(ActorContext actor, OrgRole role) =>
         actor.TrustLevel == TrustLevel.Verified && actor.OrgRole == role;

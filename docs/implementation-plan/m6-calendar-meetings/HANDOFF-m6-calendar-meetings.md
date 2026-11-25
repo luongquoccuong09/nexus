@@ -144,3 +144,42 @@ pwsh -File "$calendarQa\start-host.ps1"
 # In another shell, with the host running
 node "$calendarQa\calendar-qa.mjs"
 ```
+
+## M6.12 Scheduled meetings and Meet now
+
+Verified November 25, 2026. The full pipeline passed 206 PostgreSQL integration tests, 59 client unit tests, security and UI audits, and Web and Desktop Release builds. One opt-in Monitor test was skipped.
+
+Calendar events can be marked as online meetings. Eligible users can join those events or start and join an active Meet now room from Chat or a Community channel. The media room loads the approved LiveKit SDK on demand. Participants control their microphone, camera, and screen sharing. The host can remove a participant or end the room for everyone.
+
+The additive `20261125050605_MeetingRooms` migration creates room, grant, ban, and provider cleanup state. Each initial credential lasts 60 seconds. Nexus verifies the BFF session, active account, resource access, and grant on every signaling connection. Host removal and access revocation invalidate grants before contacting LiveKit. Reconciliation retries pending provider changes. WebView2 uses the default consent prompt and source picker for the configured server origin. The Desktop tray provides a user-triggered reset for the server's camera and microphone permissions.
+
+For a loopback Docker deployment, configure one LiveKit API key and a secret of at least 32 bytes in `NEXUS_MEETINGS_LIVEKIT_KEY` and `NEXUS_MEETINGS_LIVEKIT_SECRET`. Then run the compose overlay. It starts the pinned single-node LiveKit image in the Web container's network namespace. Signaling and administration bind to loopback inside that namespace. The overlay publishes only the local ICE/TCP and ICE/UDP media ports in addition to the Nexus Web port.
+
+```powershell
+docker compose -f deploy/docker-compose.dev.yml -f deploy/docker-compose.meetings.dev.yml config --quiet
+docker compose -f deploy/docker-compose.dev.yml -f deploy/docker-compose.meetings.dev.yml up --build
+```
+
+For remote deployments use an HTTPS private provider origin for `NexusMeetings:LiveKit:ServerUrl`, a dedicated provider key, and no publicly routed provider signaling or Twirp endpoints. Exclude `/api/media` query strings from ingress logs. Configure the separate ICE endpoints for the target network and qualify TURN/TLS during release verification.
+
+The PostgreSQL 17 integration tests covered Personal and Organization scope, Community and account revocation, event cancellation, session-bound signaling, host-only controls, active eviction, and HTTP and WebSocket denial of a revoked credential. The browser harness used two real BFF accounts, the actual `Nexus.Web` host, and single-node LiveKit `1.13.11`. Both accounts received microphone packets and decoded camera frames at `1440×900`, `390×844`, and `320×700` in Light and Dark. It also exercised a simulated camera permission denial and retry, a synthetic tab screen share, Chat and Community Meet now, leaving, ending, and removal. The final run recorded zero unexpected browser or HTTP errors and found none of its issued credentials in the Nexus server log. The media JavaScript and CSS remain deferred. Vite emitted 554.97 kB of room JavaScript (147.08 kB gzip) and 1.21 kB CSS (0.51 kB gzip).
+
+```powershell
+dotnet ef migrations has-pending-model-changes --project src/Nexus.Web/Nexus.Web.csproj --startup-project src/Nexus.Web/Nexus.Web.csproj --context NexusDbContext --no-build
+dotnet test tests/Nexus.IntegrationTests/Nexus.IntegrationTests.csproj --configuration Release --artifacts-path 'D:/develop-nexus-m610-jitsi/m612-test-release-artifacts' --filter FullyQualifiedName~MeetingsM612Tests --logger 'console;verbosity=minimal' --nologo
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```
+
+The browser fixture and logs are in `D:\develop\.nexus-m610-eval\m612`. It used the existing isolated PostgreSQL 17 database and the loopback LiveKit evaluation container.
+
+```powershell
+$meetingsQa = 'D:\develop\.nexus-m610-eval\m612'
+dotnet publish src/Nexus.Web -c Release --artifacts-path "$meetingsQa\artifacts" -p:SkipClientPublish=true -o "$meetingsQa\web"
+npm.cmd --prefix src/Nexus.Client run build
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$meetingsQa\web\wwwroot" -Recurse -Force
+pwsh -File "$meetingsQa\start-host.ps1" -Migrate
+pwsh -File "$meetingsQa\start-host.ps1" *> "$meetingsQa\web.log"
+# In another shell, with the host running
+node "$meetingsQa\meetings-qa.mjs"
+```

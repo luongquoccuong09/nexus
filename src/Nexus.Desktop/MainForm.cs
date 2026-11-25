@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -65,6 +66,7 @@ public sealed class MainForm : Form
         trayMenu.Items.Add("Open Nexus", null, (_, _) => ShowAndActivate());
         trayMenu.Items.Add("Reload", null, (_, _) => _webView.CoreWebView2?.Reload());
         trayMenu.Items.Add("Change Server URL...", null, (_, _) => PromptAndSwitchServer());
+        trayMenu.Items.Add("Reset camera and microphone permissions", null, async (_, _) => await ResetMediaPermissionsAsync());
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add(_startWithWindowsItem);
         trayMenu.Items.Add(new ToolStripSeparator());
@@ -154,6 +156,8 @@ public sealed class MainForm : Form
             _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
             _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
+            _webView.CoreWebView2.PermissionRequested += OnPermissionRequested;
+            _webView.CoreWebView2.ScreenCaptureStarting += OnScreenCaptureStarting;
             _webView.CoreWebView2.DownloadStarting += (_, _) =>
             {
                 _lastDownloadStartedAt = DateTimeOffset.UtcNow;
@@ -218,6 +222,41 @@ public sealed class MainForm : Form
             {
                 OpenExternalUrl(target.ToString());
             }
+        }
+    }
+
+    private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        if (e.PermissionKind is CoreWebView2PermissionKind.Camera or CoreWebView2PermissionKind.Microphone &&
+            (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var requester) || !IsSameServerOrigin(requester)))
+        {
+            e.SavesInProfile = false;
+            e.State = CoreWebView2PermissionState.Deny;
+        }
+    }
+
+    private void OnScreenCaptureStarting(object? sender, CoreWebView2ScreenCaptureStartingEventArgs e)
+    {
+        if (!Uri.TryCreate(e.OriginalSourceFrameInfo.Source, UriKind.Absolute, out var requester) || !IsSameServerOrigin(requester))
+        {
+            e.Cancel = true;
+        }
+    }
+
+    private async Task ResetMediaPermissionsAsync()
+    {
+        if (_webView.CoreWebView2?.Profile is not { } profile || _currentServerOrigin is not { } server) return;
+
+        try
+        {
+            var origin = server.GetLeftPart(UriPartial.Authority);
+            await profile.SetPermissionStateAsync(CoreWebView2PermissionKind.Camera, origin, CoreWebView2PermissionState.Default);
+            await profile.SetPermissionStateAsync(CoreWebView2PermissionKind.Microphone, origin, CoreWebView2PermissionState.Default);
+            _trayIcon.ShowBalloonTip(3000, "Nexus", "Camera and microphone permissions will be requested again when you use them.", ToolTipIcon.Info);
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            _trayIcon.ShowBalloonTip(3000, "Nexus", "Could not reset camera and microphone permissions. Try again after reloading Nexus.", ToolTipIcon.Warning);
         }
     }
 

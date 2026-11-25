@@ -18,6 +18,7 @@ public sealed class CalendarEventEntity
     public DateTimeOffset EndUtc { get; set; }
     public required string TimeZone { get; set; }
     public int? ReminderMinutes { get; set; }
+    public bool IsOnlineMeeting { get; set; }
     public Guid? ReminderOutboxId { get; set; }
     public DateTimeOffset? CanceledAt { get; set; }
     public int Version { get; set; } = 1;
@@ -64,6 +65,7 @@ internal sealed class CalendarEventConfiguration : IEntityTypeConfiguration<Cale
         builder.Property(x => x.EndUtc).HasColumnName("end_utc");
         builder.Property(x => x.TimeZone).HasColumnName("time_zone").HasMaxLength(128);
         builder.Property(x => x.ReminderMinutes).HasColumnName("reminder_minutes");
+        builder.Property(x => x.IsOnlineMeeting).HasColumnName("is_online_meeting");
         builder.Property(x => x.ReminderOutboxId).HasColumnName("reminder_outbox_id");
         builder.Property(x => x.CanceledAt).HasColumnName("canceled_at");
         builder.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();

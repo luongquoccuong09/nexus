@@ -1,0 +1,22 @@
+services:
+  web:
+    environment:
+      NexusMeetings__LiveKit__Enabled: "true"
+      NexusMeetings__LiveKit__ServerUrl: http://127.0.0.1:7880
+      NexusMeetings__LiveKit__ApiKey: ${NEXUS_MEETINGS_LIVEKIT_KEY:?Set NEXUS_MEETINGS_LIVEKIT_KEY}
+      NexusMeetings__LiveKit__ApiSecret: ${NEXUS_MEETINGS_LIVEKIT_SECRET:?Set NEXUS_MEETINGS_LIVEKIT_SECRET}
+    ports:
+      - "127.0.0.1:7881:7881/tcp"
+      - "127.0.0.1:7882:7882/udp"
+
+  livekit:
+    image: livekit/livekit-server:v1.13.11@sha256:25cd902de7cacbd5f1f779f6a6ac1eae20ba8f56b0935934ce6b0ab80d1e3d20
+    network_mode: service:web
+    depends_on:
+      web:
+        condition: service_started
+    environment:
+      LIVEKIT_KEYS: "${NEXUS_MEETINGS_LIVEKIT_KEY:?Set NEXUS_MEETINGS_LIVEKIT_KEY}: ${NEXUS_MEETINGS_LIVEKIT_SECRET:?Set NEXUS_MEETINGS_LIVEKIT_SECRET}"
+    volumes:
+      - ./livekit/loopback.yml:/etc/livekit.yaml:ro
+    command: ["--config", "/etc/livekit.yaml"]

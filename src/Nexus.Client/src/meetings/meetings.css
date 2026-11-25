@@ -1,0 +1,78 @@
+.nx-meeting {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.nx-meeting > p,
+.nx-meeting-confirmation p {
+  margin: 0;
+}
+
+.nx-meeting-participants {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nx-meeting-participant {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+
+.nx-meeting-media {
+  min-height: 7rem;
+  display: grid;
+  place-items: center;
+  background: var(--bg-subtle);
+}
+
+.nx-meeting-media video {
+  width: 100%;
+  max-height: 55dvh;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--bg-subtle);
+}
+
+.nx-meeting-participant-label,
+.nx-meeting-controls,
+.nx-meeting-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nx-meeting-participant-label {
+  justify-content: space-between;
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.nx-meeting-controls [aria-pressed="true"] {
+  border-color: var(--border-focus);
+  background: var(--bg-active);
+}
+
+.nx-meeting-confirmation {
+  padding: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-lg);
+  background: var(--danger-bg);
+}
+
+.nx-meeting-confirmation p {
+  flex-basis: 100%;
+}
+
+@media (max-width: 520px) {
+  .nx-meeting-controls .nx-btn {
+    min-height: 2.5rem;
+  }
+}

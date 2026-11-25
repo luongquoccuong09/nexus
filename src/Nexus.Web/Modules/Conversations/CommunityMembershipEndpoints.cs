@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Nexus.Web.Infrastructure.Data;
 using Nexus.Web.Infrastructure.Idempotency;
 using Nexus.Web.Infrastructure.Security;
+using Nexus.Web.Modules.Meetings;
 using Nexus.Web.Modules.Admin;
 using Nexus.Web.Modules.Identity;
 using Nexus.Web.Modules.Messaging;
@@ -257,6 +258,7 @@ public static partial class CommunityEndpoints
         await SidebarEndpoints.RemoveSidebarItemAsync(db, targetUserId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
         await People.PeopleTagEndpoints.RemoveCommunityTagMembershipsAsync(db, communityId, targetUserId, ct);
         await tx.CommitAsync(ct);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(targetUserId, ct);
         return Results.NoContent();
     }
 
@@ -341,6 +343,7 @@ public static partial class CommunityEndpoints
         await SidebarEndpoints.RemoveSidebarItemAsync(db, actorId, SidebarEndpoints.CommunitiesSurface, communityId, ct);
         await People.PeopleTagEndpoints.RemoveCommunityTagMembershipsAsync(db, communityId, actorId, ct);
         await tx.CommitAsync(ct);
+        await ctx.RequestServices.GetRequiredService<MeetingRevocations>().RecheckUserAsync(actorId, ct);
         return Results.NoContent();
     }
 
