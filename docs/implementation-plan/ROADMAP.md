@@ -148,7 +148,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 
 ### Calendar and meeting essentials
 
-- [ ] **M6.10** Evaluate and select approved open-source components. Verify authenticated rooms, participant removal and rejoin, audio/video, screen sharing, WebView2, and corporate network connectivity using a self-hosted media provider. Record the selection and expected operating cost.
+- [x] **M6.10** Evaluate and select approved open-source components. Verify authenticated rooms, participant removal and rejoin, audio/video, screen sharing, WebView2, and corporate network connectivity using a self-hosted media provider. Record the selection and expected operating cost.
 - [ ] **M6.11** Add a Calendar with week, month, and agenda views, event create/edit/cancel, attendee invitations, RSVP, time zones, and reminders. Verify visibility and access after membership revocation. → M4.1, M4.3, M5, M6.10
 - [ ] **M6.12** Add scheduled meetings and Meet now. Reuse the provider for group audio/video and screen sharing. Verify joining from an event or conversation and leaving or ending the meeting. → M6.10, M6.11
 - [ ] **M6.13** Add direct voice and video calls from eligible Personal and Organization chats. Handle ringing, accept, decline, cancel, missed, and end states across signed-in devices. Reuse meeting media and screen sharing. → M2.14, M6.12
