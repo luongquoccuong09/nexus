@@ -107,6 +107,8 @@ Nexus issues a 60-second room credential bound to one grant. The signaling gatew
 
 Recurring meeting admission resolves the original occurrence and checks its current availability. Canceling an occurrence revokes its room grants. Canceling the series revokes all rooms under the event.
 
+The M6.36 device check uses local browser permission and user-initiated capture. Its camera, microphone meter, and speaker test operate inside the current client. The explicit Join meeting action still requires the server to authorize the action and issue a room grant before media publication.
+
 ### 2.8 Direct calls
 
 An eligible Personal or Organization DM must have two active participants and no effective block. The server checks access when starting or responding to a call and when granting or renewing media admission. The initiating account can cancel a ringing call. The recipient can accept or decline. Both participants can end an accepted call. Simultaneous commands serialize on the call record.

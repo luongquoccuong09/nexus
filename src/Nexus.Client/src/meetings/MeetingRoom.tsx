@@ -5,13 +5,14 @@ import { Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from 'lucide-react'
 import { Avatar, Button, Modal } from '../ui';
 import { endDirectCall } from '../calls/callApi';
 import { endMeeting, joinMeeting, leaveMeeting, type MeetingIntent, MeetingRequestError, type MeetingSession, removeMeetingParticipant } from './meetingApi';
+import { type MeetingDevices, selectedCapture } from './meetingDevices';
 import { mediaSignalUrl } from './mediaSignal';
 import './meetings.css';
 
 setLogLevel(LogLevel.silent);
 
 type MeetingDevice = 'microphone' | 'camera' | 'screen';
-type DirectCallDevice = Exclude<MeetingDevice, 'screen'>;
+type MeetingInput = Exclude<MeetingDevice, 'screen'>;
 type MeetingStatus = 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed';
 
 interface TrackView {
@@ -67,12 +68,18 @@ function mediaError(device: MeetingDevice, cause: unknown) {
       ? 'Screen sharing permission was denied or canceled. Select Share screen to try again.'
       : `${label} permission was denied. Update the permissions for Nexus and try again.`;
   }
-  if (type === 'NotFoundError' || type === 'DevicesNotFoundError') return `${label} is unavailable. Connect a device and try again.`;
+  if (type === 'NotFoundError' || type === 'DevicesNotFoundError' || type === 'OverconstrainedError') {
+    return `${label} is unavailable. Connect a device and try again.`;
+  }
   if (type === 'NotReadableError' || type === 'TrackStartError') return `${label} is unavailable. Close any app using it and try again.`;
   return `Unable to change ${label.toLowerCase()}. Try again.`;
 }
 
-export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent; onClose: () => void }) {
+export default function MeetingRoom({ intent, selectedDevices, onClose }: {
+  intent: MeetingIntent;
+  selectedDevices?: MeetingDevices;
+  onClose: () => void;
+}) {
   const roomRef = useRef<Room | null>(null);
   const sessionRef = useRef<MeetingSession | null>(null);
   const actionRef = useRef<AbortController | null>(null);
@@ -93,7 +100,13 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
 
   useEffect(() => {
     const controller = new AbortController();
-    const room = new Room({ adaptiveStream: true, dynacast: true, publishDefaults: { stopMicTrackOnMute: true } });
+    const microphoneSelection = selectedCapture(selectedDevices?.microphoneId);
+    const cameraSelection = selectedCapture(selectedDevices?.cameraId);
+    const room = new Room({
+      adaptiveStream: true, dynacast: true, publishDefaults: { stopMicTrackOnMute: true },
+      audioCaptureDefaults: microphoneSelection, videoCaptureDefaults: cameraSelection,
+      audioOutput: selectedDevices?.speakerId ? { deviceId: selectedDevices.speakerId } : undefined
+    });
     roomRef.current = room;
     setStatus('connecting');
     setSession(null);
@@ -101,9 +114,9 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
     setParticipantPage(0);
     setError('');
     setNeedsAudio(false);
-    const defaults: DirectCallDevice[] = intent.kind === 'directCall'
-      ? intent.callKind === 'Video' ? ['microphone', 'camera'] : ['microphone']
-      : [];
+    const defaults: MeetingInput[] = [];
+    if (intent.kind === 'directCall' || selectedDevices?.microphone) defaults.push('microphone');
+    if (intent.kind === 'directCall' ? intent.callKind === 'Video' : selectedDevices?.camera) defaults.push('camera');
     setPendingDevices(defaults);
     const pending = deviceRequests.current;
     pending.clear();
@@ -117,11 +130,13 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
       unpublishedTracks.clear();
     }
 
-    // Direct-call intent is mounted only after an explicit answer and scoped server approval.
-    // Prepare devices while the accepted device fetches its grant and connects signaling.
+    // This effect starts after a direct answer or an explicit join from the device check.
+    // Prepare selected inputs alongside signaling, then publish after server admission.
     const deviceSetup = defaults.map(async device => {
       try {
-        const track = await (device === 'microphone' ? createLocalAudioTrack() : createLocalVideoTrack());
+        const track = await (device === 'microphone'
+          ? createLocalAudioTrack(microphoneSelection)
+          : createLocalVideoTrack(cameraSelection));
         if (abandoned || controller.signal.aborted) {
           track.stop();
           return { device };
@@ -160,7 +175,7 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
       if (reason === DisconnectReason.PARTICIPANT_REMOVED) setError('You were removed from this meeting.');
       if (reason === DisconnectReason.ROOM_DELETED) setError('The meeting has ended.');
     }
-    async function publishDirectCallDevices() {
+    async function publishSelectedInputs() {
       const failures: string[] = [];
       // The microphone is first. A slower camera cannot delay voice media.
       for (const preparation of deviceSetup) {
@@ -196,7 +211,7 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
       .on(RoomEvent.LocalTrackPublished, refresh)
       .on(RoomEvent.LocalTrackUnpublished, refresh)
       .on(RoomEvent.AudioPlaybackStatusChanged, refresh);
-    if (deviceSetup.length) room.once(RoomEvent.SignalConnected, () => void publishDirectCallDevices());
+    if (deviceSetup.length) room.once(RoomEvent.SignalConnected, () => void publishSelectedInputs());
 
     void (async () => {
       try {
@@ -231,7 +246,7 @@ export default function MeetingRoom({ intent, onClose }: { intent: MeetingIntent
       void room.dispose().catch(() => {});
       if (admission) void leaveMeeting(admission).catch(() => {});
     };
-  }, [attempt, intent]);
+  }, [attempt, intent, selectedDevices]);
 
   async function toggle(device: MeetingDevice) {
     const room = roomRef.current;

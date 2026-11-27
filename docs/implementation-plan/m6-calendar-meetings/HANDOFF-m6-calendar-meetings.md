@@ -363,3 +363,33 @@ pwsh -File "$historyQa/start-host.ps1" *> "$historyQa/web.log"
 # In a separate shell while the host runs
 node "$historyQa/history-qa.mjs"
 ```
+
+## M6.36 Pre-join device controls
+
+Verified November 27, 2026. The full pipeline passed 216 PostgreSQL 17 integration tests, 73 client unit tests, security, UI, and knowledge index audits, and the Web and Desktop Release builds. One opt-in Monitor test was skipped.
+
+Join meeting and Meet now open a Pre-join dialog before Nexus requests admission. Direct calls skip it and keep the M6.13 answer flow. The dialog shows camera and microphone permission state, camera, microphone, and speaker selectors, a mirrored camera preview, a microphone level meter, and a generated speaker test tone. Capture starts only when the user selects Start camera preview or Test microphone. Back, Escape, and Join meeting stop every preview track, close each audio context, and cancel any pending capture. Join meeting passes only the selected device IDs and on/off choices to the room. The room captures its own tracks after server admission, so camera and microphone stay off unless they were live in the preview.
+
+Permission state uses the Permissions API with live change events. Browsers that reject camera or microphone queries fall back to the result of the user-started capture. Denied, missing, busy, overconstrained, and disconnected devices each show actionable guidance, and device lists refresh on `devicechange`. Speaker selection appears only where `AudioContext.setSinkId` exists. Other browsers test the system default speaker and say so. The pre-join module loads as a separate 10.8 kB chunk, and the media bundle stays deferred until Join meeting. On short viewports the dialog limits itself to the screen height and scrolls only the device controls.
+
+The Edge fixture passed at `1440×900`, `390×844`, and `320×700` in Light and Dark with two accounts against loopback LiveKit, with zero unexpected browser or network errors. It verified that opening Pre-join and selecting Back request no room grant. Alternate camera and microphone selections reached the published tracks without duplicate captures, and the selected speaker reached the sink. Inbound audio and video were decoded. Joining with the defaults acquired no device, Meet now ran through Pre-join, and direct calls bypassed it. The WebView2 158 fixture ran the Release Desktop app with native permissions controlled through CDP. It showed Allowed, Blocked, and Allowed permission states, recovered from denied camera and microphone permission, missing devices, and a disconnected camera, and switched to an alternate microphone and speaker. It released every preview track and test tone context on Back and exchanged scheduled-meeting audio and video with Edge, and Meet now joined with audio and video off. The app-wide ringtone audio context is expected to outlive the dialog. The fixtures and logs are in `D:\develop\.nexus-m610-eval\m636` and `D:\develop\.nexus-m610-eval\m636-desktop`.
+
+```powershell
+npm.cmd --prefix src/Nexus.Client test
+npm.cmd --prefix src/Nexus.Client run build
+$prejoinQa = 'D:/develop/.nexus-m610-eval/m636'
+Copy-Item -Path 'src\Nexus.Client\dist\*' -Destination "$prejoinQa/web/wwwroot" -Recurse -Force
+pwsh -File "$prejoinQa/start-host.ps1" *> "$prejoinQa/web.log"
+# In a separate shell while the host runs
+node "$prejoinQa/prejoin-qa.mjs"
+```
+
+```powershell
+$desktopQa = 'D:/develop/.nexus-m610-eval/m636-desktop'
+$desktopExe = 'D:/develop/nexus-workplace/src/Nexus.Desktop/bin/Release/net10.0-windows/ProjectNexus.exe'
+# Use a fresh profile. Run the launcher in a separate shell while the web host runs.
+& "$desktopQa/launcher/DesktopQaLauncher.exe" $desktopExe "$desktopQa/private-profile-2" 18753 --native-permissions
+node "$desktopQa/prejoin-qa.mjs"
+pwsh -File ./scripts/Run-Tests.ps1
+git diff --check
+```

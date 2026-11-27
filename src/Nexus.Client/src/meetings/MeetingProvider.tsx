@@ -2,6 +2,7 @@ import { createContext, lazy, type ReactNode, Suspense, useCallback, useContext,
 import { Button, Modal } from '../ui';
 import { endDirectCall } from '../calls/callApi';
 import type { MeetingIntent } from './meetingApi';
+import type { MeetingDevices } from './meetingDevices';
 
 type MeetingRoomModule = typeof import('./MeetingRoom');
 let pendingRoom: Promise<MeetingRoomModule> | null = null;
@@ -18,6 +19,7 @@ function loadMeetingRoom() {
   return pendingRoom;
 }
 const MeetingRoom = lazy(loadMeetingRoom);
+const PreJoinMeeting = lazy(() => import('./PreJoinMeeting'));
 
 export function preloadMeetingRoom() {
   void loadMeetingRoom().catch(() => {});
@@ -74,14 +76,17 @@ function LoadingMeeting({ intent, onClose, failed = false }: { intent: MeetingIn
 }
 
 export default function MeetingProvider({ children }: { children: ReactNode }) {
-  const [intent, setIntent] = useState<MeetingIntent | null>(null);
+  const [meeting, setMeeting] = useState<{ intent: MeetingIntent; devices?: MeetingDevices } | null>(null);
   const [readyRoom, setReadyRoom] = useState<MeetingRoomModule['default'] | null>(() => loadedRoom);
   const [failedCall, setFailedCall] = useState<string | null>(null);
-  const open = useCallback((next: MeetingIntent) => setIntent(current => current ?? next), []);
-  const close = useCallback(() => setIntent(null), []);
+  const open = useCallback((intent: MeetingIntent) => setMeeting(current => current ?? { intent }), []);
+  const close = useCallback(() => setMeeting(null), []);
   const closeCall = useCallback((callId: string) =>
-    setIntent(current => current?.kind === 'directCall' && current.callId === callId ? null : current), []);
-  const active = intent !== null;
+    setMeeting(current => current?.intent.kind === 'directCall' && current.intent.callId === callId ? null : current), []);
+  const join = useCallback((devices: MeetingDevices) =>
+    setMeeting(current => current && !current.devices && current.intent.kind !== 'directCall' ? { ...current, devices } : current), []);
+  const intent = meeting?.intent;
+  const active = meeting !== null;
   const value = useMemo(() => ({ open, closeCall, active }), [open, closeCall, active]);
   const dismiss = intent?.kind === 'directCall' ? () => closeCall(intent.callId) : close;
   const ReadyMeetingRoom = readyRoom ?? loadedRoom;
@@ -98,18 +103,24 @@ export default function MeetingProvider({ children }: { children: ReactNode }) {
     return () => { closed = true; };
   }, [intent, ReadyMeetingRoom]);
 
+  let content: ReactNode = null;
+  if (intent?.kind === 'directCall') {
+    content = ReadyMeetingRoom
+      ? <ReadyMeetingRoom intent={intent} onClose={dismiss} />
+      : <LoadingMeeting intent={intent} onClose={dismiss} failed={failedCall === intent.callId} />;
+  } else if (intent) {
+    content = (
+      <Suspense fallback={<LoadingMeeting intent={intent} onClose={close} />}>
+        {meeting?.devices ? <MeetingRoom intent={intent} selectedDevices={meeting.devices} onClose={close} /> :
+          <PreJoinMeeting title={intent.title} onJoin={join} onClose={close} />}
+      </Suspense>
+    );
+  }
+
   return (
     <MeetingContext.Provider value={value}>
       {children}
-      {intent?.kind === 'directCall' ? ReadyMeetingRoom ? (
-        <ReadyMeetingRoom intent={intent} onClose={dismiss} />
-      ) : (
-        <LoadingMeeting intent={intent} onClose={dismiss} failed={failedCall === intent.callId} />
-      ) : intent && (
-        <Suspense fallback={<LoadingMeeting intent={intent} onClose={dismiss} />}>
-          <MeetingRoom intent={intent} onClose={dismiss} />
-        </Suspense>
-      )}
+      {content}
     </MeetingContext.Provider>
   );
 }

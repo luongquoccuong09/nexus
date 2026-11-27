@@ -1,0 +1,83 @@
+.nx-prejoin {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.nx-prejoin-video {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+}
+
+.nx-prejoin-video > div {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+}
+
+.nx-prejoin-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform: scaleX(-1);
+}
+
+.nx-prejoin-controls,
+.nx-prejoin-device {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nx-prejoin-controls {
+  gap: var(--space-3);
+}
+
+.nx-prejoin-device > .nx-btn {
+  justify-self: start;
+}
+
+.nx-prejoin-device p,
+.nx-prejoin-controls > p {
+  margin: 0;
+}
+
+.nx-prejoin-meter {
+  width: 100%;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+}
+
+.nx-prejoin-meter span {
+  display: block;
+  height: 100%;
+  background: var(--brand-600);
+}
+
+/* Keep the header and Join action on screen at short viewports; only the device controls scroll. */
+.nx-modal-content.xl:has(.nx-prejoin) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 16px);
+}
+
+.nx-modal-content.xl:has(.nx-prejoin) > .nx-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+@media (max-width: 720px) {
+  .nx-prejoin {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

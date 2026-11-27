@@ -184,7 +184,7 @@ Select rich chat items `M6.1`–`M6.9` using pilot feedback. The [Calendar and M
 ### Calendar and calling enhancements
 
 - [x] **M6.35** Add Calls history with incoming, outgoing, and missed filters and Call back. → M6.13, M6.16
-- [ ] **M6.36** Add pre-join device selection, camera preview, microphone meter, and speaker test using approved provider or browser capabilities. → M6.10, M6.12
+- [x] **M6.36** Add pre-join device selection, camera preview, microphone meter, and speaker test using approved provider or browser capabilities. → M6.10, M6.12
 - [ ] **M6.37** Keep a meeting or call available through a compact view while the user navigates Nexus. Preserve call controls and verify the supported WebView2 behavior. → M6.12, M6.13
 - [ ] **M6.38** Add a Scheduling Assistant with free/busy and tentative time only for authorized invitees. → M6.11, M6.14
 - [ ] **M6.39** Add meeting lobby, organizer and presenter roles, and controls for who can present or share. Enforce permissions through the provider and record role changes. → M6.10, M6.12

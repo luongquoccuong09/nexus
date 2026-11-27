@@ -157,6 +157,8 @@ Calendar create and update accept optional `isOnlineMeeting`. The Calendar event
 
 The browser connects to `/api/media/rtc` or `/api/media/rtc/v1` on the same origin. Both WebSocket upgrades and the corresponding `/validate` routes require a current BFF session and a signed room grant. Nexus owns admission on each reconnect. Provider signaling and administrative calls use a configured private server origin.
 
+The M6.36 scheduled meeting and Meet now flow runs a client-side device check before the join action. Selecting Join meeting triggers room creation or admission as appropriate. The selected devices and microphone and camera choices stay in the client and apply to the meeting at that point.
+
 ### Direct voice and video calls (`M6.13`)
 
 | Method and path | Contract |

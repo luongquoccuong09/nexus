@@ -34,6 +34,8 @@ Update this table whenever a migration adds or changes a table.
 
 M6.15 verifies room isolation, grant revocation, and reconnect against the Calendar, Meetings, and Calls schema.
 
+M6.36 keeps pre-join device choices in the current client session and tracks their lifetime with the pending meeting intent.
+
 ## 3. Search and indexing notes
 
 - **Vietnamese directory search (M1.10).** The Organization membership Directory uses PostgreSQL `public.immutable_unaccent` and GIN `pg_trgm` indexes on `organization_memberships(display_name)` and `organization_memberships(username)` and requires active account and membership rows.
